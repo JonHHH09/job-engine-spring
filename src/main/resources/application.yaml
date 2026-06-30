@@ -1,3 +1,17 @@
 spring:
   application:
     name: job-engine-spring
+  datasource:
+    url: ${JOB_ENGINE_POSTGRES_URL:jdbc:postgresql://localhost:5432/job_engine}
+    username: ${JOB_ENGINE_POSTGRES_USER:}
+    password: ${JOB_ENGINE_POSTGRES_PASSWORD:}
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    default-schema: profile
+    schemas:
+      - profile
+  threads:
+    virtual:
+      enabled: true
