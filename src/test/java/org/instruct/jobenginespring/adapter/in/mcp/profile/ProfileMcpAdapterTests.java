@@ -1,5 +1,9 @@
 package org.instruct.jobenginespring.adapter.in.mcp.profile;
 
+import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
+import org.instruct.jobenginespring.application.error.ApplicationErrorResponse;
+import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfileService;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -18,8 +22,9 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -74,8 +79,9 @@ class ProfileMcpAdapterTests {
         UserProfile profile = sampleProfile();
         when(profileService.listProfiles()).thenReturn(List.of(profile));
 
-        assertEquals(List.of(profile), adapter.listProfiles());
+        CallToolResult result = adapter.listProfiles();
 
+        assertSuccessfulContent(List.of(profile), result);
         verify(profileService).listProfiles();
     }
 
@@ -84,22 +90,22 @@ class ProfileMcpAdapterTests {
         ProfileAggregate aggregate = sampleAggregate();
         when(profileService.getProfile(PROFILE_ID)).thenReturn(Optional.of(aggregate));
 
-        assertSame(aggregate, adapter.getProfile(PROFILE_ID));
+        CallToolResult result = adapter.getProfile(PROFILE_ID);
 
+        assertSuccessfulContent(aggregate, result);
         verify(profileService).getProfile(PROFILE_ID);
     }
 
     @Test
-    void getProfileToolThrowsWhenMissing() {
+    void getProfileToolReturnsSanitizedNotFoundErrorWhenMissing() {
         when(profileService.getProfile(PROFILE_ID)).thenReturn(Optional.empty());
 
-        ProfileService.ProfileNotFoundException exception = assertThrows(
-                ProfileService.ProfileNotFoundException.class,
-                () -> adapter.getProfile(PROFILE_ID)
-        );
+        CallToolResult result = adapter.getProfile(PROFILE_ID);
 
-        assertEquals("not_found", exception.errorCode().code());
-        assertEquals(Map.of("resource", "profile", "profileId", PROFILE_ID.toString()), exception.details());
+        ApplicationErrorResponse response = assertErrorResponse(result);
+        assertEquals("not_found", response.code());
+        assertEquals("Profile not found: " + PROFILE_ID, response.message());
+        assertEquals(Map.of("resource", "profile", "profileId", PROFILE_ID.toString()), response.details());
         verify(profileService).getProfile(PROFILE_ID);
     }
 
@@ -109,8 +115,9 @@ class ProfileMcpAdapterTests {
         ProfileAggregate aggregate = sampleAggregate();
         when(profileService.createProfile(request)).thenReturn(aggregate);
 
-        assertSame(aggregate, adapter.createProfile(request));
+        CallToolResult result = adapter.createProfile(request);
 
+        assertSuccessfulContent(aggregate, result);
         verify(profileService).createProfile(request);
     }
 
@@ -120,8 +127,9 @@ class ProfileMcpAdapterTests {
         ProfileAggregate aggregate = sampleAggregate();
         when(profileService.updateProfile(PROFILE_ID, request)).thenReturn(aggregate);
 
-        assertSame(aggregate, adapter.updateProfile(PROFILE_ID, request));
+        CallToolResult result = adapter.updateProfile(PROFILE_ID, request);
 
+        assertSuccessfulContent(aggregate, result);
         verify(profileService).updateProfile(PROFILE_ID, request);
     }
 
@@ -129,11 +137,57 @@ class ProfileMcpAdapterTests {
     void deleteProfileToolReturnsDeletedResult() {
         when(profileService.deleteProfile(PROFILE_ID)).thenReturn(true);
 
-        ProfileMcpAdapter.DeleteProfileResult result = adapter.deleteProfile(PROFILE_ID);
+        CallToolResult result = adapter.deleteProfile(PROFILE_ID);
 
-        assertEquals(PROFILE_ID, result.profileId());
-        assertTrue(result.deleted());
+        assertFalse(result.isError());
+        ProfileMcpAdapter.DeleteProfileResult deleteResult = assertInstanceOf(
+                ProfileMcpAdapter.DeleteProfileResult.class,
+                result.structuredContent()
+        );
+        assertEquals(PROFILE_ID, deleteResult.profileId());
+        assertTrue(deleteResult.deleted());
         verify(profileService).deleteProfile(PROFILE_ID);
+    }
+
+    @Test
+    void writeToolsReturnSanitizedValidationErrors() {
+        ProfileWriteRequest request = sampleRequest();
+        ApplicationException validationFailure = new ApplicationException(
+                ApplicationErrorCode.VALIDATION_ERROR,
+                "Invalid profile write request",
+                Map.of("field", "email", "reason", "must be a valid email address"),
+                null
+        );
+        when(profileService.createProfile(request)).thenThrow(validationFailure);
+
+        CallToolResult result = adapter.createProfile(request);
+
+        ApplicationErrorResponse response = assertErrorResponse(result);
+        assertEquals("validation_error", response.code());
+        assertEquals("Invalid profile write request", response.message());
+        assertEquals(Map.of("field", "email", "reason", "must be a valid email address"), response.details());
+    }
+
+    @Test
+    void toolErrorsDoNotExposeUnexpectedExceptionMessages() {
+        when(profileService.listProfiles()).thenThrow(new RuntimeException("sensitive database detail"));
+
+        CallToolResult result = adapter.listProfiles();
+
+        ApplicationErrorResponse response = assertErrorResponse(result);
+        assertEquals("internal_error", response.code());
+        assertEquals("Unexpected application error", response.message());
+        assertEquals(Map.of(), response.details());
+    }
+
+    private static void assertSuccessfulContent(Object expected, CallToolResult result) {
+        assertFalse(result.isError());
+        assertEquals(expected, result.structuredContent());
+    }
+
+    private static ApplicationErrorResponse assertErrorResponse(CallToolResult result) {
+        assertTrue(result.isError());
+        return assertInstanceOf(ApplicationErrorResponse.class, result.structuredContent());
     }
 
     private static ProfileAggregate sampleAggregate() {

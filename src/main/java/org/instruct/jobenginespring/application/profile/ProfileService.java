@@ -55,7 +55,8 @@ public class ProfileService {
 
     @Transactional
     public ProfileAggregate createProfile(ProfileWriteRequest request) {
-        ProfileWriteRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
+        ProfileWriteValidator.validate(request);
+        ProfileWriteRequest safeRequest = request;
         Instant now = clock.instant();
         UUID profileId = UUID.randomUUID();
         ProfileAggregate aggregate = toAggregate(profileId, safeRequest, now, now);
@@ -65,7 +66,8 @@ public class ProfileService {
     @Transactional
     public ProfileAggregate updateProfile(UUID profileId, ProfileWriteRequest request) {
         Objects.requireNonNull(profileId, "profileId must not be null");
-        ProfileWriteRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
+        ProfileWriteValidator.validate(request);
+        ProfileWriteRequest safeRequest = request;
         UserProfile existing = profileRepository.findProfileById(profileId)
                 .orElseThrow(() -> new ProfileNotFoundException(profileId));
         ProfileAggregate aggregate = toAggregate(profileId, safeRequest, existing.createdAt(), clock.instant());

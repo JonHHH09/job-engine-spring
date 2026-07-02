@@ -12,10 +12,12 @@ Current observed shape:
 job-engine-spring/
 |-- pom.xml
 |-- mvnw / mvnw.cmd
+|-- README.md
 |-- HELP.md
 |-- src/main/java/org/instruct/jobenginespring/JobEngineSpringApplication.java
 |-- src/main/java/org/instruct/jobenginespring/domain/profile/    # normalized profile records
 |-- src/main/java/org/instruct/jobenginespring/application/profile/ProfileService.java
+|-- src/main/java/org/instruct/jobenginespring/application/profile/ProfileWriteValidator.java
 |-- src/main/java/org/instruct/jobenginespring/application/profile/port/ProfileRepository.java
 |-- src/main/java/org/instruct/jobenginespring/adapter/in/mcp/health/HealthMcpAdapter.java
 |-- src/main/java/org/instruct/jobenginespring/adapter/in/mcp/profile/ProfileMcpAdapter.java
@@ -31,7 +33,7 @@ job-engine-spring/
 `-- src/test/java/org/instruct/jobenginespring/JobEngineSpringApplicationTests.java
 ```
 
-The project has the generated Spring Boot application class plus a normalized profile domain slice, a protocol-neutral application error model, an application-boundary profile repository port, profile CRUD use cases, thin STDIO MCP health/profile adapters, JDBC-backed PostgreSQL health/profile outbound adapters, a sanitized database health application service, and a first Flyway migration for the `profile` schema. Do not assume controllers or non-profile domain schemas exist until they are verified in source.
+The project has the generated Spring Boot application class plus a normalized profile domain slice, a protocol-neutral application error model, an application-boundary profile repository port, profile CRUD use cases with application-layer write validation, thin STDIO MCP health/profile adapters, JDBC-backed PostgreSQL health/profile outbound adapters, a sanitized database health application service, and a first Flyway migration for the `profile` schema. Do not assume controllers or non-profile domain schemas exist until they are verified in source.
 
 ## Intended Architecture
 
@@ -44,7 +46,7 @@ Preferred direction:
 - MCP tools/resources/prompts as the primary integration boundary.
 - Hexagonal / clean architecture: domain core first, application use cases around it, inbound MCP adapters at the edge, outbound database/provider adapters behind ports.
 - This is a Spring Boot application first: use Spring Boot stereotypes such as `@Service`, `@Component`, and `@Repository` to remove trivial wiring boilerplate while keeping dependency direction clean.
-- Keep tool methods thin: validate input, call a service, return structured DTOs.
+- Keep tool methods thin: bind protocol parameters, call a service, and return structured DTOs or sanitized MCP error results; application services own profile write validation.
 - Keep business logic in services, not inside annotation methods.
 - Avoid REST controllers unless the user explicitly asks for REST compatibility.
 
@@ -143,7 +145,7 @@ Database interaction rules:
 - Database adapters live behind outbound ports and must not leak SQL/JDBC concerns into domain records or MCP adapters.
 - Keep datasource configuration environment-driven; never hardcode real passwords, DSNs, tokens, or personal data in config, tests, docs, or logs.
 
-The current profile slice uses PostgreSQL through a JDBC outbound adapter behind `ProfileRepository`. `ProfileService` owns profile CRUD use cases and `ProfileMcpAdapter` exposes the stable STDIO MCP tools. The health slice exposes a `health` MCP tool through `HealthMcpAdapter`, delegates to the Spring-managed `DatabaseHealthService`, and checks PostgreSQL readiness through `PostgresDatabaseHealthPort` using a sanitized `SELECT 1`. The PostgreSQL health port uses a property gate (`job-engine.health.postgres.enabled`) rather than `@ConditionalOnBean(JdbcOperations.class)`, because component conditions can be evaluated before auto-configured JDBC beans exist. Profile adapters intentionally map only the fields currently represented by the domain records; do not add database columns by editing applied Flyway migrations.
+The current profile slice uses PostgreSQL through a JDBC outbound adapter behind `ProfileRepository`. `ProfileService` owns profile CRUD use cases and invokes `ProfileWriteValidator` before persistence so expected request problems become safe `validation_error` application failures instead of raw database constraint errors. `ProfileMcpAdapter` exposes the stable STDIO MCP tools and maps thrown application/unexpected failures through `ApplicationExceptionMapper` into `CallToolResult` errors with sanitized structured content. The health slice exposes a `health` MCP tool through `HealthMcpAdapter`, delegates to the Spring-managed `DatabaseHealthService`, and checks PostgreSQL readiness through `PostgresDatabaseHealthPort` using a sanitized `SELECT 1`. The PostgreSQL health port uses a property gate (`job-engine.health.postgres.enabled`) rather than `@ConditionalOnBean(JdbcOperations.class)`, because component conditions can be evaluated before auto-configured JDBC beans exist. Profile adapters intentionally map only the fields currently represented by the domain records; do not add database columns by editing applied Flyway migrations.
 
 ## Package and Code Organization
 
@@ -165,7 +167,8 @@ Guidelines:
 - Application use cases may use Spring Boot application annotations such as `@Service` and `@Transactional`; do not add persistence or protocol annotations to domain records.
 - Use Lombok selectively for Spring-managed boilerplate such as constructor injection (`@RequiredArgsConstructor`) and null checks (`@NonNull`); prefer records over Lombok for immutable DTO/domain shapes.
 - Put repository interfaces/ports in the application boundary; put PostgreSQL implementations in outbound adapters.
-- Use `application.error.ApplicationException`, `ApplicationErrorCode`, and `ApplicationErrorResponse` for safe, standardized application failures; adapters should not leak stack traces, credentials, or raw provider exception messages.
+- Use `application.error.ApplicationException`, `ApplicationErrorCode`, `ApplicationErrorResponse`, and `ApplicationExceptionMapper` for safe, standardized application failures; adapters should not leak stack traces, credentials, or raw provider exception messages.
+- Validate write DTOs in the application layer before persistence. Profile write validation should return safe field/reason details and should not rely on PostgreSQL constraint messages for expected user input failures.
 - Prefer constructor injection.
 - Keep files focused and under ~500 physical lines where practical.
 - Do not use Lombok by default for simple records; keep Lombok only if it earns its dependency.
@@ -215,9 +218,9 @@ Mandatory:
 
 As of the health/profile CRUD MCP slice:
 
-- Profile MCP CRUD tools and a PostgreSQL JDBC adapter exist for normalized profile data.
+- Profile MCP CRUD tools, application-layer profile write validation, and a PostgreSQL JDBC adapter exist for normalized profile data.
 - Health is exposed as a sanitized MCP tool backed by `DatabaseHealthService` and `PostgresDatabaseHealthPort`.
-- No README exists yet.
+- A minimal README documents the current MCP tool surface, configuration rules, validation contract, and verification commands.
 - The default app startup requires a PostgreSQL role matching the configured `JOB_ENGINE_POSTGRES_USER` placeholder. Local verification succeeded with endpoint readiness and a valid local role, but the default `postgres` role may not exist on every machine.
 - IntelliJ MCP may have a different project open; verify the current IntelliJ project before IDE-native build/run/debug work.
 

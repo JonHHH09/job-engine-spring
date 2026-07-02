@@ -10,6 +10,7 @@ import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWr
 import org.instruct.jobenginespring.application.profile.ProfileService.ProjectTechnologyWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProjectWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.SkillWriteRequest;
+import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
@@ -229,11 +230,80 @@ class ProfileServiceTests {
                 null
         );
 
-        assertThrows(NullPointerException.class, () -> service.createProfile(null));
+        assertInvalidProfileWriteRequest(null, "request", "must not be null");
         assertThrows(NullPointerException.class, () -> service.getProfile(null));
         assertThrows(NullPointerException.class, () -> service.updateProfile(null, request));
-        assertThrows(NullPointerException.class, () -> service.updateProfile(UUID.randomUUID(), null));
+        ApplicationException updateException = assertThrows(ApplicationException.class, () -> service.updateProfile(UUID.randomUUID(), null));
+        assertEquals("validation_error", updateException.errorCode().code());
+        assertEquals(Map.of("field", "request", "reason", "must not be null"), updateException.details());
         assertThrows(NullPointerException.class, () -> service.deleteProfile(null));
+    }
+
+    @Test
+    void rejectsInvalidProfileWriteRequestsBeforePersistence() {
+        assertInvalidProfileWriteRequest(
+                new ProfileWriteRequest(" ", "agentic@example.com", null, null, null, null, null, null, null, null),
+                "fullName",
+                "must not be blank"
+        );
+        assertInvalidProfileWriteRequest(
+                new ProfileWriteRequest("Agentic Dev", "not-an-email", null, null, null, null, null, null, null, null),
+                "email",
+                "must be a valid email address"
+        );
+        assertInvalidProfileWriteRequest(
+                new ProfileWriteRequest("Agentic Dev", "agentic@example.com", null,
+                        List.of(new ContactWriteRequest(null, " ", "Montreal", null)), null, null, null, null, null, null),
+                "contacts[0].contactType",
+                "must not be blank"
+        );
+        assertInvalidProfileWriteRequest(
+                new ProfileWriteRequest("Agentic Dev", "agentic@example.com", null, null, null,
+                        List.of(new SkillWriteRequest(null, "Java", null, "backend", 0),
+                                new SkillWriteRequest(null, " java ", null, "backend", 1)),
+                        null, null, null, null),
+                "skills[1].normalizedSkill",
+                "duplicates another normalized skill in this request"
+        );
+        assertInvalidProfileWriteRequest(
+                new ProfileWriteRequest("Agentic Dev", "agentic@example.com", null, null, null, null, null, null,
+                        List.of(new ExperienceWriteRequest(null, "Example Corp", "Developer", null,
+                                LocalDate.parse("2026-01-01"), LocalDate.parse("2025-01-01"), null, 0)), null),
+                "experiences[0].endDate",
+                "must not be before startDate"
+        );
+        assertInvalidProfileWriteRequest(
+                new ProfileWriteRequest("Agentic Dev", "agentic@example.com", null, null, null, null, null, null, null,
+                        List.of(new ProjectWriteRequest(null, "Project", null, null, 0,
+                                List.of(new ProjectTechnologyWriteRequest(null, "PostgreSQL", null, 0),
+                                        new ProjectTechnologyWriteRequest(null, "postgresql", null, 1))))),
+                "projects[0].technologies[1].normalizedTechnology",
+                "duplicates another project technology in this request"
+        );
+
+        assertEquals(List.of(), repository.listProfiles());
+    }
+
+    @Test
+    void updateValidatesRequestBeforeMissingProfileLookup() {
+        UUID missingProfileId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateProfile(
+                missingProfileId,
+                new ProfileWriteRequest("Agentic Dev", "agentic@example.com", null, null, null,
+                        List.of(new SkillWriteRequest(null, "Java", null, "backend", -1)), null, null, null, null)
+        ));
+
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals(Map.of("field", "skills[0].displayOrder", "reason", "must be greater than or equal to 0"), exception.details());
+    }
+
+    private void assertInvalidProfileWriteRequest(ProfileWriteRequest request, String field, String reason) {
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.createProfile(request));
+
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals("Invalid profile write request", exception.safeMessage());
+        assertEquals(Map.of("field", field, "reason", reason), exception.details());
     }
 
     private static final class FakeProfileRepository implements ProfileRepository {
