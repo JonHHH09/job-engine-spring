@@ -15,6 +15,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -71,7 +72,7 @@ class PostgresProfileRepositoryIntegrationTests {
     @BeforeEach
     void setUp() {
         jdbc.update("TRUNCATE TABLE profile.profiles CASCADE");
-        repository = new PostgresProfileRepository(jdbc);
+        repository = new PostgresProfileRepository(new NamedParameterJdbcTemplate(jdbc));
     }
 
     @Test

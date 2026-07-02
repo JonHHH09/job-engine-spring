@@ -137,6 +137,7 @@ Database interaction rules:
 - Treat applied Flyway `V*__*.sql` migrations as immutable history. Do not edit an existing versioned migration after it may have run; create the next `V{n}__description.sql` migration for every schema/data change to avoid checksum conflicts across databases.
 - Application services depend on ports/repository interfaces, not concrete JDBC/JPA implementations.
 - Put transaction boundaries on application use-case services with Spring `@Transactional`; keep JDBC/PostgreSQL adapters focused on persistence operations behind ports.
+- Prefer `JdbcClient` with named parameters for explicit SQL, `DataClassRowMapper` for simple record projections, and batched named-parameter writes for owned child collections before introducing heavier ORM tooling.
 - Database adapters live behind outbound ports and must not leak SQL/JDBC concerns into domain records or MCP adapters.
 - Keep datasource configuration environment-driven; never hardcode real passwords, DSNs, tokens, or personal data in config, tests, docs, or logs.
 
