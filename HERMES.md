@@ -29,7 +29,7 @@ job-engine-spring/
 `-- src/test/java/org/instruct/jobenginespring/JobEngineSpringApplicationTests.java
 ```
 
-The project has the generated Spring Boot application class plus a normalized profile domain slice, an application-boundary profile repository port, profile CRUD use cases, a thin STDIO MCP profile adapter, a JDBC-backed PostgreSQL profile repository adapter, a sanitized database health application service, and a first Flyway migration for the `profile` schema. Do not assume controllers or non-profile domain schemas exist until they are verified in source.
+The project has the generated Spring Boot application class plus a normalized profile domain slice, a protocol-neutral application error model, an application-boundary profile repository port, profile CRUD use cases, a thin STDIO MCP profile adapter, a JDBC-backed PostgreSQL profile repository adapter, a sanitized database health application service, and a first Flyway migration for the `profile` schema. Do not assume controllers or non-profile domain schemas exist until they are verified in source.
 
 ## Intended Architecture
 
@@ -158,6 +158,7 @@ Guidelines:
 - Prefer Java records for immutable DTOs.
 - Keep the domain layer independent of Spring, JDBC, JPA, Flyway, and MCP annotations.
 - Put repository interfaces/ports in the application boundary; put PostgreSQL implementations in outbound adapters.
+- Use `application.error.ApplicationException`, `ApplicationErrorCode`, and `ApplicationErrorResponse` for safe, standardized application failures; adapters should not leak stack traces, credentials, or raw provider exception messages.
 - Prefer constructor injection.
 - Keep files focused and under ~500 physical lines where practical.
 - Do not use Lombok by default for simple records; keep Lombok only if it earns its dependency.

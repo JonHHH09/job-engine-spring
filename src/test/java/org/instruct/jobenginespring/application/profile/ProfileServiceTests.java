@@ -1,8 +1,14 @@
 package org.instruct.jobenginespring.application.profile;
 
 import org.instruct.jobenginespring.application.profile.ProfileService.ContactWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.EducationWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.ExperienceWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.LanguageWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.LinkWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileNotFoundException;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.ProjectTechnologyWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.ProjectWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.SkillWriteRequest;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.domain.profile.Education;
@@ -19,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -60,6 +67,72 @@ class ProfileServiceTests {
         assertEquals("location", created.contacts().getFirst().contactType());
         assertEquals("spring ai", created.skills().getFirst().normalizedSkill());
         assertEquals(List.of(created.profile()), service.listProfiles());
+    }
+
+    @Test
+    void createProfileMapsEverySupportedChildCollection() {
+        UUID contactId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID linkId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID skillId = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        UUID languageId = UUID.fromString("44444444-4444-4444-4444-444444444444");
+        UUID educationId = UUID.fromString("55555555-5555-5555-5555-555555555555");
+        UUID experienceId = UUID.fromString("66666666-6666-6666-6666-666666666666");
+        UUID projectId = UUID.fromString("77777777-7777-7777-7777-777777777777");
+        UUID technologyId = UUID.fromString("88888888-8888-8888-8888-888888888888");
+
+        ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
+                "Agentic Dev",
+                "agentic@example.com",
+                "Complete child graph",
+                List.of(new ContactWriteRequest(contactId, " Phone ", "555-0100", "mobile")),
+                List.of(new LinkWriteRequest(linkId, " Portfolio ", "https://example.test", "site")),
+                List.of(new SkillWriteRequest(skillId, "Spring AI", " Spring AI ", "backend", 1)),
+                List.of(new LanguageWriteRequest(languageId, "English", null, "Fluent", 2)),
+                List.of(new EducationWriteRequest(
+                        educationId,
+                        "Example University",
+                        "BSc",
+                        "Computer Science",
+                        "Remote",
+                        LocalDate.parse("2020-01-01"),
+                        LocalDate.parse("2024-01-01"),
+                        "Distributed systems"
+                )),
+                List.of(new ExperienceWriteRequest(
+                        experienceId,
+                        "Example Corp",
+                        "Java Developer",
+                        "Remote",
+                        LocalDate.parse("2024-01-01"),
+                        null,
+                        "Built services",
+                        3
+                )),
+                List.of(new ProjectWriteRequest(
+                        projectId,
+                        "Profile Repository",
+                        "https://example.test/profile-repository",
+                        "Repository work",
+                        4,
+                        List.of(new ProjectTechnologyWriteRequest(technologyId, "PostgreSQL", null, 5))
+                ))
+        ));
+
+        assertEquals(contactId, created.contacts().getFirst().id());
+        assertEquals("phone", created.contacts().getFirst().contactType());
+        assertEquals(linkId, created.links().getFirst().id());
+        assertEquals("portfolio", created.links().getFirst().linkType());
+        assertEquals(skillId, created.skills().getFirst().id());
+        assertEquals("spring ai", created.skills().getFirst().normalizedSkill());
+        assertEquals(languageId, created.languages().getFirst().id());
+        assertEquals("english", created.languages().getFirst().normalizedLanguage());
+        assertEquals(educationId, created.education().getFirst().id());
+        assertEquals("Distributed systems", created.education().getFirst().relevantFocus());
+        assertEquals(experienceId, created.experiences().getFirst().id());
+        assertEquals(3, created.experiences().getFirst().displayOrder());
+        assertEquals(projectId, created.projects().getFirst().id());
+        assertEquals(technologyId, created.projects().getFirst().technologies().getFirst().id());
+        assertEquals("postgresql", created.projectTechnologies().getFirst().normalizedTechnology());
     }
 
     @Test
@@ -123,7 +196,7 @@ class ProfileServiceTests {
     void updateMissingProfileFails() {
         UUID missingProfileId = UUID.fromString("11111111-1111-1111-1111-111111111111");
 
-        assertThrows(ProfileNotFoundException.class, () -> service.updateProfile(missingProfileId, new ProfileWriteRequest(
+        ProfileNotFoundException exception = assertThrows(ProfileNotFoundException.class, () -> service.updateProfile(missingProfileId, new ProfileWriteRequest(
                 "Missing",
                 "missing@example.com",
                 null,
@@ -135,6 +208,32 @@ class ProfileServiceTests {
                 null,
                 null
         )));
+
+        assertEquals("not_found", exception.errorCode().code());
+        assertEquals("Profile not found: " + missingProfileId, exception.safeMessage());
+        assertEquals(Map.of("resource", "profile", "profileId", missingProfileId.toString()), exception.details());
+    }
+
+    @Test
+    void rejectsNullUseCaseInputs() {
+        ProfileWriteRequest request = new ProfileWriteRequest(
+                "Agentic Dev",
+                "agentic@example.com",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+
+        assertThrows(NullPointerException.class, () -> service.createProfile(null));
+        assertThrows(NullPointerException.class, () -> service.getProfile(null));
+        assertThrows(NullPointerException.class, () -> service.updateProfile(null, request));
+        assertThrows(NullPointerException.class, () -> service.updateProfile(UUID.randomUUID(), null));
+        assertThrows(NullPointerException.class, () -> service.deleteProfile(null));
     }
 
     private static final class FakeProfileRepository implements ProfileRepository {

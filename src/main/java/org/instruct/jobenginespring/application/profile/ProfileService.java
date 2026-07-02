@@ -1,5 +1,7 @@
 package org.instruct.jobenginespring.application.profile;
 
+import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
+import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
@@ -16,6 +18,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -284,9 +287,14 @@ public final class ProfileService {
     public record ProjectTechnologyWriteRequest(UUID id, String technology, String normalizedTechnology, int displayOrder) {
     }
 
-    public static final class ProfileNotFoundException extends RuntimeException {
+    public static final class ProfileNotFoundException extends ApplicationException {
         public ProfileNotFoundException(UUID profileId) {
-            super("Profile not found: " + profileId);
+            super(
+                    ApplicationErrorCode.NOT_FOUND,
+                    "Profile not found: " + profileId,
+                    Map.of("resource", "profile", "profileId", String.valueOf(profileId)),
+                    null
+            );
         }
     }
 }
