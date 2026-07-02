@@ -41,6 +41,7 @@ Preferred direction:
 - Spring AI MCP Server as the protocol surface.
 - MCP tools/resources/prompts as the primary integration boundary.
 - Hexagonal / clean architecture: domain core first, application use cases around it, inbound MCP adapters at the edge, outbound database/provider adapters behind ports.
+- This is a Spring Boot application first: use Spring Boot stereotypes such as `@Service`, `@Component`, and `@Repository` to remove trivial wiring boilerplate while keeping dependency direction clean.
 - Keep tool methods thin: validate input, call a service, return structured DTOs.
 - Keep business logic in services, not inside annotation methods.
 - Avoid REST controllers unless the user explicitly asks for REST compatibility.
@@ -135,6 +136,7 @@ Database interaction rules:
 - Migrations should create PostgreSQL schemas with `CREATE SCHEMA IF NOT EXISTS ...` and then create tables/indexes/constraints inside those schemas.
 - Treat applied Flyway `V*__*.sql` migrations as immutable history. Do not edit an existing versioned migration after it may have run; create the next `V{n}__description.sql` migration for every schema/data change to avoid checksum conflicts across databases.
 - Application services depend on ports/repository interfaces, not concrete JDBC/JPA implementations.
+- Put transaction boundaries on application use-case services with Spring `@Transactional`; keep JDBC/PostgreSQL adapters focused on persistence operations behind ports.
 - Database adapters live behind outbound ports and must not leak SQL/JDBC concerns into domain records or MCP adapters.
 - Keep datasource configuration environment-driven; never hardcode real passwords, DSNs, tokens, or personal data in config, tests, docs, or logs.
 
@@ -147,7 +149,7 @@ Use explicit packages by concern:
 ```text
 org.instruct.jobenginespring
 |-- domain       # pure domain records/value objects, no framework persistence annotations
-|-- application  # use cases and ports
+|-- application  # Spring-managed use cases and application ports
 |-- adapter      # inbound MCP adapters and outbound database/provider adapters
 |-- config       # Spring configuration properties/beans
 `-- support      # shared internal utilities
@@ -157,6 +159,8 @@ Guidelines:
 
 - Prefer Java records for immutable DTOs.
 - Keep the domain layer independent of Spring, JDBC, JPA, Flyway, and MCP annotations.
+- Application use cases may use Spring Boot application annotations such as `@Service` and `@Transactional`; do not add persistence or protocol annotations to domain records.
+- Use Lombok selectively for Spring-managed boilerplate such as constructor injection (`@RequiredArgsConstructor`) and null checks (`@NonNull`); prefer records over Lombok for immutable DTO/domain shapes.
 - Put repository interfaces/ports in the application boundary; put PostgreSQL implementations in outbound adapters.
 - Use `application.error.ApplicationException`, `ApplicationErrorCode`, and `ApplicationErrorResponse` for safe, standardized application failures; adapters should not leak stack traces, credentials, or raw provider exception messages.
 - Prefer constructor injection.

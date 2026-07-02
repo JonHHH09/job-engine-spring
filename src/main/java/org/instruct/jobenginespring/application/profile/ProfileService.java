@@ -1,5 +1,7 @@
 package org.instruct.jobenginespring.application.profile;
 
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
@@ -13,6 +15,9 @@ import org.instruct.jobenginespring.domain.profile.ProfileProject;
 import org.instruct.jobenginespring.domain.profile.ProfileSkill;
 import org.instruct.jobenginespring.domain.profile.ProjectTechnology;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -24,29 +29,31 @@ import java.util.Optional;
 import java.util.UUID;
 
 /** Application use cases for manipulating profile-owned data. */
-public final class ProfileService {
+@Service
+@RequiredArgsConstructor(onConstructor_ = @Autowired)
+public class ProfileService {
 
+    @NonNull
     private final ProfileRepository profileRepository;
-    private final Clock clock;
-
-    public ProfileService(ProfileRepository profileRepository) {
-        this(profileRepository, Clock.systemUTC());
-    }
+    private Clock clock = Clock.systemUTC();
 
     ProfileService(ProfileRepository profileRepository, Clock clock) {
-        this.profileRepository = Objects.requireNonNull(profileRepository, "profileRepository must not be null");
+        this(profileRepository);
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
+    @Transactional(readOnly = true)
     public List<UserProfile> listProfiles() {
         return profileRepository.listProfiles();
     }
 
+    @Transactional(readOnly = true)
     public Optional<ProfileAggregate> getProfile(UUID profileId) {
         Objects.requireNonNull(profileId, "profileId must not be null");
         return profileRepository.findProfileAggregate(profileId);
     }
 
+    @Transactional
     public ProfileAggregate createProfile(ProfileWriteRequest request) {
         ProfileWriteRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
         Instant now = clock.instant();
@@ -55,6 +62,7 @@ public final class ProfileService {
         return profileRepository.saveProfileAggregate(aggregate);
     }
 
+    @Transactional
     public ProfileAggregate updateProfile(UUID profileId, ProfileWriteRequest request) {
         Objects.requireNonNull(profileId, "profileId must not be null");
         ProfileWriteRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
@@ -64,6 +72,7 @@ public final class ProfileService {
         return profileRepository.saveProfileAggregate(aggregate);
     }
 
+    @Transactional
     public boolean deleteProfile(UUID profileId) {
         Objects.requireNonNull(profileId, "profileId must not be null");
         return profileRepository.deleteProfile(profileId);

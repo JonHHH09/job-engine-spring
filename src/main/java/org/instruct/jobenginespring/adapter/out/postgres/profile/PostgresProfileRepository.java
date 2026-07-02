@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.adapter.out.postgres.profile;
 
+import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
@@ -14,7 +15,6 @@ import org.instruct.jobenginespring.domain.profile.UserProfile;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -29,13 +29,10 @@ import java.util.stream.Collectors;
 
 @Repository
 @ConditionalOnProperty(prefix = "job-engine.profile.postgres", name = "enabled", havingValue = "true", matchIfMissing = true)
+@RequiredArgsConstructor
 public class PostgresProfileRepository implements ProfileRepository {
 
     private final JdbcOperations jdbc;
-
-    public PostgresProfileRepository(JdbcOperations jdbc) {
-        this.jdbc = jdbc;
-    }
 
     @Override
     public List<UserProfile> listProfiles() {
@@ -169,7 +166,6 @@ public class PostgresProfileRepository implements ProfileRepository {
     }
 
     @Override
-    @Transactional
     public ProfileAggregate saveProfileAggregate(ProfileAggregate aggregate) {
         UserProfile profile = aggregate.profile();
         jdbc.update("""
@@ -193,7 +189,6 @@ public class PostgresProfileRepository implements ProfileRepository {
     }
 
     @Override
-    @Transactional
     public boolean deleteProfile(UUID profileId) {
         return jdbc.update("DELETE FROM profile.profiles WHERE id = ?", profileId) > 0;
     }

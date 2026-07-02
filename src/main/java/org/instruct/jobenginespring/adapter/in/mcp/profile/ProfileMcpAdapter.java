@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.adapter.in.mcp.profile;
 
+import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.profile.ProfileService;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -12,13 +13,10 @@ import java.util.List;
 import java.util.UUID;
 
 @Component
+@RequiredArgsConstructor
 public class ProfileMcpAdapter {
 
     private final ProfileService profileService;
-
-    public ProfileMcpAdapter(ProfileService profileService) {
-        this.profileService = profileService;
-    }
 
     @McpTool(
             name = "list_profiles",
