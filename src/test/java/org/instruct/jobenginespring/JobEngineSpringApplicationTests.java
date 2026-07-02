@@ -27,6 +27,7 @@ import java.util.UUID;
                 + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
                 + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,"
                 + "org.springframework.ai.model.postgresml.autoconfigure.PostgresMlEmbeddingAutoConfiguration",
+        "job-engine.health.postgres.enabled=false",
         "job-engine.profile.postgres.enabled=false"
 })
 class JobEngineSpringApplicationTests {

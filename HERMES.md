@@ -143,7 +143,7 @@ Database interaction rules:
 - Database adapters live behind outbound ports and must not leak SQL/JDBC concerns into domain records or MCP adapters.
 - Keep datasource configuration environment-driven; never hardcode real passwords, DSNs, tokens, or personal data in config, tests, docs, or logs.
 
-The current profile slice uses PostgreSQL through a JDBC outbound adapter behind `ProfileRepository`. `ProfileService` owns profile CRUD use cases and `ProfileMcpAdapter` exposes the stable STDIO MCP tools. The health slice exposes a `health` MCP tool through `HealthMcpAdapter`, delegates to the Spring-managed `DatabaseHealthService`, and checks PostgreSQL readiness through `PostgresDatabaseHealthPort` using a sanitized `SELECT 1`. Profile adapters intentionally map only the fields currently represented by the domain records; do not add database columns by editing applied Flyway migrations.
+The current profile slice uses PostgreSQL through a JDBC outbound adapter behind `ProfileRepository`. `ProfileService` owns profile CRUD use cases and `ProfileMcpAdapter` exposes the stable STDIO MCP tools. The health slice exposes a `health` MCP tool through `HealthMcpAdapter`, delegates to the Spring-managed `DatabaseHealthService`, and checks PostgreSQL readiness through `PostgresDatabaseHealthPort` using a sanitized `SELECT 1`. The PostgreSQL health port uses a property gate (`job-engine.health.postgres.enabled`) rather than `@ConditionalOnBean(JdbcOperations.class)`, because component conditions can be evaluated before auto-configured JDBC beans exist. Profile adapters intentionally map only the fields currently represented by the domain records; do not add database columns by editing applied Flyway migrations.
 
 ## Package and Code Organization
 
@@ -190,6 +190,8 @@ Before claiming code changes are done:
 - Inspect `git status --short`.
 - Do not commit unless explicitly asked.
 - Remove generated junk or temporary artifacts.
+
+For local IntelliJ debugging, remember this is a STDIO MCP server, not a long-running web server. A plain Spring Boot run configuration can start successfully, register tools, then shut down as soon as stdin reaches EOF. That is expected unless an MCP client launches the process and keeps the JSON-RPC stdin/stdout transport open. Use visible logging (`--logging.level.root=INFO`) only for local diagnosis; keep normal STDIO MCP logging quiet.
 
 ## Documentation Rules
 
