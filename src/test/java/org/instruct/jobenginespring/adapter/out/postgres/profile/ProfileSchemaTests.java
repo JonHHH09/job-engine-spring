@@ -22,6 +22,7 @@ class ProfileSchemaTests {
 
     @Test
     void rejectsBlankTableNames() {
+        assertThrows(IllegalArgumentException.class, () -> new ProfileSchema.Table(null));
         assertThrows(IllegalArgumentException.class, () -> new ProfileSchema.Table(" "));
     }
 }

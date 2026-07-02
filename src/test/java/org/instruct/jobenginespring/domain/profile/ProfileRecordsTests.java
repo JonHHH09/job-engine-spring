@@ -112,6 +112,16 @@ class ProfileRecordsTests {
                 NOW,
                 null
         ));
+        assertThrows(IllegalArgumentException.class, () -> new UserProfile(
+                PROFILE_ID,
+                null,
+                "john.doe@example.com",
+                null,
+                null,
+                NOW,
+                NOW,
+                null
+        ));
         assertThrows(NullPointerException.class, () -> new Education(
                 UUID.randomUUID(),
                 null,
@@ -124,6 +134,21 @@ class ProfileRecordsTests {
                 null,
                 NOW
         ));
+    }
+
+    @Test
+    void profileProjectConvenienceConstructorCreatesEmptyTechnologyList() {
+        ProfileProject project = new ProfileProject(
+                PROJECT_ID,
+                PROFILE_ID,
+                "Portfolio System",
+                "https://example.com",
+                "Profile-safe sample project",
+                1,
+                NOW
+        );
+
+        assertEquals(List.of(), project.technologies());
     }
 
     @Test
