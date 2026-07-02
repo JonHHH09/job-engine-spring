@@ -16,10 +16,10 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Read-oriented application port for profile-owned data.
+ * Application port for profile-owned data.
  *
- * <p>No PostgreSQL implementation is provided yet. Outbound adapters should implement this
- * port without exposing persistence row/entity types to the application or domain layers.
+ * <p>Outbound adapters implement this port without exposing persistence row/entity types to the
+ * application or domain layers.
  */
 public interface ProfileRepository {
 
@@ -42,6 +42,10 @@ public interface ProfileRepository {
     List<ProfileProject> listProjects(UUID profileId);
 
     List<ProjectTechnology> listProjectTechnologies(UUID profileId);
+
+    ProfileAggregate saveProfileAggregate(ProfileAggregate aggregate);
+
+    boolean deleteProfile(UUID profileId);
 
     default Optional<ProfileAggregate> findProfileAggregate(UUID profileId) {
         return findProfileById(profileId)

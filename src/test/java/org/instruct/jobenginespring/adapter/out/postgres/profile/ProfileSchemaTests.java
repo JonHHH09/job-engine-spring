@@ -1,6 +1,4 @@
-package org.instruct.jobenginespring.storage.profile;
-
-import org.instruct.jobenginespring.adapter.out.postgres.profile.ProfileSchema;
+package org.instruct.jobenginespring.adapter.out.postgres.profile;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;

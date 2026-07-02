@@ -1,6 +1,17 @@
 spring:
   application:
     name: job-engine-spring
+  main:
+    banner-mode: off
+  ai:
+    mcp:
+      server:
+        name: job-engine-spring
+        version: 0.1.0
+        type: SYNC
+        stdio: true
+        annotation-scanner:
+          enabled: true
   datasource:
     url: ${JOB_ENGINE_POSTGRES_URL:jdbc:postgresql://localhost:5432/job_engine}
     username: ${JOB_ENGINE_POSTGRES_USER:}
@@ -15,3 +26,7 @@ spring:
   threads:
     virtual:
       enabled: true
+
+logging:
+  level:
+    root: OFF

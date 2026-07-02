@@ -15,18 +15,21 @@ job-engine-spring/
 |-- HELP.md
 |-- src/main/java/org/instruct/jobenginespring/JobEngineSpringApplication.java
 |-- src/main/java/org/instruct/jobenginespring/domain/profile/    # normalized profile records
+|-- src/main/java/org/instruct/jobenginespring/application/profile/ProfileService.java
 |-- src/main/java/org/instruct/jobenginespring/application/profile/port/ProfileRepository.java
+|-- src/main/java/org/instruct/jobenginespring/adapter/in/mcp/profile/ProfileMcpAdapter.java
 |-- src/main/java/org/instruct/jobenginespring/application/health/DatabaseHealthService.java
 |-- src/main/java/org/instruct/jobenginespring/adapter/out/postgres/profile/ProfileSchema.java
+|-- src/main/java/org/instruct/jobenginespring/adapter/out/postgres/profile/PostgresProfileRepository.java
 |-- src/main/resources/application.yaml
 |-- src/main/resources/db/migration/V1__create_profile_schema.sql
 |-- src/test/java/org/instruct/jobenginespring/application/health/
 |-- src/test/java/org/instruct/jobenginespring/domain/profile/
-|-- src/test/java/org/instruct/jobenginespring/storage/profile/
+|-- src/test/java/org/instruct/jobenginespring/adapter/out/postgres/profile/
 `-- src/test/java/org/instruct/jobenginespring/JobEngineSpringApplicationTests.java
 ```
 
-The project has the generated Spring Boot application class plus a normalized profile domain slice, an application-boundary profile repository port, a sanitized database health application service, and a first Flyway migration for the `profile` schema. Do not assume MCP tools, concrete PostgreSQL repository implementations, controllers, or other domain schemas exist until they are verified in source.
+The project has the generated Spring Boot application class plus a normalized profile domain slice, an application-boundary profile repository port, profile CRUD use cases, a thin STDIO MCP profile adapter, a JDBC-backed PostgreSQL profile repository adapter, a sanitized database health application service, and a first Flyway migration for the `profile` schema. Do not assume controllers or non-profile domain schemas exist until they are verified in source.
 
 ## Intended Architecture
 
@@ -46,10 +49,14 @@ Initial MCP tool surface should be small and verifiable:
 
 1. `health`
 2. `list_profiles`
-3. `list_jobs`
-4. `search_jobs`
-5. `get_match_report`
-6. `run_pipeline_dry_run` only after the storage/CLI boundary is explicit
+3. `get_profile`
+4. `create_profile`
+5. `update_profile`
+6. `delete_profile`
+7. `list_jobs`
+8. `search_jobs`
+9. `get_match_report`
+10. `run_pipeline_dry_run` only after the storage/CLI boundary is explicit
 
 ## Dependency Baseline
 
@@ -59,6 +66,7 @@ The current `pom.xml` uses:
 - Java property `25`
 - Spring AI BOM `2.0.0`
 - `spring-ai-starter-mcp-server`
+- `spring-boot-starter-jdbc`
 - Postgres/Flyway/PostgresML/document-reader dependencies
 
 Before adding more dependencies, verify the actual implementation need. Prefer minimal dependencies and remove unused generated starters.
@@ -95,15 +103,24 @@ Example MCP configuration shape, to be adapted only after verifying the selected
 spring:
   application:
     name: job-engine-spring
+  main:
+    banner-mode: off
   ai:
     mcp:
       server:
         name: job-engine-spring
         version: 0.1.0
         type: SYNC
+        stdio: true
         annotation-scanner:
           enabled: true
+
+logging:
+  level:
+    root: OFF
 ```
+
+For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not polluted.
 
 If using HTTP transport with WebMVC/WebFlux, set the appropriate `spring.ai.mcp.server.protocol` value after confirming the selected starter. Prefer `STREAMABLE` over deprecated SSE for Spring AI 2.0+.
 
@@ -121,7 +138,7 @@ Database interaction rules:
 - Database adapters live behind outbound ports and must not leak SQL/JDBC concerns into domain records or MCP adapters.
 - Keep datasource configuration environment-driven; never hardcode real passwords, DSNs, tokens, or personal data in config, tests, docs, or logs.
 
-The current profile slice prepares for PostgreSQL by naming a logical `profile` schema, exposing a read-oriented `ProfileRepository` application port, and creating normalized profile tables through Flyway. It intentionally does not yet implement PostgreSQL repository access, JPA/JDBC repositories, MCP profile tools, or runtime storage switching.
+The current profile slice uses PostgreSQL through a JDBC outbound adapter behind `ProfileRepository`. `ProfileService` owns profile CRUD use cases and `ProfileMcpAdapter` exposes the stable STDIO MCP tools. The adapter intentionally maps only the fields currently represented by the domain records; do not add database columns by editing applied Flyway migrations.
 
 ## Package and Code Organization
 
@@ -186,10 +203,10 @@ Mandatory:
 
 ## Current Known Gaps
 
-As of the profile migration slice:
+As of the profile CRUD MCP slice:
 
-- No MCP tool classes exist yet.
-- No concrete PostgreSQL repository adapter exists yet.
+- Profile MCP CRUD tools and a PostgreSQL JDBC adapter exist for normalized profile data.
+- Health is still an application service only; no health MCP adapter exists yet.
 - No README exists yet.
 - The default app startup requires a PostgreSQL role matching the configured `JOB_ENGINE_POSTGRES_USER` placeholder. Local verification succeeded with endpoint readiness and a valid local role, but the default `postgres` role may not exist on every machine.
 - IntelliJ MCP may have a different project open; verify the current IntelliJ project before IDE-native build/run/debug work.
