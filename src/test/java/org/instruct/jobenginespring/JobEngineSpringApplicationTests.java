@@ -11,6 +11,8 @@ import org.instruct.jobenginespring.domain.profile.ProfileProject;
 import org.instruct.jobenginespring.domain.profile.ProfileSkill;
 import org.instruct.jobenginespring.domain.profile.ProjectTechnology;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
+import org.instruct.jobenginespring.application.health.DatabaseHealthService.DatabaseHealthCheckResult;
+import org.instruct.jobenginespring.application.health.DatabaseHealthService.DatabaseHealthPort;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -35,6 +37,11 @@ class JobEngineSpringApplicationTests {
 
     @TestConfiguration(proxyBeanMethods = false)
     static class ProfileRepositoryTestConfig {
+
+        @Bean
+        DatabaseHealthPort databaseHealthPort() {
+            return DatabaseHealthCheckResult::up;
+        }
 
         @Bean
         ProfileRepository profileRepository() {

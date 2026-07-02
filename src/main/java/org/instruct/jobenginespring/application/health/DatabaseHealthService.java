@@ -1,5 +1,8 @@
 package org.instruct.jobenginespring.application.health;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
 import java.sql.SQLInvalidAuthorizationSpecException;
 import java.sql.SQLNonTransientConnectionException;
 import java.sql.SQLRecoverableException;
@@ -18,11 +21,13 @@ import java.util.concurrent.TimeoutException;
  * a basic {@code SELECT 1} using application credentials and return only a sanitized
  * category. This service aggregates safe status metadata for future inbound adapters.</p>
  */
+@Service
 public final class DatabaseHealthService {
 
     private final DatabaseHealthPort databaseHealthPort;
     private final Clock clock;
 
+    @Autowired
     public DatabaseHealthService(DatabaseHealthPort databaseHealthPort) {
         this(databaseHealthPort, Clock.systemUTC());
     }

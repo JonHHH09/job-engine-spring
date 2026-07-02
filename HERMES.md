@@ -17,8 +17,10 @@ job-engine-spring/
 |-- src/main/java/org/instruct/jobenginespring/domain/profile/    # normalized profile records
 |-- src/main/java/org/instruct/jobenginespring/application/profile/ProfileService.java
 |-- src/main/java/org/instruct/jobenginespring/application/profile/port/ProfileRepository.java
+|-- src/main/java/org/instruct/jobenginespring/adapter/in/mcp/health/HealthMcpAdapter.java
 |-- src/main/java/org/instruct/jobenginespring/adapter/in/mcp/profile/ProfileMcpAdapter.java
 |-- src/main/java/org/instruct/jobenginespring/application/health/DatabaseHealthService.java
+|-- src/main/java/org/instruct/jobenginespring/adapter/out/postgres/health/PostgresDatabaseHealthPort.java
 |-- src/main/java/org/instruct/jobenginespring/adapter/out/postgres/profile/ProfileSchema.java
 |-- src/main/java/org/instruct/jobenginespring/adapter/out/postgres/profile/PostgresProfileRepository.java
 |-- src/main/resources/application.yaml
@@ -29,7 +31,7 @@ job-engine-spring/
 `-- src/test/java/org/instruct/jobenginespring/JobEngineSpringApplicationTests.java
 ```
 
-The project has the generated Spring Boot application class plus a normalized profile domain slice, a protocol-neutral application error model, an application-boundary profile repository port, profile CRUD use cases, a thin STDIO MCP profile adapter, a JDBC-backed PostgreSQL profile repository adapter, a sanitized database health application service, and a first Flyway migration for the `profile` schema. Do not assume controllers or non-profile domain schemas exist until they are verified in source.
+The project has the generated Spring Boot application class plus a normalized profile domain slice, a protocol-neutral application error model, an application-boundary profile repository port, profile CRUD use cases, thin STDIO MCP health/profile adapters, JDBC-backed PostgreSQL health/profile outbound adapters, a sanitized database health application service, and a first Flyway migration for the `profile` schema. Do not assume controllers or non-profile domain schemas exist until they are verified in source.
 
 ## Intended Architecture
 
@@ -141,7 +143,7 @@ Database interaction rules:
 - Database adapters live behind outbound ports and must not leak SQL/JDBC concerns into domain records or MCP adapters.
 - Keep datasource configuration environment-driven; never hardcode real passwords, DSNs, tokens, or personal data in config, tests, docs, or logs.
 
-The current profile slice uses PostgreSQL through a JDBC outbound adapter behind `ProfileRepository`. `ProfileService` owns profile CRUD use cases and `ProfileMcpAdapter` exposes the stable STDIO MCP tools. The adapter intentionally maps only the fields currently represented by the domain records; do not add database columns by editing applied Flyway migrations.
+The current profile slice uses PostgreSQL through a JDBC outbound adapter behind `ProfileRepository`. `ProfileService` owns profile CRUD use cases and `ProfileMcpAdapter` exposes the stable STDIO MCP tools. The health slice exposes a `health` MCP tool through `HealthMcpAdapter`, delegates to the Spring-managed `DatabaseHealthService`, and checks PostgreSQL readiness through `PostgresDatabaseHealthPort` using a sanitized `SELECT 1`. Profile adapters intentionally map only the fields currently represented by the domain records; do not add database columns by editing applied Flyway migrations.
 
 ## Package and Code Organization
 
@@ -209,10 +211,10 @@ Mandatory:
 
 ## Current Known Gaps
 
-As of the profile CRUD MCP slice:
+As of the health/profile CRUD MCP slice:
 
 - Profile MCP CRUD tools and a PostgreSQL JDBC adapter exist for normalized profile data.
-- Health is still an application service only; no health MCP adapter exists yet.
+- Health is exposed as a sanitized MCP tool backed by `DatabaseHealthService` and `PostgresDatabaseHealthPort`.
 - No README exists yet.
 - The default app startup requires a PostgreSQL role matching the configured `JOB_ENGINE_POSTGRES_USER` placeholder. Local verification succeeded with endpoint readiness and a valid local role, but the default `postgres` role may not exist on every machine.
 - IntelliJ MCP may have a different project open; verify the current IntelliJ project before IDE-native build/run/debug work.
