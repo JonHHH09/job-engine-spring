@@ -56,7 +56,7 @@ public class ProfileService {
     @Transactional
     public ProfileAggregate createProfile(ProfileWriteRequest request) {
         ProfileWriteValidator.validate(request);
-        ProfileWriteRequest safeRequest = request;
+        ProfileWriteRequest safeRequest = ProfileWriteCanonicalizer.canonicalize(request);
         Instant now = clock.instant();
         UUID profileId = UUID.randomUUID();
         ProfileAggregate aggregate = toAggregate(profileId, safeRequest, now, now);
@@ -67,7 +67,7 @@ public class ProfileService {
     public ProfileAggregate updateProfile(UUID profileId, ProfileWriteRequest request) {
         Objects.requireNonNull(profileId, "profileId must not be null");
         ProfileWriteValidator.validate(request);
-        ProfileWriteRequest safeRequest = request;
+        ProfileWriteRequest safeRequest = ProfileWriteCanonicalizer.canonicalize(request);
         UserProfile existing = profileRepository.findProfileById(profileId)
                 .orElseThrow(() -> new ProfileNotFoundException(profileId));
         ProfileAggregate aggregate = toAggregate(profileId, safeRequest, existing.createdAt(), clock.instant());
@@ -106,7 +106,7 @@ public class ProfileService {
     }
 
     private static List<ProfileContact> contacts(UUID profileId, List<ContactWriteRequest> contacts, Instant createdAt, Instant updatedAt) {
-        return nullSafe(contacts).stream()
+        return contacts.stream()
                 .map(contact -> new ProfileContact(
                         newId(contact.id()),
                         profileId,
@@ -120,7 +120,7 @@ public class ProfileService {
     }
 
     private static List<ProfileLink> links(UUID profileId, List<LinkWriteRequest> links, Instant createdAt, Instant updatedAt) {
-        return nullSafe(links).stream()
+        return links.stream()
                 .map(link -> new ProfileLink(
                         newId(link.id()),
                         profileId,
@@ -134,7 +134,7 @@ public class ProfileService {
     }
 
     private static List<ProfileSkill> skills(UUID profileId, List<SkillWriteRequest> skills, Instant createdAt) {
-        return nullSafe(skills).stream()
+        return skills.stream()
                 .map(skill -> new ProfileSkill(
                         newId(skill.id()),
                         profileId,
@@ -148,7 +148,7 @@ public class ProfileService {
     }
 
     private static List<ProfileLanguage> languages(UUID profileId, List<LanguageWriteRequest> languages, Instant createdAt) {
-        return nullSafe(languages).stream()
+        return languages.stream()
                 .map(language -> new ProfileLanguage(
                         newId(language.id()),
                         profileId,
@@ -162,7 +162,7 @@ public class ProfileService {
     }
 
     private static List<Education> education(UUID profileId, List<EducationWriteRequest> education, Instant createdAt) {
-        return nullSafe(education).stream()
+        return education.stream()
                 .map(item -> new Education(
                         newId(item.id()),
                         profileId,
@@ -179,7 +179,7 @@ public class ProfileService {
     }
 
     private static List<Experience> experiences(UUID profileId, List<ExperienceWriteRequest> experiences, Instant createdAt) {
-        return nullSafe(experiences).stream()
+        return experiences.stream()
                 .map(item -> new Experience(
                         newId(item.id()),
                         profileId,
@@ -196,7 +196,7 @@ public class ProfileService {
     }
 
     private static List<ProfileProject> projects(UUID profileId, List<ProjectWriteRequest> projects, Instant createdAt) {
-        return nullSafe(projects).stream()
+        return projects.stream()
                 .map(project -> {
                     UUID projectId = newId(project.id());
                     return new ProfileProject(
@@ -215,7 +215,7 @@ public class ProfileService {
 
 
     private static List<ProjectTechnology> technologies(UUID projectId, List<ProjectTechnologyWriteRequest> technologies, Instant createdAt) {
-        return nullSafe(technologies).stream()
+        return technologies.stream()
                 .map(technology -> new ProjectTechnology(
                         newId(technology.id()),
                         projectId,
@@ -229,10 +229,6 @@ public class ProfileService {
 
     private static UUID newId(UUID id) {
         return id == null ? UUID.randomUUID() : id;
-    }
-
-    private static <T> List<T> nullSafe(List<T> values) {
-        return values == null ? List.of() : values;
     }
 
     public record ProfileWriteRequest(

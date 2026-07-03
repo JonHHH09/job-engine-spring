@@ -50,12 +50,12 @@ class ProfileServiceTests {
     @Test
     void createProfilePersistsNormalizedAggregate() {
         ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
-                "Agentic Dev",
-                "agentic@example.com",
-                "Builds MCP-native systems",
-                List.of(new ContactWriteRequest(null, "Location", "Montreal", "home")),
+                " Agentic Dev ",
+                " AGENTIC@EXAMPLE.COM ",
+                " Builds MCP-native systems ",
+                List.of(new ContactWriteRequest(null, " Location ", " Montreal ", " home ")),
                 null,
-                List.of(new SkillWriteRequest(null, "Spring AI", null, "backend", 1)),
+                List.of(new SkillWriteRequest(null, " Spring AI ", null, " backend ", 1)),
                 null,
                 null,
                 null,
@@ -64,9 +64,14 @@ class ProfileServiceTests {
 
         assertNotNull(created.profile().id());
         assertEquals("Agentic Dev", created.profile().fullName());
+        assertEquals("agentic@example.com", created.profile().email());
+        assertEquals("Builds MCP-native systems", created.profile().summary());
         assertEquals(NOW, created.profile().createdAt());
         assertEquals("location", created.contacts().getFirst().contactType());
+        assertEquals("Montreal", created.contacts().getFirst().contactValue());
+        assertEquals("home", created.contacts().getFirst().label());
         assertEquals("spring ai", created.skills().getFirst().normalizedSkill());
+        assertEquals("backend", created.skills().getFirst().category());
         assertEquals(List.of(created.profile()), service.listProfiles());
     }
 
