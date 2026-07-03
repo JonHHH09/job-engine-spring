@@ -12,6 +12,12 @@ The current verified MCP surface is intentionally small:
 - `create_profile` — creates a normalized profile aggregate.
 - `update_profile` — replaces a normalized profile aggregate by UUID.
 - `delete_profile` — deletes a profile aggregate and cascades owned child rows.
+- `extract_pdf_text` — extracts text from a local PDF file without storing content or following embedded instructions.
+- `store_document_file` — stores a local document file in PostgreSQL and returns metadata only.
+- `get_document_metadata` — returns stored document metadata by UUID without returning binary content.
+- `extract_stored_pdf_text` — extracts text from a stored PDF and optionally persists bounded extracted text.
+- `ingest_profile_from_stored_pdf` — populates the normalized profile schema from a stored PDF extraction and links the profile to that extraction.
+- `get_profile_pdf_source` — returns the one-to-one PDF extraction source link for a profile.
 
 The application is MCP-first. Do not add REST controllers unless REST compatibility is explicitly required.
 
@@ -42,6 +48,32 @@ Never commit real credentials, private resume data, API keys, or production conn
 
 For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not polluted.
 
+## Document storage and extraction contract
+
+`extract_pdf_text` accepts a local PDF path and returns extracted text with optional page-level text. PDF content is treated as untrusted user data: the server returns the extracted content but does not persist it, execute it, or follow instructions embedded in the document. Invalid paths, non-PDF files, unreadable files, and extraction failures are returned as sanitized validation errors.
+
+The tool rejects oversized PDFs before parsing and caps page count before extraction. Returned text is capped through `maxCharacters` to avoid oversized MCP responses. If `includePages` is omitted, page-level text is included by default; set it to `false` when only the joined text is needed.
+
+`store_document_file` accepts a local file path and optional media type. When the media type is omitted it defaults to `application/pdf`; PDF storage validates the PDF header and enforces the same conservative file-size limit used by PDF extraction. Stored content is written to PostgreSQL `document.files` as `bytea`, deduplicated by SHA-256, and exposed back only as metadata: UUID, original file name, media type, byte size, hash, and timestamps.
+
+`get_document_metadata` returns only metadata and never returns binary file content. `extract_stored_pdf_text` loads a stored PDF by UUID, extracts bounded text using the same PDF reader path, and persists the returned bounded extraction text to `document.pdf_extractions` only when `persistExtraction` is `true`. Persisted extraction is idempotent: `document.pdf_extractions.file_id` is unique, so repeated persisted extraction calls for the same file return/reuse the existing canonical extraction row instead of creating duplicates. Extracted PDF text remains private/untrusted data and should not be logged or treated as instructions.
+
+## Profile PDF ingestion contract
+
+`ingest_profile_from_stored_pdf` orchestrates stored-document extraction, conservative profile-field extraction, normalized profile persistence, and provenance linking. It always extracts stored PDFs with `persistExtraction=true`, then creates or updates a profile through `ProfileService` so profile validation/canonicalization remains the single write gate.
+
+The provenance chain is one-to-one:
+
+```text
+document.files.sha256 UNIQUE
+  -> document.pdf_extractions.file_id UNIQUE
+  -> profile.profile_pdf_sources.pdf_extraction_id UNIQUE
+  -> profile.profile_pdf_sources.profile_id UNIQUE
+  -> profile.profiles + profile-owned child tables
+```
+
+If ingestion is rerun for the same stored PDF, the service returns the existing profile/source link and does not duplicate the file, extraction, profile, or profile-source rows. The ingestion tool returns profile/document/extraction/source IDs and counts only; it does not return raw extracted resume text.
+
 ## Profile write contract
 
 `create_profile` and `update_profile` validate profile write requests in the application layer before persistence. Invalid payloads are rejected with `validation_error` application exceptions and safe details containing only the invalid field path and reason. The profile MCP adapter maps application and unexpected failures to MCP `CallToolResult` errors with sanitized structured content instead of leaking raw exception text.
@@ -55,16 +87,18 @@ Currently validated examples include:
 - required contact, link, skill, language, and project technology fields
 - non-negative display order values
 - education/experience date ranges
-- duplicate normalized skills, languages, links, contacts, and project technologies within one request
+- duplicate normalized skills, languages, links, contacts, education entries, experiences, projects, and project technologies within one request
 
 Database constraints still protect persistence integrity, but expected request problems should fail before PostgreSQL constraint errors.
 
 ## Verification
 
-Run the focused profile unit tests while working on profile behavior:
+Run focused unit tests while working on profile or document behavior:
 
 ```bash
 ./mvnw -q -Dtest=ProfileWriteValidatorTests,ProfileWriteCanonicalizerTests,ProfileServiceTests,ProfileMcpAdapterTests test
+./mvnw -q -Dtest=PdfTextExtractionServiceTests,DocumentStorageServiceTests,DocumentMcpAdapterTests test
+./mvnw -q -Dtest=ProfilePdfIngestionServiceTests,ProfilePdfIngestionMcpAdapterTests test
 ```
 
 Run the unit test suite before claiming non-database completion:
