@@ -46,6 +46,8 @@ For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not po
 
 `create_profile` and `update_profile` validate profile write requests in the application layer before persistence. Invalid payloads are rejected with `validation_error` application exceptions and safe details containing only the invalid field path and reason. The profile MCP adapter maps application and unexpected failures to MCP `CallToolResult` errors with sanitized structured content instead of leaking raw exception text.
 
+After validation, profile writes are canonicalized before persistence: required text is trimmed, email and normalized keys are lower-cased, blank optional text becomes `null`, and `null` child collections become empty lists. PostgreSQL also enforces canonical uniqueness and future-write canonical form for profile email and normalized profile child keys through Flyway-managed indexes and `NOT VALID` check constraints. Persistence constraint failures are mapped to sanitized validation errors.
+
 Currently validated examples include:
 
 - non-blank `fullName` and email
@@ -59,16 +61,20 @@ Database constraints still protect persistence integrity, but expected request p
 
 ## Verification
 
-Run the focused profile tests while working on profile behavior:
+Run the focused profile unit tests while working on profile behavior:
 
 ```bash
-./mvnw -q -Dtest=ProfileWriteValidatorTests,ProfileServiceTests,ProfileMcpAdapterTests,PostgresProfileRepositoryIntegrationTests test
+./mvnw -q -Dtest=ProfileWriteValidatorTests,ProfileWriteCanonicalizerTests,ProfileServiceTests,ProfileMcpAdapterTests test
 ```
 
-Run the full test suite before claiming repository-level completion:
+Run the unit test suite before claiming non-database completion:
 
 ```bash
 ./mvnw test
 ```
 
-Use `./mvnw verify` when the JaCoCo coverage gate must be enforced.
+Run Docker-backed PostgreSQL integration tests and the JaCoCo coverage gate explicitly when Docker/Testcontainers is available:
+
+```bash
+./mvnw -Pintegration-tests verify
+```

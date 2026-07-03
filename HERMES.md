@@ -145,7 +145,7 @@ Database interaction rules:
 - Database adapters live behind outbound ports and must not leak SQL/JDBC concerns into domain records or MCP adapters.
 - Keep datasource configuration environment-driven; never hardcode real passwords, DSNs, tokens, or personal data in config, tests, docs, or logs.
 
-The current profile slice uses PostgreSQL through a JDBC outbound adapter behind `ProfileRepository`. `ProfileService` owns profile CRUD use cases and invokes `ProfileWriteValidator` before persistence so expected request problems become safe `validation_error` application failures instead of raw database constraint errors. `ProfileMcpAdapter` exposes the stable STDIO MCP tools and maps thrown application/unexpected failures through `ApplicationExceptionMapper` into `CallToolResult` errors with sanitized structured content. The health slice exposes a `health` MCP tool through `HealthMcpAdapter`, delegates to the Spring-managed `DatabaseHealthService`, and checks PostgreSQL readiness through `PostgresDatabaseHealthPort` using a sanitized `SELECT 1`. The PostgreSQL health port uses a property gate (`job-engine.health.postgres.enabled`) rather than `@ConditionalOnBean(JdbcOperations.class)`, because component conditions can be evaluated before auto-configured JDBC beans exist. Profile adapters intentionally map only the fields currently represented by the domain records; do not add database columns by editing applied Flyway migrations.
+The current profile slice uses PostgreSQL through a JDBC outbound adapter behind `ProfileRepository`. `ProfileService` owns profile CRUD use cases and invokes `ProfileWriteValidator` before persistence so expected request problems become safe `validation_error` application failures instead of raw database constraint errors. After validation, `ProfileWriteCanonicalizer` trims required text, lower-cases email and normalized keys, converts blank optional text to `null`, and turns absent child collections into empty lists before aggregate construction. PostgreSQL enforces canonical uniqueness and future-write canonical form through Flyway-managed expression indexes and `NOT VALID` check constraints; persistence constraint failures are mapped to sanitized validation errors. `ProfileMcpAdapter` exposes the stable STDIO MCP tools and maps thrown application/unexpected failures through `ApplicationExceptionMapper` into `CallToolResult` errors with sanitized structured content. The health slice exposes a `health` MCP tool through `HealthMcpAdapter`, delegates to the Spring-managed `DatabaseHealthService`, and checks PostgreSQL readiness through `PostgresDatabaseHealthPort` using a sanitized `SELECT 1`. The PostgreSQL health port uses a property gate (`job-engine.health.postgres.enabled`) rather than `@ConditionalOnBean(JdbcOperations.class)`, because component conditions can be evaluated before auto-configured JDBC beans exist. Profile adapters intentionally map only the fields currently represented by the domain records; do not add database columns by editing applied Flyway migrations.
 
 ## Package and Code Organization
 
@@ -183,13 +183,14 @@ Expected verification commands when terminal verification is necessary:
 
 ```bash
 ./mvnw test
+./mvnw -Pintegration-tests verify
 ./mvnw spring-boot:run
 ```
 
 Before claiming code changes are done:
 
 - Run the narrowest relevant test first.
-- Run a broader Maven test/build when dependencies, wiring, or application startup changes.
+- Run a broader Maven test/build when dependencies, wiring, or application startup changes. Docker-backed Testcontainers integration tests and the JaCoCo coverage gate are explicit through `./mvnw -Pintegration-tests verify`; plain `./mvnw test` is the Docker-free unit test path.
 - Inspect `git status --short`.
 - Do not commit unless explicitly asked.
 - Remove generated junk or temporary artifacts.
@@ -218,7 +219,7 @@ Mandatory:
 
 As of the health/profile CRUD MCP slice:
 
-- Profile MCP CRUD tools, application-layer profile write validation, and a PostgreSQL JDBC adapter exist for normalized profile data.
+- Profile MCP CRUD tools, application-layer profile write validation/canonicalization, and a PostgreSQL JDBC adapter exist for normalized profile data.
 - Health is exposed as a sanitized MCP tool backed by `DatabaseHealthService` and `PostgresDatabaseHealthPort`.
 - A minimal README documents the current MCP tool surface, configuration rules, validation contract, and verification commands.
 - The default app startup requires a PostgreSQL role matching the configured `JOB_ENGINE_POSTGRES_USER` placeholder. Local verification succeeded with endpoint readiness and a valid local role, but the default `postgres` role may not exist on every machine.
