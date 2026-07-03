@@ -29,6 +29,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
@@ -147,6 +148,13 @@ class PostgresProfileRepositoryIntegrationTests {
                 .toList());
         assertFalse(repository.findProfileById(UUID.fromString("56565656-5656-5656-5656-565656565656")).isPresent());
         assertFalse(repository.deleteProfile(UUID.fromString("78787878-7878-7878-7878-787878787878")));
+    }
+
+    @Test
+    void rejectsNonCanonicalProfileEmails() {
+        ProfileAggregate nonCanonicalEmail = identityAggregate(PROFILE_ID, "Agentic Dev", " Agentic@Example.Test ");
+
+        assertThrows(RuntimeException.class, () -> repository.saveProfileAggregate(nonCanonicalEmail));
     }
 
     @Test

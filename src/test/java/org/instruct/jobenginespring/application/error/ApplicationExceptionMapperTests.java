@@ -1,6 +1,7 @@
 package org.instruct.jobenginespring.application.error;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.util.Map;
 
@@ -91,6 +92,15 @@ class ApplicationExceptionMapperTests {
 
         assertEquals("internal_error", response.code());
         assertEquals("Unexpected application error", response.message());
+        assertEquals(Map.of(), response.details());
+    }
+
+    @Test
+    void mapsDataIntegrityExceptionsToSanitizedValidationError() {
+        ApplicationErrorResponse response = mapper.toErrorResponse(new DataIntegrityViolationException("sensitive constraint detail"));
+
+        assertEquals("validation_error", response.code());
+        assertEquals("Profile data violates a persistence constraint", response.message());
         assertEquals(Map.of(), response.details());
     }
 

@@ -1,5 +1,9 @@
 package org.instruct.jobenginespring.application.error;
 
+import org.springframework.dao.DataIntegrityViolationException;
+
+import java.util.Map;
+
 /** Converts arbitrary failures into a sanitized, adapter-neutral application error response. */
 public final class ApplicationExceptionMapper {
 
@@ -12,14 +16,22 @@ public final class ApplicationExceptionMapper {
             return new ApplicationErrorResponse(
                     ApplicationErrorCode.VALIDATION_ERROR.code(),
                     safeValidationMessage(throwable),
-                    java.util.Map.of()
+                    Map.of()
+            );
+        }
+
+        if (throwable instanceof DataIntegrityViolationException) {
+            return new ApplicationErrorResponse(
+                    ApplicationErrorCode.VALIDATION_ERROR.code(),
+                    "Profile data violates a persistence constraint",
+                    Map.of()
             );
         }
 
         return new ApplicationErrorResponse(
                 ApplicationErrorCode.INTERNAL_ERROR.code(),
                 ApplicationErrorCode.INTERNAL_ERROR.defaultMessage(),
-                java.util.Map.of()
+                Map.of()
         );
     }
 
