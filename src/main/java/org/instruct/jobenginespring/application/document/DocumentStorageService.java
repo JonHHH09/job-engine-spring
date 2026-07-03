@@ -56,8 +56,7 @@ public class DocumentStorageService {
             validatePdfHeader(content);
         }
         String sha256 = sha256(content);
-        return documentRepository.findFileMetadataBySha256(sha256)
-                .orElseGet(() -> saveNewFile(path, mediaType, content, sha256));
+        return saveNewFile(path, mediaType, content, sha256);
     }
 
     @Transactional(readOnly = true)

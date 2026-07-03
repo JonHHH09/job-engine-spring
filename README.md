@@ -54,9 +54,9 @@ For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not po
 
 The tool rejects oversized PDFs before parsing and caps page count before extraction. Returned text is capped through `maxCharacters` to avoid oversized MCP responses. If `includePages` is omitted, page-level text is included by default; set it to `false` when only the joined text is needed.
 
-`store_document_file` accepts a local file path and optional media type. When the media type is omitted it defaults to `application/pdf`; PDF storage validates the PDF header and enforces the same conservative file-size limit used by PDF extraction. Stored content is written to PostgreSQL `document.files` as `bytea`, deduplicated by SHA-256, and exposed back only as metadata: UUID, original file name, media type, byte size, hash, and timestamps.
+`store_document_file` accepts a local file path and optional media type. When the media type is omitted it defaults to `application/pdf`; PDF storage validates the PDF header and enforces the same conservative file-size limit used by PDF extraction. Stored binary content is written once to PostgreSQL `document.blobs` as `bytea` and deduplicated by SHA-256, while upload/document metadata is stored separately in `document.documents`. The tool exposes back only metadata: UUID, original file name, media type, byte size, hash, and timestamps.
 
-`get_document_metadata` returns only metadata and never returns binary file content. `extract_stored_pdf_text` loads a stored PDF by UUID, extracts bounded text using the same PDF reader path, and persists the returned bounded extraction text to `document.pdf_extractions` only when `persistExtraction` is `true`. Persisted extraction is idempotent: `document.pdf_extractions.file_id` is unique, so repeated persisted extraction calls for the same file return/reuse the existing canonical extraction row instead of creating duplicates. Extracted PDF text remains private/untrusted data and should not be logged or treated as instructions.
+`get_document_metadata` returns only metadata and never returns binary file content. `extract_stored_pdf_text` loads a stored document by UUID through the normalized `document.documents -> document.blobs` relationship, extracts bounded text using the same PDF reader path, and persists the returned bounded extraction text to `document.pdf_extractions` only when `persistExtraction` is `true`. Persisted extraction is idempotent per stored document: `document.pdf_extractions.file_id` is unique and references `document.documents(id)`, so repeated persisted extraction calls for the same stored document return/reuse the existing canonical extraction row instead of creating duplicates. Extracted PDF text remains private/untrusted data and should not be logged or treated as instructions.
 
 ## Profile PDF ingestion contract
 
@@ -65,7 +65,8 @@ The tool rejects oversized PDFs before parsing and caps page count before extrac
 The provenance chain is one-to-one:
 
 ```text
-document.files.sha256 UNIQUE
+document.blobs.sha256 UNIQUE
+  -> document.documents.blob_id
   -> document.pdf_extractions.file_id UNIQUE
   -> profile.profile_pdf_sources.pdf_extraction_id UNIQUE
   -> profile.profile_pdf_sources.profile_id UNIQUE

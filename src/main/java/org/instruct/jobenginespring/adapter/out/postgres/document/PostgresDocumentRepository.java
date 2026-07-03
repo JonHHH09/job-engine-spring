@@ -5,7 +5,6 @@ import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
@@ -38,30 +37,35 @@ public class PostgresDocumentRepository implements DocumentRepository {
     @Override
     public StoredDocumentMetadata saveFile(StoredDocumentFile file) {
         Objects.requireNonNull(file, "file must not be null");
-        try {
-            namedJdbc.update("""
-                    INSERT INTO document.files (
-                        id, original_file_name, media_type, byte_size, sha256, content, created_at, updated_at
-                    ) VALUES (
-                        :id, :originalFileName, :mediaType, :byteSize, :sha256, :content, :createdAt, :updatedAt
-                    )
-                    """, fileParameters(file));
-            return file.metadata();
-        } catch (DuplicateKeyException exception) {
-            Optional<StoredDocumentMetadata> existing = findFileMetadataBySha256(file.sha256());
-            if (existing.isPresent()) {
-                return existing.get();
-            }
-            throw exception;
-        }
+        namedJdbc.update("""
+                WITH selected_blob AS (
+                    INSERT INTO document.blobs (id, sha256, byte_size, content, created_at)
+                    VALUES (:blobId, :sha256, :byteSize, :content, :createdAt)
+                    ON CONFLICT (sha256) DO UPDATE SET sha256 = EXCLUDED.sha256
+                    RETURNING id
+                )
+                INSERT INTO document.documents (
+                    id, blob_id, original_file_name, media_type, created_at, updated_at
+                )
+                SELECT :id, selected_blob.id, :originalFileName, :mediaType, :createdAt, :updatedAt
+                FROM selected_blob
+                """, fileParameters(file));
+        return findFileMetadataById(file.id()).orElseThrow();
     }
 
     @Override
     public Optional<StoredDocumentMetadata> findFileMetadataById(UUID fileId) {
         return jdbc.sql("""
-                        SELECT id, original_file_name, media_type, byte_size, sha256, created_at, updated_at
-                        FROM document.files
-                        WHERE id = :fileId
+                        SELECT stored_document.id,
+                               stored_document.original_file_name,
+                               stored_document.media_type,
+                               blob.byte_size,
+                               blob.sha256,
+                               stored_document.created_at,
+                               stored_document.updated_at
+                        FROM document.documents stored_document
+                        JOIN document.blobs blob ON blob.id = stored_document.blob_id
+                        WHERE stored_document.id = :fileId
                         """)
                 .param("fileId", fileId)
                 .query(METADATA_MAPPER)
@@ -71,9 +75,18 @@ public class PostgresDocumentRepository implements DocumentRepository {
     @Override
     public Optional<StoredDocumentMetadata> findFileMetadataBySha256(String sha256) {
         return jdbc.sql("""
-                        SELECT id, original_file_name, media_type, byte_size, sha256, created_at, updated_at
-                        FROM document.files
-                        WHERE sha256 = :sha256
+                        SELECT stored_document.id,
+                               stored_document.original_file_name,
+                               stored_document.media_type,
+                               blob.byte_size,
+                               blob.sha256,
+                               stored_document.created_at,
+                               stored_document.updated_at
+                        FROM document.documents stored_document
+                        JOIN document.blobs blob ON blob.id = stored_document.blob_id
+                        WHERE blob.sha256 = :sha256
+                        ORDER BY stored_document.created_at DESC, stored_document.id
+                        LIMIT 1
                         """)
                 .param("sha256", sha256)
                 .query(METADATA_MAPPER)
@@ -83,9 +96,17 @@ public class PostgresDocumentRepository implements DocumentRepository {
     @Override
     public Optional<StoredDocumentFile> findFileContentById(UUID fileId) {
         return jdbc.sql("""
-                        SELECT id, original_file_name, media_type, byte_size, sha256, content, created_at, updated_at
-                        FROM document.files
-                        WHERE id = :fileId
+                        SELECT stored_document.id,
+                               stored_document.original_file_name,
+                               stored_document.media_type,
+                               blob.byte_size,
+                               blob.sha256,
+                               blob.content,
+                               stored_document.created_at,
+                               stored_document.updated_at
+                        FROM document.documents stored_document
+                        JOIN document.blobs blob ON blob.id = stored_document.blob_id
+                        WHERE stored_document.id = :fileId
                         """)
                 .param("fileId", fileId)
                 .query(FILE_MAPPER)
@@ -127,6 +148,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     private static MapSqlParameterSource fileParameters(StoredDocumentFile file) {
         return new MapSqlParameterSource()
                 .addValue("id", file.id())
+                .addValue("blobId", UUID.randomUUID())
                 .addValue("originalFileName", file.originalFileName())
                 .addValue("mediaType", file.mediaType())
                 .addValue("byteSize", file.byteSize())

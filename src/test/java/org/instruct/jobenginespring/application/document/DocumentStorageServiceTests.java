@@ -62,15 +62,19 @@ class DocumentStorageServiceTests {
     }
 
     @Test
-    void deduplicatesStoredFilesBySha256() throws IOException {
+    void storesDistinctDocumentsForDuplicateContentAndDeduplicatesBlobIdentity() throws IOException {
         Path first = writePdfLikeFile("first.pdf", "same text");
         Path second = writePdfLikeFile("second.pdf", "same text");
 
         StoredDocumentMetadata firstMetadata = service.storeDocumentFile(new StoreDocumentFileRequest(first.toString(), null));
         StoredDocumentMetadata secondMetadata = service.storeDocumentFile(new StoreDocumentFileRequest(second.toString(), null));
 
-        assertEquals(firstMetadata, secondMetadata);
-        assertEquals(1, repository.fileCount());
+        assertFalse(firstMetadata.id().equals(secondMetadata.id()));
+        assertEquals(firstMetadata.sha256(), secondMetadata.sha256());
+        assertEquals("first.pdf", firstMetadata.originalFileName());
+        assertEquals("second.pdf", secondMetadata.originalFileName());
+        assertEquals(2, repository.fileCount());
+        assertEquals(1, repository.blobCount());
     }
 
     @Test
@@ -262,10 +266,12 @@ class DocumentStorageServiceTests {
     private static final class InMemoryDocumentRepository implements DocumentRepository {
 
         private final java.util.Map<UUID, StoredDocumentFile> files = new java.util.LinkedHashMap<>();
+        private final java.util.Set<String> blobs = new java.util.LinkedHashSet<>();
         private final java.util.List<PdfExtractionRecord> extractions = new java.util.ArrayList<>();
 
         @Override
         public StoredDocumentMetadata saveFile(StoredDocumentFile file) {
+            blobs.add(file.sha256());
             files.put(file.id(), file);
             return file.metadata();
         }
@@ -303,6 +309,10 @@ class DocumentStorageServiceTests {
 
         private int fileCount() {
             return files.size();
+        }
+
+        private int blobCount() {
+            return blobs.size();
         }
 
         private int extractionCount() {

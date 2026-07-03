@@ -70,7 +70,7 @@ class PostgresProfilePdfSourceRepositoryIntegrationTests {
 
     @BeforeEach
     void setUp() {
-        jdbc.update("TRUNCATE TABLE profile.profiles, document.files CASCADE");
+        jdbc.update("TRUNCATE TABLE profile.profiles, document.documents, document.blobs CASCADE");
         NamedParameterJdbcTemplate namedJdbc = new NamedParameterJdbcTemplate(jdbc);
         profileRepository = new PostgresProfileRepository(namedJdbc);
         documentRepository = new PostgresDocumentRepository(namedJdbc);

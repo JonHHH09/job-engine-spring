@@ -63,7 +63,7 @@ class PostgresDocumentRepositoryIntegrationTests {
 
     @BeforeEach
     void setUp() {
-        jdbc.update("TRUNCATE TABLE document.files CASCADE");
+        jdbc.update("TRUNCATE TABLE document.documents, document.blobs CASCADE");
         repository = new PostgresDocumentRepository(new NamedParameterJdbcTemplate(jdbc));
     }
 
@@ -76,7 +76,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 ORDER BY table_name
                 """, String.class);
 
-        assertEquals(List.of("files", "pdf_extractions"), tables);
+        assertEquals(List.of("blobs", "documents", "files", "pdf_extractions"), tables);
     }
 
     @Test
@@ -94,7 +94,7 @@ class PostgresDocumentRepositoryIntegrationTests {
     }
 
     @Test
-    void duplicateSha256ReturnsExistingMetadata() {
+    void duplicateSha256ReusesBlobButStoresDistinctDocumentMetadata() {
         StoredDocumentFile existing = sampleFile(SHA256, PDF_CONTENT);
         StoredDocumentFile duplicate = new StoredDocumentFile(
                 UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
@@ -110,8 +110,12 @@ class PostgresDocumentRepositoryIntegrationTests {
         StoredDocumentMetadata first = repository.saveFile(existing);
         StoredDocumentMetadata second = repository.saveFile(duplicate);
 
-        assertEquals(first, second);
-        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.files", Integer.class));
+        assertFalse(first.id().equals(second.id()));
+        assertEquals(first.sha256(), second.sha256());
+        assertEquals("sample.pdf", first.originalFileName());
+        assertEquals("duplicate.pdf", second.originalFileName());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.blobs", Integer.class));
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM document.documents", Integer.class));
     }
 
     @Test
@@ -144,7 +148,7 @@ class PostgresDocumentRepositoryIntegrationTests {
         assertEquals(extraction, saved);
         assertEquals(extraction, repository.findPdfExtractionByFileId(FILE_ID).orElseThrow());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
-        jdbc.update("DELETE FROM document.files WHERE id = ?", FILE_ID);
+        jdbc.update("DELETE FROM document.documents WHERE id = ?", FILE_ID);
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
     }
 
