@@ -73,6 +73,22 @@ class ProfileWriteValidatorTests {
                 new LanguageWriteRequest(null, "English", "english", null, 0),
                 new LanguageWriteRequest(null, "Anglais", " english ", null, 1)
         )), "languages[1].normalizedLanguage", "duplicates another normalized language in this request");
+        assertInvalid(requestWithEducation(List.of(
+                new EducationWriteRequest(null, "Example University", "BSc", "CS", null,
+                        LocalDate.parse("2020-01-01"), LocalDate.parse("2024-01-01"), null),
+                new EducationWriteRequest(null, " example university ", "bsc", " cs ", null,
+                        LocalDate.parse("2020-01-01"), LocalDate.parse("2024-01-01"), null)
+        )), "education[1].institution", "duplicates another education entry in this request");
+        assertInvalid(requestWithExperiences(List.of(
+                new ExperienceWriteRequest(null, "Example Corp", "Developer", null,
+                        LocalDate.parse("2024-01-01"), null, null, 0),
+                new ExperienceWriteRequest(null, " example corp ", "developer", null,
+                        LocalDate.parse("2024-01-01"), null, null, 1)
+        )), "experiences[1].company", "duplicates another experience entry in this request");
+        assertInvalid(requestWithProjects(List.of(
+                new ProjectWriteRequest(null, "Project", "https://example.test/project", null, 0, null),
+                new ProjectWriteRequest(null, " project ", " https://example.test/project ", null, 1, null)
+        )), "projects[1].name", "duplicates another project entry in this request");
     }
 
     @Test
@@ -110,6 +126,10 @@ class ProfileWriteValidatorTests {
 
     private static ProfileWriteRequest requestWithEducation(List<EducationWriteRequest> education) {
         return new ProfileWriteRequest("Agentic Dev", "agentic@example.com", null, null, null, null, null, education, null, null);
+    }
+
+    private static ProfileWriteRequest requestWithExperiences(List<ExperienceWriteRequest> experiences) {
+        return new ProfileWriteRequest("Agentic Dev", "agentic@example.com", null, null, null, null, null, null, experiences, null);
     }
 
     private static ProfileWriteRequest requestWithProjects(List<ProjectWriteRequest> projects) {

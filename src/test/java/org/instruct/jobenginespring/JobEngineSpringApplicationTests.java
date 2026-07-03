@@ -1,12 +1,19 @@
 package org.instruct.jobenginespring;
 
+import org.instruct.jobenginespring.application.document.DocumentStorageService;
+import org.instruct.jobenginespring.application.document.port.DocumentRepository;
+import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
+import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
+import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
+import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
 import org.instruct.jobenginespring.domain.profile.ProfileContact;
 import org.instruct.jobenginespring.domain.profile.ProfileLanguage;
 import org.instruct.jobenginespring.domain.profile.ProfileLink;
+import org.instruct.jobenginespring.domain.profile.ProfilePdfSource;
 import org.instruct.jobenginespring.domain.profile.ProfileProject;
 import org.instruct.jobenginespring.domain.profile.ProfileSkill;
 import org.instruct.jobenginespring.domain.profile.ProjectTechnology;
@@ -28,7 +35,8 @@ import java.util.UUID;
                 + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,"
                 + "org.springframework.ai.model.postgresml.autoconfigure.PostgresMlEmbeddingAutoConfiguration",
         "job-engine.health.postgres.enabled=false",
-        "job-engine.profile.postgres.enabled=false"
+        "job-engine.profile.postgres.enabled=false",
+        "job-engine.document.postgres.enabled=false"
 })
 class JobEngineSpringApplicationTests {
 
@@ -42,6 +50,11 @@ class JobEngineSpringApplicationTests {
         @Bean
         DatabaseHealthPort databaseHealthPort() {
             return DatabaseHealthCheckResult::up;
+        }
+
+        @Bean
+        DocumentStorageService documentStorageService() {
+            return org.mockito.Mockito.mock(DocumentStorageService.class);
         }
 
         @Bean
@@ -105,6 +118,61 @@ class JobEngineSpringApplicationTests {
                 @Override
                 public boolean deleteProfile(UUID profileId) {
                     return false;
+                }
+            };
+        }
+
+        @Bean
+        DocumentRepository documentRepository() {
+            return new DocumentRepository() {
+                @Override
+                public StoredDocumentMetadata saveFile(StoredDocumentFile file) {
+                    return file.metadata();
+                }
+
+                @Override
+                public Optional<StoredDocumentMetadata> findFileMetadataById(UUID fileId) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public Optional<StoredDocumentMetadata> findFileMetadataBySha256(String sha256) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public Optional<StoredDocumentFile> findFileContentById(UUID fileId) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public Optional<PdfExtractionRecord> findPdfExtractionByFileId(UUID fileId) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction) {
+                    return extraction;
+                }
+            };
+        }
+
+        @Bean
+        ProfilePdfSourceRepository profilePdfSourceRepository() {
+            return new ProfilePdfSourceRepository() {
+                @Override
+                public ProfilePdfSource save(ProfilePdfSource source) {
+                    return source;
+                }
+
+                @Override
+                public Optional<ProfilePdfSource> findByProfileId(UUID profileId) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public Optional<ProfilePdfSource> findByPdfExtractionId(UUID pdfExtractionId) {
+                    return Optional.empty();
                 }
             };
         }

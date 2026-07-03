@@ -1,0 +1,16 @@
+package org.instruct.jobenginespring.application.profile.port;
+
+import org.instruct.jobenginespring.domain.profile.ProfilePdfSource;
+
+import java.util.Optional;
+import java.util.UUID;
+
+/** Application port for profile-to-PDF-extraction provenance links. */
+public interface ProfilePdfSourceRepository {
+
+    ProfilePdfSource save(ProfilePdfSource source);
+
+    Optional<ProfilePdfSource> findByProfileId(UUID profileId);
+
+    Optional<ProfilePdfSource> findByPdfExtractionId(UUID pdfExtractionId);
+}

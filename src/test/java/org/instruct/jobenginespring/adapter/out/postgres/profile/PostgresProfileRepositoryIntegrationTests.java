@@ -58,7 +58,7 @@ class PostgresProfileRepositoryIntegrationTests {
                 .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                 .locations("classpath:db/migration")
                 .defaultSchema("profile")
-                .schemas("profile")
+                .schemas("profile", "document")
                 .load()
                 .migrate();
 
@@ -92,6 +92,7 @@ class PostgresProfileRepositoryIntegrationTests {
                 "profile_contacts",
                 "profile_languages",
                 "profile_links",
+                "profile_pdf_sources",
                 "profile_skills",
                 "profiles",
                 "project_technologies",

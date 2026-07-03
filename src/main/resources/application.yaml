@@ -23,6 +23,7 @@ spring:
     default-schema: profile
     schemas:
       - profile
+      - document
   threads:
     virtual:
       enabled: true
