@@ -3,6 +3,7 @@ package org.instruct.jobenginespring.adapter.out.extraction;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfileService.ContactWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.LanguageWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.LinkWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.SkillWriteRequest;
@@ -33,10 +34,15 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
     private static final Pattern URL = Pattern.compile("https?://[^\\s)>,]+", Pattern.CASE_INSENSITIVE);
     private static final Pattern LINKEDIN = Pattern.compile("(?:https?://)?(?:www\\.)?linkedin\\.com/in/[^\\s)>,]+", Pattern.CASE_INSENSITIVE);
     private static final Pattern GITHUB = Pattern.compile("(?:https?://)?(?:www\\.)?github\\.com/[^\\s)>,]+", Pattern.CASE_INSENSITIVE);
-    private static final Set<String> KNOWN_SKILLS = Set.of(
-            "java", "spring boot", "spring cloud", "spring ai", "kotlin", "kotlin multiplatform",
-            "python", "postgresql", "flyway", "jdbc", "mcp", "docker", "testcontainers",
-            "react", "next.js", "typescript", "javascript", "qt", "qml", "pyside6", "sqlite", "aws"
+    private static final Pattern SECTION_HEADER = Pattern.compile("^(summary|profile|professional summary|skills|technical skills|technologies|technology stack|languages|language skills|experience|work experience|projects|education)\\s*:?");
+    private static final List<String> KNOWN_SKILLS = List.of(
+            "kotlin multiplatform", "spring boot", "spring cloud", "spring ai", "testcontainers",
+            "typescript", "javascript", "postgresql", "next.js", "pyside6", "sqlite", "python",
+            "flyway", "docker", "kotlin", "react", "java", "jdbc", "mcp", "qt", "qml", "aws"
+    );
+    private static final List<String> HUMAN_LANGUAGES = List.of(
+            "albanian", "english", "french", "spanish", "german", "italian", "portuguese", "arabic",
+            "mandarin", "chinese", "japanese", "korean", "hindi", "russian", "ukrainian"
     );
 
     @Override
@@ -61,9 +67,11 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
             contacts.add(new ContactWriteRequest(null, "phone", phone, "extracted resume phone"));
         }
 
+        ResumeSections sections = sections(text);
         List<LinkWriteRequest> links = links(text);
-        List<SkillWriteRequest> skills = skills(text);
-        String summary = summary(text);
+        List<SkillWriteRequest> skills = skills(sections.skillsText());
+        List<LanguageWriteRequest> languages = languages(sections.languagesText());
+        String summary = summary(text, sections.summaryText());
         return new ProfileWriteRequest(
                 fullName,
                 email,
@@ -71,7 +79,7 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
                 contacts,
                 links,
                 skills,
-                List.of(),
+                languages,
                 List.of(),
                 List.of(),
                 List.of()
@@ -127,14 +135,72 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
         List<SkillWriteRequest> skills = new ArrayList<>();
         int displayOrder = 0;
         for (String skill : KNOWN_SKILLS) {
-            if (lower.contains(skill)) {
+            if (containsPhrase(lower, skill)) {
                 skills.add(new SkillWriteRequest(null, displayName(skill), skill, "extracted", displayOrder++));
             }
         }
         return skills;
     }
 
-    private static String summary(String text) {
+    private static List<LanguageWriteRequest> languages(String text) {
+        String lower = text.toLowerCase(Locale.ROOT);
+        List<LanguageWriteRequest> languages = new ArrayList<>();
+        int displayOrder = 0;
+        for (String language : HUMAN_LANGUAGES) {
+            if (containsPhrase(lower, language)) {
+                languages.add(new LanguageWriteRequest(null, displayName(language), language, null, displayOrder++));
+            }
+        }
+        return languages;
+    }
+
+    private static ResumeSections sections(String text) {
+        StringBuilder summary = new StringBuilder();
+        StringBuilder skills = new StringBuilder();
+        StringBuilder languages = new StringBuilder();
+        String currentSection = "";
+        for (String rawLine : text.lines().toList()) {
+            String line = rawLine.strip();
+            if (line.isBlank()) {
+                continue;
+            }
+            Matcher header = SECTION_HEADER.matcher(line.toLowerCase(Locale.ROOT));
+            if (header.matches()) {
+                currentSection = header.group(1);
+                continue;
+            }
+            if (isSummarySection(currentSection)) {
+                summary.append(line).append('\n');
+            } else if (isSkillSection(currentSection)) {
+                skills.append(line).append('\n');
+            } else if (isLanguageSection(currentSection)) {
+                languages.append(line).append('\n');
+            }
+        }
+        return new ResumeSections(summary.toString(), skills.toString(), languages.toString());
+    }
+
+    private static boolean isSummarySection(String section) {
+        return section.equals("summary") || section.equals("profile") || section.equals("professional summary");
+    }
+
+    private static boolean isSkillSection(String section) {
+        return section.equals("skills") || section.equals("technical skills") || section.equals("technologies")
+                || section.equals("technology stack");
+    }
+
+    private static boolean isLanguageSection(String section) {
+        return section.equals("languages") || section.equals("language skills");
+    }
+
+    private static String summary(String text, String summarySectionText) {
+        if (summarySectionText != null && !summarySectionText.isBlank()) {
+            return truncate(summarySectionText.lines()
+                    .map(String::strip)
+                    .filter(line -> !line.isBlank())
+                    .findFirst()
+                    .orElse(null));
+        }
         return text.lines()
                 .map(String::strip)
                 .filter(line -> !line.isBlank())
@@ -144,8 +210,15 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
                 .filter(line -> !line.toLowerCase(Locale.ROOT).contains("github"))
                 .skip(1)
                 .findFirst()
-                .map(line -> line.length() > 500 ? line.substring(0, 500) : line)
+                .map(DeterministicProfileTextExtractor::truncate)
                 .orElse(null);
+    }
+
+    private static String truncate(String line) {
+        if (line == null) {
+            return null;
+        }
+        return line.length() > 500 ? line.substring(0, 500) : line;
     }
 
     private static String firstMatch(Pattern pattern, String text) {
@@ -154,11 +227,20 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
     }
 
     private static String normalizeUrl(String rawUrl) {
-        String url = rawUrl.strip().replaceAll("[.,;]+$", "");
+        String url = rawUrl.strip().replaceAll("[.,;]+$", "").replaceAll("[?#].*$", "").replaceAll("/+$", "");
         if (!url.toLowerCase(Locale.ROOT).startsWith("http://") && !url.toLowerCase(Locale.ROOT).startsWith("https://")) {
             return "https://" + url;
         }
         return url;
+    }
+
+    private static boolean containsPhrase(String lowerText, String phrase) {
+        return Pattern.compile("(?<![a-z0-9])" + Pattern.quote(phrase) + "(?![a-z0-9])", Pattern.CASE_INSENSITIVE)
+                .matcher(lowerText)
+                .find();
+    }
+
+    private record ResumeSections(String summaryText, String skillsText, String languagesText) {
     }
 
     private static String displayName(String normalized) {
