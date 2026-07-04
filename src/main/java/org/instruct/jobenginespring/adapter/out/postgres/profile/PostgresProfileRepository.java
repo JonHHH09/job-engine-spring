@@ -1,6 +1,8 @@
 package org.instruct.jobenginespring.adapter.out.postgres.profile;
 
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
+import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
+import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -31,6 +33,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.ArrayList;
 import java.util.stream.Collectors;
 
 @Repository
@@ -214,6 +217,43 @@ public class PostgresProfileRepository implements ProfileRepository {
         return jdbc.sql("DELETE FROM profile.profiles WHERE id = :profileId")
                 .param("profileId", profileId)
                 .update() > 0;
+    }
+
+    @Override
+    public List<ProfileIdentityCandidate> findIdentityCandidates(ProfileIdentitySearch search) {
+        Objects.requireNonNull(search, "search must not be null");
+        List<ProfileIdentityCandidate> candidates = new ArrayList<>();
+        if (search.email() != null && !search.email().isBlank()) {
+            candidates.addAll(jdbc.sql("""
+                            SELECT id AS profile_id, 'email' AS matched_on
+                            FROM profile.profiles
+                            WHERE lower(btrim(email)) = :email
+                            ORDER BY updated_at DESC, id
+                            """)
+                    .param("email", search.email().trim().toLowerCase(java.util.Locale.ROOT))
+                    .query((resultSet, rowNumber) -> new ProfileIdentityCandidate(
+                            resultSet.getObject("profile_id", UUID.class),
+                            resultSet.getString("matched_on")
+                    ))
+                    .list());
+        }
+        for (ProfileIdentitySearch.LinkIdentity link : search.links()) {
+            candidates.addAll(jdbc.sql("""
+                            SELECT profile_id, 'link:' || lower(btrim(link_type)) AS matched_on
+                            FROM profile.profile_links
+                            WHERE lower(btrim(link_type)) = :linkType
+                              AND lower(regexp_replace(split_part(split_part(btrim(url), '?', 1), '#', 1), '/+$', '')) = :url
+                            ORDER BY updated_at DESC, profile_id
+                            """)
+                    .param("linkType", link.linkType().trim().toLowerCase(java.util.Locale.ROOT))
+                    .param("url", link.normalizedUrl())
+                    .query((resultSet, rowNumber) -> new ProfileIdentityCandidate(
+                            resultSet.getObject("profile_id", UUID.class),
+                            resultSet.getString("matched_on")
+                    ))
+                    .list());
+        }
+        return candidates;
     }
 
     private void replaceChildren(ProfileAggregate aggregate) {

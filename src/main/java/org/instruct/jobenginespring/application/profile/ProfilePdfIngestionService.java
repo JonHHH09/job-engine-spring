@@ -36,6 +36,8 @@ public class ProfilePdfIngestionService {
     @NonNull
     private final ProfileService profileService;
     @NonNull
+    private final ProfileIdentityMatcher profileIdentityMatcher;
+    @NonNull
     private final ProfilePdfSourceRepository profilePdfSourceRepository;
     private Clock clock = Clock.systemUTC();
 
@@ -43,10 +45,11 @@ public class ProfilePdfIngestionService {
             DocumentStorageService documentStorageService,
             ProfileTextExtractor profileTextExtractor,
             ProfileService profileService,
+            ProfileIdentityMatcher profileIdentityMatcher,
             ProfilePdfSourceRepository profilePdfSourceRepository,
             Clock clock
     ) {
-        this(documentStorageService, profileTextExtractor, profileService, profilePdfSourceRepository);
+        this(documentStorageService, profileTextExtractor, profileService, profileIdentityMatcher, profilePdfSourceRepository);
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
@@ -105,6 +108,7 @@ public class ProfilePdfIngestionService {
         ProfileAggregate profileAggregate;
         boolean createdProfile;
         if (existingProfileId == null) {
+            rejectDuplicateProfileCandidate(profileWriteRequest);
             profileAggregate = profileService.createProfile(profileWriteRequest);
             createdProfile = true;
         } else if (overwriteExisting) {
@@ -127,6 +131,27 @@ public class ProfilePdfIngestionService {
                 clock.instant()
         ));
         return toResult(source, storedExtraction, createdProfile, false);
+    }
+
+    private void rejectDuplicateProfileCandidate(ProfileWriteRequest profileWriteRequest) {
+        profileIdentityMatcher.findStrongMatch(profileWriteRequest)
+                .ifPresent(match -> {
+                    throw new ApplicationException(
+                            ApplicationErrorCode.VALIDATION_ERROR,
+                            match.ambiguous()
+                                    ? "Ambiguous existing profile candidates matched extracted identity"
+                                    : "Existing profile candidate matched extracted identity",
+                            Map.of(
+                                    "reason", match.ambiguous()
+                                            ? "ambiguous_profile_candidates"
+                                            : "duplicate_profile_candidate",
+                                    "candidateProfileId", String.valueOf(match.profileId()),
+                                    "matchedOn", String.join(",", match.matchedOn()),
+                                    "recommendedAction", "rerun with existingProfileId and overwriteExistingProfile=true to replace"
+                            ),
+                            null
+                    );
+                });
     }
 
     private static ProfilePdfIngestionResult toResult(

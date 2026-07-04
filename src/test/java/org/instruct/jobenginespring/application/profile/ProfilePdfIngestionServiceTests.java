@@ -6,6 +6,7 @@ import org.instruct.jobenginespring.application.document.DocumentStorageService.
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.IngestProfileFromStoredPdfRequest;
+import org.instruct.jobenginespring.application.profile.ProfileIdentityMatcher.ProfileIdentityMatch;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
 import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileTextExtractor;
@@ -43,11 +44,13 @@ class ProfilePdfIngestionServiceTests {
     private final DocumentStorageService documentStorageService = mock(DocumentStorageService.class);
     private final ProfileTextExtractor profileTextExtractor = mock(ProfileTextExtractor.class);
     private final ProfileService profileService = mock(ProfileService.class);
+    private final ProfileIdentityMatcher profileIdentityMatcher = mock(ProfileIdentityMatcher.class);
     private final InMemoryProfilePdfSourceRepository sourceRepository = new InMemoryProfilePdfSourceRepository();
     private final ProfilePdfIngestionService service = new ProfilePdfIngestionService(
             documentStorageService,
             profileTextExtractor,
             profileService,
+            profileIdentityMatcher,
             sourceRepository,
             Clock.fixed(NOW, ZoneOffset.UTC)
     );
@@ -60,6 +63,7 @@ class ProfilePdfIngestionServiceTests {
         when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(DOCUMENT_ID, 10_000, false, true)))
                 .thenReturn(storedExtraction);
         when(profileTextExtractor.extractProfile(any())).thenReturn(writeRequest);
+        when(profileIdentityMatcher.findStrongMatch(writeRequest)).thenReturn(Optional.empty());
         when(profileService.createProfile(writeRequest)).thenReturn(profileAggregate(PROFILE_ID));
 
         ProfilePdfIngestionService.ProfilePdfIngestionResult result = service.ingestProfileFromStoredPdf(
@@ -76,6 +80,31 @@ class ProfilePdfIngestionServiceTests {
         assertFalse(result.existingProfileLink());
         assertEquals(1, sourceRepository.count());
         verify(profileService).createProfile(writeRequest);
+    }
+
+    @Test
+    void rejectsNewProfileCreationWhenExtractedIdentityMatchesExistingProfile() {
+        ProfileWriteRequest writeRequest = new ProfileWriteRequest("Agentic Dev", "agentic@example.test", null,
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(DOCUMENT_ID, null, false, true)))
+                .thenReturn(storedExtraction());
+        when(profileTextExtractor.extractProfile(any())).thenReturn(writeRequest);
+        when(profileIdentityMatcher.findStrongMatch(writeRequest)).thenReturn(Optional.of(new ProfileIdentityMatch(
+                PROFILE_ID,
+                List.of("email", "link:linkedin"),
+                false
+        )));
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.ingestProfileFromStoredPdf(
+                new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, null, null, null)
+        ));
+
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals("duplicate_profile_candidate", exception.details().get("reason"));
+        assertEquals(PROFILE_ID.toString(), exception.details().get("candidateProfileId"));
+        assertEquals("email,link:linkedin", exception.details().get("matchedOn"));
+        assertEquals(0, sourceRepository.count());
+        verify(profileService, never()).createProfile(any());
     }
 
     @Test
@@ -142,6 +171,7 @@ class ProfilePdfIngestionServiceTests {
         when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(DOCUMENT_ID, null, false, true)))
                 .thenReturn(storedExtraction());
         when(profileTextExtractor.extractProfile(any())).thenReturn(writeRequest);
+        when(profileIdentityMatcher.findStrongMatch(writeRequest)).thenReturn(Optional.empty());
         when(profileService.updateProfile(PROFILE_ID, writeRequest)).thenReturn(profileAggregate(PROFILE_ID));
 
         ProfilePdfIngestionService.ProfilePdfIngestionResult result = service.ingestProfileFromStoredPdf(

@@ -1,6 +1,8 @@
 package org.instruct.jobenginespring.adapter.out.postgres.profile;
 
 import org.flywaydb.core.Flyway;
+import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
+import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -149,6 +151,23 @@ class PostgresProfileRepositoryIntegrationTests {
                 .toList());
         assertFalse(repository.findProfileById(UUID.fromString("56565656-5656-5656-5656-565656565656")).isPresent());
         assertFalse(repository.deleteProfile(UUID.fromString("78787878-7878-7878-7878-787878787878")));
+    }
+
+    @Test
+    void findsIdentityCandidatesByCanonicalEmailAndNormalizedLink() {
+        repository.saveProfileAggregate(completeAggregate());
+
+        List<ProfileIdentityCandidate> candidates = repository.findIdentityCandidates(new ProfileIdentitySearch(
+                "agentic-dev@example.test",
+                List.of(new ProfileIdentitySearch.LinkIdentity("portfolio", "https://example.test"))
+        ));
+
+        assertEquals(List.of("email", "link:portfolio"), candidates.stream()
+                .map(ProfileIdentityCandidate::matchedOn)
+                .toList());
+        assertEquals(List.of(PROFILE_ID, PROFILE_ID), candidates.stream()
+                .map(ProfileIdentityCandidate::profileId)
+                .toList());
     }
 
     @Test
