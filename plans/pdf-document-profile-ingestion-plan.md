@@ -303,7 +303,8 @@ Idempotency expectations:
 - Re-ingesting the same stored PDF should not create duplicate extraction rows.
 - Re-ingesting a PDF already linked to a profile should return the existing source link where appropriate.
 - Re-ingesting the same PDF bytes through a distinct stored document row should resolve the existing source link by blob SHA-256.
-- Ingesting a changed/re-exported PDF with strong extracted identity matches, such as canonical email or normalized profile links, should fail safely with a duplicate-profile candidate instead of creating a new profile.
+- Ingesting a changed/re-exported PDF with strong extracted identity matches, such as canonical email or normalized profile links, should return a non-mutating duplicate-profile or ambiguous-candidate status instead of creating a new profile.
+- Ingestion results should expose explicit statuses for mutation/reuse/decision paths: created profile, updated profile, reused existing source, duplicate profile candidate, ambiguous profile candidates, and validation failure.
 - The source link should make profile provenance traceable back to the document extraction.
 
 ## Provenance link

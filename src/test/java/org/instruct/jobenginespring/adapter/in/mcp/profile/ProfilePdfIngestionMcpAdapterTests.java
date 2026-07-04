@@ -6,6 +6,7 @@ import org.instruct.jobenginespring.application.error.ApplicationErrorResponse;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.IngestProfileFromStoredPdfRequest;
+import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.IngestionStatus;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.ProfilePdfIngestionResult;
 import org.instruct.jobenginespring.domain.profile.ProfilePdfSource;
 import org.junit.jupiter.api.Test;
@@ -66,6 +67,7 @@ class ProfilePdfIngestionMcpAdapterTests {
     void ingestProfileFromStoredPdfDelegatesToService() {
         IngestProfileFromStoredPdfRequest request = new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, null, null, 10_000);
         ProfilePdfIngestionResult expected = new ProfilePdfIngestionResult(
+                IngestionStatus.CREATED_PROFILE,
                 PROFILE_ID,
                 DOCUMENT_ID,
                 EXTRACTION_ID,
@@ -75,7 +77,10 @@ class ProfilePdfIngestionMcpAdapterTests {
                 42,
                 false,
                 true,
-                false
+                false,
+                null,
+                java.util.List.of(),
+                null
         );
         when(service.ingestProfileFromStoredPdf(request)).thenReturn(expected);
 

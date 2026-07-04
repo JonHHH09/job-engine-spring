@@ -6,6 +6,7 @@ import org.instruct.jobenginespring.application.document.DocumentStorageService.
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.IngestProfileFromStoredPdfRequest;
+import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.IngestionStatus;
 import org.instruct.jobenginespring.application.profile.ProfileIdentityMatcher.ProfileIdentityMatch;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
 import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
@@ -25,8 +26,8 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -76,6 +77,7 @@ class ProfilePdfIngestionServiceTests {
         assertEquals("resume.pdf", result.originalFileName());
         assertEquals(1, result.pageCount());
         assertEquals(11, result.characterCount());
+        assertEquals(IngestionStatus.CREATED_PROFILE, result.status());
         assertTrue(result.createdProfile());
         assertFalse(result.existingProfileLink());
         assertEquals(1, sourceRepository.count());
@@ -83,7 +85,7 @@ class ProfilePdfIngestionServiceTests {
     }
 
     @Test
-    void rejectsNewProfileCreationWhenExtractedIdentityMatchesExistingProfile() {
+    void returnsDuplicateCandidateStatusWhenExtractedIdentityMatchesExistingProfile() {
         ProfileWriteRequest writeRequest = new ProfileWriteRequest("Agentic Dev", "agentic@example.test", null,
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
         when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(DOCUMENT_ID, null, false, true)))
@@ -95,14 +97,43 @@ class ProfilePdfIngestionServiceTests {
                 false
         )));
 
-        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.ingestProfileFromStoredPdf(
+        ProfilePdfIngestionService.ProfilePdfIngestionResult result = service.ingestProfileFromStoredPdf(
                 new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, null, null, null)
-        ));
+        );
 
-        assertEquals("validation_error", exception.errorCode().code());
-        assertEquals("duplicate_profile_candidate", exception.details().get("reason"));
-        assertEquals(PROFILE_ID.toString(), exception.details().get("candidateProfileId"));
-        assertEquals("email,link:linkedin", exception.details().get("matchedOn"));
+        assertEquals(IngestionStatus.DUPLICATE_PROFILE_CANDIDATE, result.status());
+        assertEquals(PROFILE_ID, result.profileId());
+        assertEquals(PROFILE_ID, result.candidateProfileId());
+        assertEquals(List.of("email", "link:linkedin"), result.matchedOn());
+        assertEquals("rerun with existingProfileId and overwriteExistingProfile=true to replace", result.recommendedAction());
+        assertFalse(result.createdProfile());
+        assertFalse(result.existingProfileLink());
+        assertEquals(DOCUMENT_ID, result.documentId());
+        assertEquals(EXTRACTION_ID, result.pdfExtractionId());
+        assertEquals(0, sourceRepository.count());
+        verify(profileService, never()).createProfile(any());
+    }
+
+    @Test
+    void returnsAmbiguousCandidateStatusWhenMultipleProfilesMatchExtractedIdentity() {
+        ProfileWriteRequest writeRequest = new ProfileWriteRequest("Agentic Dev", "agentic@example.test", null,
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(DOCUMENT_ID, null, false, true)))
+                .thenReturn(storedExtraction());
+        when(profileTextExtractor.extractProfile(any())).thenReturn(writeRequest);
+        when(profileIdentityMatcher.findStrongMatch(writeRequest)).thenReturn(Optional.of(new ProfileIdentityMatch(
+                PROFILE_ID,
+                List.of("email"),
+                true
+        )));
+
+        ProfilePdfIngestionService.ProfilePdfIngestionResult result = service.ingestProfileFromStoredPdf(
+                new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, null, null, null)
+        );
+
+        assertEquals(IngestionStatus.AMBIGUOUS_PROFILE_CANDIDATES, result.status());
+        assertEquals(PROFILE_ID, result.candidateProfileId());
+        assertEquals(List.of("email"), result.matchedOn());
         assertEquals(0, sourceRepository.count());
         verify(profileService, never()).createProfile(any());
     }
@@ -120,6 +151,7 @@ class ProfilePdfIngestionServiceTests {
 
         assertEquals(PROFILE_ID, result.profileId());
         assertEquals(SOURCE_ID, result.sourceLinkId());
+        assertEquals(IngestionStatus.REUSED_EXISTING_SOURCE, result.status());
         assertTrue(result.existingProfileLink());
         assertFalse(result.createdProfile());
         verify(profileTextExtractor, never()).extractProfile(any());
@@ -143,6 +175,7 @@ class ProfilePdfIngestionServiceTests {
         assertEquals(duplicateDocumentId, result.documentId());
         assertEquals(EXTRACTION_ID, result.pdfExtractionId());
         assertEquals(SOURCE_ID, result.sourceLinkId());
+        assertEquals(IngestionStatus.REUSED_EXISTING_SOURCE, result.status());
         assertTrue(result.existingProfileLink());
         assertFalse(result.createdProfile());
         verify(profileTextExtractor, never()).extractProfile(any());
@@ -179,6 +212,7 @@ class ProfilePdfIngestionServiceTests {
         );
 
         assertEquals(PROFILE_ID, result.profileId());
+        assertEquals(IngestionStatus.UPDATED_PROFILE, result.status());
         assertFalse(result.createdProfile());
         assertFalse(result.existingProfileLink());
         verify(profileService).updateProfile(PROFILE_ID, writeRequest);

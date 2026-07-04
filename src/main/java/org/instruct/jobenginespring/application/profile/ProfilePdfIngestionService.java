@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -63,9 +64,9 @@ public class ProfilePdfIngestionService {
         UUID extractionId = Objects.requireNonNull(storedExtraction.extractionId(), "extractionId must not be null");
 
         return profilePdfSourceRepository.findByPdfExtractionId(extractionId)
-                .map(existing -> toResult(existing, storedExtraction, false, true))
+                .map(existing -> toResult(existing, storedExtraction, IngestionStatus.REUSED_EXISTING_SOURCE, false, true))
                 .or(() -> profilePdfSourceRepository.findByDocumentSha256(storedExtraction.document().sha256())
-                        .map(existing -> toResult(existing, storedExtraction, false, true)))
+                        .map(existing -> toResult(existing, storedExtraction, IngestionStatus.REUSED_EXISTING_SOURCE, false, true)))
                 .orElseGet(() -> createOrUpdateLinkedProfile(safeRequest, storedExtraction, extractionId));
     }
 
@@ -107,13 +108,20 @@ public class ProfilePdfIngestionService {
         boolean overwriteExisting = request.overwriteExistingProfile() != null && request.overwriteExistingProfile();
         ProfileAggregate profileAggregate;
         boolean createdProfile;
+        IngestionStatus status;
         if (existingProfileId == null) {
-            rejectDuplicateProfileCandidate(profileWriteRequest);
+            ProfileIdentityMatcher.ProfileIdentityMatch identityMatch = profileIdentityMatcher.findStrongMatch(profileWriteRequest)
+                    .orElse(null);
+            if (identityMatch != null) {
+                return duplicateCandidateResult(identityMatch, storedExtraction);
+            }
             profileAggregate = profileService.createProfile(profileWriteRequest);
             createdProfile = true;
+            status = IngestionStatus.CREATED_PROFILE;
         } else if (overwriteExisting) {
             profileAggregate = profileService.updateProfile(existingProfileId, profileWriteRequest);
             createdProfile = false;
+            status = IngestionStatus.UPDATED_PROFILE;
         } else {
             throw new ApplicationException(
                     ApplicationErrorCode.VALIDATION_ERROR,
@@ -130,37 +138,40 @@ public class ProfilePdfIngestionService {
                 SOURCE_TYPE,
                 clock.instant()
         ));
-        return toResult(source, storedExtraction, createdProfile, false);
+        return toResult(source, storedExtraction, status, createdProfile, false);
     }
 
-    private void rejectDuplicateProfileCandidate(ProfileWriteRequest profileWriteRequest) {
-        profileIdentityMatcher.findStrongMatch(profileWriteRequest)
-                .ifPresent(match -> {
-                    throw new ApplicationException(
-                            ApplicationErrorCode.VALIDATION_ERROR,
-                            match.ambiguous()
-                                    ? "Ambiguous existing profile candidates matched extracted identity"
-                                    : "Existing profile candidate matched extracted identity",
-                            Map.of(
-                                    "reason", match.ambiguous()
-                                            ? "ambiguous_profile_candidates"
-                                            : "duplicate_profile_candidate",
-                                    "candidateProfileId", String.valueOf(match.profileId()),
-                                    "matchedOn", String.join(",", match.matchedOn()),
-                                    "recommendedAction", "rerun with existingProfileId and overwriteExistingProfile=true to replace"
-                            ),
-                            null
-                    );
-                });
+    private static ProfilePdfIngestionResult duplicateCandidateResult(
+            ProfileIdentityMatcher.ProfileIdentityMatch match,
+            StoredPdfTextExtractionResult storedExtraction
+    ) {
+        return new ProfilePdfIngestionResult(
+                match.ambiguous() ? IngestionStatus.AMBIGUOUS_PROFILE_CANDIDATES : IngestionStatus.DUPLICATE_PROFILE_CANDIDATE,
+                match.profileId(),
+                storedExtraction.document().id(),
+                storedExtraction.extractionId(),
+                null,
+                storedExtraction.document().originalFileName(),
+                storedExtraction.extraction().pageCount(),
+                storedExtraction.extraction().characterCount(),
+                storedExtraction.extraction().truncated(),
+                false,
+                false,
+                match.profileId(),
+                match.matchedOn(),
+                "rerun with existingProfileId and overwriteExistingProfile=true to replace"
+        );
     }
 
     private static ProfilePdfIngestionResult toResult(
             ProfilePdfSource source,
             StoredPdfTextExtractionResult storedExtraction,
+            IngestionStatus status,
             boolean createdProfile,
             boolean existingProfileLink
     ) {
         return new ProfilePdfIngestionResult(
+                status,
                 source.profileId(),
                 storedExtraction.document().id(),
                 source.pdfExtractionId(),
@@ -170,7 +181,10 @@ public class ProfilePdfIngestionService {
                 storedExtraction.extraction().characterCount(),
                 storedExtraction.extraction().truncated(),
                 createdProfile,
-                existingProfileLink
+                existingProfileLink,
+                null,
+                List.of(),
+                null
         );
     }
 
@@ -183,6 +197,7 @@ public class ProfilePdfIngestionService {
     }
 
     public record ProfilePdfIngestionResult(
+            IngestionStatus status,
             UUID profileId,
             UUID documentId,
             UUID pdfExtractionId,
@@ -192,7 +207,23 @@ public class ProfilePdfIngestionService {
             int characterCount,
             boolean truncated,
             boolean createdProfile,
-            boolean existingProfileLink
+            boolean existingProfileLink,
+            UUID candidateProfileId,
+            List<String> matchedOn,
+            String recommendedAction
     ) {
+        public ProfilePdfIngestionResult {
+            status = Objects.requireNonNull(status, "status must not be null");
+            matchedOn = matchedOn == null ? List.of() : List.copyOf(matchedOn);
+        }
+    }
+
+    public enum IngestionStatus {
+        CREATED_PROFILE,
+        UPDATED_PROFILE,
+        REUSED_EXISTING_SOURCE,
+        DUPLICATE_PROFILE_CANDIDATE,
+        AMBIGUOUS_PROFILE_CANDIDATES,
+        VALIDATION_FAILED
     }
 }
