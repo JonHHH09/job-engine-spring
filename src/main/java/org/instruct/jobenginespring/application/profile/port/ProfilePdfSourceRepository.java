@@ -13,4 +13,6 @@ public interface ProfilePdfSourceRepository {
     Optional<ProfilePdfSource> findByProfileId(UUID profileId);
 
     Optional<ProfilePdfSource> findByPdfExtractionId(UUID pdfExtractionId);
+
+    Optional<ProfilePdfSource> findByDocumentSha256(String sha256);
 }

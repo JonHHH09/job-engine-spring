@@ -98,6 +98,29 @@ class ProfilePdfIngestionServiceTests {
     }
 
     @Test
+    void repeatedIngestionOfSameDocumentBytesReturnsExistingSourceLinkWithoutCreatingProfile() {
+        UUID duplicateDocumentId = UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff");
+        UUID duplicateExtractionId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        ProfilePdfSource existing = new ProfilePdfSource(SOURCE_ID, PROFILE_ID, EXTRACTION_ID, "resume_pdf", NOW);
+        sourceRepository.saveForSha256(existing, storedExtraction().document().sha256());
+        when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(duplicateDocumentId, null, false, true)))
+                .thenReturn(storedExtraction(duplicateDocumentId, duplicateExtractionId));
+
+        ProfilePdfIngestionService.ProfilePdfIngestionResult result = service.ingestProfileFromStoredPdf(
+                new IngestProfileFromStoredPdfRequest(duplicateDocumentId, null, null, null)
+        );
+
+        assertEquals(PROFILE_ID, result.profileId());
+        assertEquals(duplicateDocumentId, result.documentId());
+        assertEquals(EXTRACTION_ID, result.pdfExtractionId());
+        assertEquals(SOURCE_ID, result.sourceLinkId());
+        assertTrue(result.existingProfileLink());
+        assertFalse(result.createdProfile());
+        verify(profileTextExtractor, never()).extractProfile(any());
+        verify(profileService, never()).createProfile(any());
+    }
+
+    @Test
     void rejectsExistingProfileWithoutOverwrite() {
         when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(DOCUMENT_ID, null, false, true)))
                 .thenReturn(storedExtraction());
@@ -164,9 +187,13 @@ class ProfilePdfIngestionServiceTests {
     }
 
     private static StoredPdfTextExtractionResult storedExtraction() {
+        return storedExtraction(DOCUMENT_ID, EXTRACTION_ID);
+    }
+
+    private static StoredPdfTextExtractionResult storedExtraction(UUID documentId, UUID extractionId) {
         return new StoredPdfTextExtractionResult(
                 new StoredDocumentMetadata(
-                        DOCUMENT_ID,
+                        documentId,
                         "resume.pdf",
                         "application/pdf",
                         128,
@@ -174,7 +201,7 @@ class ProfilePdfIngestionServiceTests {
                         NOW,
                         NOW
                 ),
-                EXTRACTION_ID,
+                extractionId,
                 new PdfTextExtractionResult("resume.pdf", 1, 11, false, "Joni Hysaj\nagentic@example.test", List.of())
         );
     }
@@ -189,6 +216,7 @@ class ProfilePdfIngestionServiceTests {
     private static final class InMemoryProfilePdfSourceRepository implements ProfilePdfSourceRepository {
 
         private final java.util.Map<UUID, ProfilePdfSource> sourcesByProfileId = new java.util.LinkedHashMap<>();
+        private final java.util.Map<String, ProfilePdfSource> sourcesBySha256 = new java.util.LinkedHashMap<>();
 
         @Override
         public ProfilePdfSource save(ProfilePdfSource source) {
@@ -208,6 +236,16 @@ class ProfilePdfIngestionServiceTests {
             return sourcesByProfileId.values().stream()
                     .filter(source -> source.pdfExtractionId().equals(pdfExtractionId))
                     .findFirst();
+        }
+
+        @Override
+        public Optional<ProfilePdfSource> findByDocumentSha256(String sha256) {
+            return Optional.ofNullable(sourcesBySha256.get(sha256));
+        }
+
+        private void saveForSha256(ProfilePdfSource source, String sha256) {
+            save(source);
+            sourcesBySha256.put(sha256, source);
         }
 
         private int count() {

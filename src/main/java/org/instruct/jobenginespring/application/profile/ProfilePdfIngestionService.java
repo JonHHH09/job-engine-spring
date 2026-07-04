@@ -61,6 +61,8 @@ public class ProfilePdfIngestionService {
 
         return profilePdfSourceRepository.findByPdfExtractionId(extractionId)
                 .map(existing -> toResult(existing, storedExtraction, false, true))
+                .or(() -> profilePdfSourceRepository.findByDocumentSha256(storedExtraction.document().sha256())
+                        .map(existing -> toResult(existing, storedExtraction, false, true)))
                 .orElseGet(() -> createOrUpdateLinkedProfile(safeRequest, storedExtraction, extractionId));
     }
 

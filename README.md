@@ -73,7 +73,7 @@ document.blobs.sha256 UNIQUE
   -> profile.profiles + profile-owned child tables
 ```
 
-If ingestion is rerun for the same stored PDF, the service returns the existing profile/source link and does not duplicate the file, extraction, profile, or profile-source rows. The ingestion tool returns profile/document/extraction/source IDs and counts only; it does not return raw extracted resume text.
+If ingestion is rerun for the same stored PDF, the service returns the existing profile/source link and does not duplicate the file, extraction, profile, or profile-source rows. If the same PDF bytes are stored again as a distinct document row, ingestion resolves the prior source link by `document.blobs.sha256` and returns that existing profile/source link instead of creating another profile. The ingestion tool returns profile/document/extraction/source IDs and counts only; it does not return raw extracted resume text.
 
 ## Profile write contract
 

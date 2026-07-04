@@ -87,6 +87,7 @@ class PostgresProfilePdfSourceRepositoryIntegrationTests {
         assertEquals(source, saved);
         assertEquals(source, sourceRepository.findByProfileId(PROFILE_ID).orElseThrow());
         assertEquals(source, sourceRepository.findByPdfExtractionId(EXTRACTION_ID).orElseThrow());
+        assertEquals(source, sourceRepository.findByDocumentSha256(SHA256).orElseThrow());
     }
 
     @Test

@@ -174,6 +174,11 @@ class JobEngineSpringApplicationTests {
                 public Optional<ProfilePdfSource> findByPdfExtractionId(UUID pdfExtractionId) {
                     return Optional.empty();
                 }
+
+                @Override
+                public Optional<ProfilePdfSource> findByDocumentSha256(String sha256) {
+                    return Optional.empty();
+                }
             };
         }
     }

@@ -66,6 +66,23 @@ public class PostgresProfilePdfSourceRepository implements ProfilePdfSourceRepos
                 .optional();
     }
 
+    @Override
+    public Optional<ProfilePdfSource> findByDocumentSha256(String sha256) {
+        return jdbc.sql("""
+                        SELECT source.id, source.profile_id, source.pdf_extraction_id, source.source_type, source.created_at
+                        FROM profile.profile_pdf_sources source
+                        JOIN document.pdf_extractions extraction ON extraction.id = source.pdf_extraction_id
+                        JOIN document.documents document ON document.id = extraction.file_id
+                        JOIN document.blobs blob ON blob.id = document.blob_id
+                        WHERE blob.sha256 = :sha256
+                        ORDER BY source.created_at DESC, source.id
+                        LIMIT 1
+                        """)
+                .param("sha256", sha256)
+                .query(SOURCE_MAPPER)
+                .optional();
+    }
+
     private static ProfilePdfSource mapSource(ResultSet resultSet, int rowNumber) throws SQLException {
         return new ProfilePdfSource(
                 resultSet.getObject("id", UUID.class),
