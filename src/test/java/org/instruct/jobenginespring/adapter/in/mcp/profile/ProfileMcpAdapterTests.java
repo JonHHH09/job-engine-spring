@@ -81,7 +81,12 @@ class ProfileMcpAdapterTests {
 
         CallToolResult result = adapter.listProfiles();
 
-        assertSuccessfulContent(List.of(profile), result);
+        assertFalse(result.isError());
+        ProfileMcpAdapter.ListProfilesResult listResult = assertInstanceOf(
+                ProfileMcpAdapter.ListProfilesResult.class,
+                result.structuredContent()
+        );
+        assertEquals(List.of(profile), listResult.profiles());
         verify(profileService).listProfiles();
     }
 

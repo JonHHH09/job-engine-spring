@@ -7,7 +7,7 @@
 The current verified MCP surface is intentionally small:
 
 - `health` — checks database readiness without returning connection details or secrets.
-- `list_profiles` — lists saved profile identities without raw resume text or credentials.
+- `list_profiles` — lists saved profile identities in a `{ "profiles": [...] }` wrapper without raw resume text or credentials.
 - `get_profile` — returns a normalized profile aggregate by UUID.
 - `create_profile` — creates a normalized profile aggregate.
 - `update_profile` — replaces a normalized profile aggregate by UUID.
@@ -78,6 +78,8 @@ If ingestion is rerun for the same stored PDF, the service returns the existing 
 The deterministic fallback extractor is section-aware: it reads summary text from `Summary`/`Profile` sections, extracts technical skills only from recognized skills/technology sections, extracts human languages only from language sections, and normalizes obvious LinkedIn/GitHub links by stripping query strings, fragments, and trailing slashes. This keeps skill classification conservative until a richer structured extractor is introduced.
 
 ## Profile write contract
+
+MCP success responses use object-shaped `structuredContent` so clients that reject raw top-level arrays can validate responses consistently. For example, `list_profiles` returns `{ "profiles": [...] }` rather than a bare array.
 
 `create_profile` and `update_profile` validate profile write requests in the application layer before persistence. Invalid payloads are rejected with `validation_error` application exceptions and safe details containing only the invalid field path and reason. The profile MCP adapter maps application and unexpected failures to MCP `CallToolResult` errors with sanitized structured content instead of leaking raw exception text.
 
