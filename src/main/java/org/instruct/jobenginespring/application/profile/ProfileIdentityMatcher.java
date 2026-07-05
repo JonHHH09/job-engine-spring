@@ -68,9 +68,12 @@ public class ProfileIdentityMatcher {
         }
         try {
             URI uri = new URI(prepared);
-            String scheme = uri.getScheme() == null ? "https" : uri.getScheme().toLowerCase(Locale.ROOT);
-            String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
-            String path = uri.getRawPath() == null ? "" : uri.getRawPath().replaceAll("/+$", "");
+            String host = uri.getHost();
+            if (host == null) {
+                return prepared.replaceAll("[?#].*$", "").replaceAll("/+$", "").toLowerCase(Locale.ROOT);
+            }
+            String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
+            String path = uri.getRawPath().replaceAll("/+$", "");
             return new URI(scheme, null, host, uri.getPort(), path, null, null).toString().toLowerCase(Locale.ROOT);
         } catch (URISyntaxException exception) {
             return prepared.replaceAll("[?#].*$", "").replaceAll("/+$", "").toLowerCase(Locale.ROOT);

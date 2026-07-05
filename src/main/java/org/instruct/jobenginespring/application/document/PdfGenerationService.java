@@ -123,7 +123,7 @@ public class PdfGenerationService {
         if (rawFileName != null && !rawFileName.isBlank()) {
             try {
                 Path fileNamePath = Path.of(rawFileName.strip()).getFileName();
-                if (fileNamePath != null && !fileNamePath.toString().isBlank()) {
+                if (fileNamePath != null) {
                     baseName = fileNamePath.toString();
                 }
             } catch (InvalidPathException exception) {
@@ -131,7 +131,7 @@ public class PdfGenerationService {
             }
         }
         String sanitized = baseName.replaceAll("[^A-Za-z0-9._-]", "_");
-        if (sanitized.isBlank() || sanitized.equals(".") || sanitized.equals("..")) {
+        if (sanitized.equals(".") || sanitized.equals("..")) {
             sanitized = DEFAULT_FILE_NAME;
         }
         if (!sanitized.toLowerCase().endsWith(".pdf")) {

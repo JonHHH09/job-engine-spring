@@ -75,6 +75,27 @@ class ProfileIdentityMatcherTests {
         )).isEmpty());
     }
 
+    @Test
+    void normalizesBlankHostlessAndMalformedUrls() {
+        assertEquals("", ProfileIdentityMatcher.normalizeUrl(null));
+        assertEquals("", ProfileIdentityMatcher.normalizeUrl(" "));
+        assertEquals("https:", ProfileIdentityMatcher.normalizeUrl("https://"));
+        assertEquals("http:///path", ProfileIdentityMatcher.normalizeUrl("http:///path"));
+        assertEquals("https://example.com", ProfileIdentityMatcher.normalizeUrl("mailto:USER@EXAMPLE.COM"));
+        assertEquals("http://example.com/path", ProfileIdentityMatcher.normalizeUrl("HTTP://Example.COM/path/"));
+        assertEquals("https://example.com", ProfileIdentityMatcher.normalizeUrl("example.com/"));
+        assertEquals("https://bad[host", ProfileIdentityMatcher.normalizeUrl("bad[host/?query=true"));
+    }
+
+    @Test
+    void immutableIdentityRecordsHandleNullCollections() {
+        ProfileIdentitySearch search = new ProfileIdentitySearch("agentic@example.test", null);
+        ProfileIdentityMatcher.ProfileIdentityMatch match = new ProfileIdentityMatcher.ProfileIdentityMatch(PROFILE_ID, null, false);
+
+        assertEquals(List.of(), search.links());
+        assertEquals(List.of(), match.matchedOn());
+    }
+
     private static final class FakeProfileRepository implements ProfileRepository {
 
         private ProfileIdentitySearch lastSearch;

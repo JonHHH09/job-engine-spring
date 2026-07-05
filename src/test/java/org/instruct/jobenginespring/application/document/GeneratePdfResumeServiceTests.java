@@ -3,6 +3,9 @@ package org.instruct.jobenginespring.application.document;
 import org.instruct.jobenginespring.application.document.GeneratePdfResumeService.GeneratePdfResumeRequest;
 import org.instruct.jobenginespring.application.document.GeneratePdfResumeService.GeneratePdfResumeResult;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
+import org.instruct.jobenginespring.application.error.ApplicationException;
+import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
+import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileResumeDocumentRepository;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
@@ -174,6 +177,147 @@ class GeneratePdfResumeServiceTests {
 
         assertEquals("validation_error", exception.errorCode().code());
         assertEquals("profileId", exception.details().get("field"));
+    }
+
+    @Test
+    void coversDefaultIdentityCandidateLookupAndNullIngestionMatchList() {
+        assertEquals(List.of(), profileRepository.findIdentityCandidates(new ProfileIdentitySearch("agentic@example.test", null)));
+
+        ProfilePdfIngestionService.ProfilePdfIngestionResult result = new ProfilePdfIngestionService.ProfilePdfIngestionResult(
+                ProfilePdfIngestionService.IngestionStatus.VALIDATION_FAILED,
+                PROFILE_ID,
+                UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                null,
+                "resume.pdf",
+                1,
+                10,
+                false,
+                false,
+                false,
+                null,
+                null,
+                null
+        );
+
+        assertEquals(List.of(), result.matchedOn());
+    }
+
+    @Test
+    void rejectsInvalidResumeOutputConfiguration() {
+        ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
+                profileRepository,
+                new DocumentStorageService(documentRepository, mock(PdfTextExtractionService.class), Clock.fixed(NOW, ZoneOffset.UTC)),
+                resumeDocumentRepository,
+                Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        GeneratePdfResumeService defaultService = new GeneratePdfResumeService(workflow, (String) null);
+        assertThrows(org.instruct.jobenginespring.application.profile.ProfileService.ProfileNotFoundException.class,
+                () -> defaultService.generatePdfResume(new GeneratePdfResumeRequest(PROFILE_ID)));
+        GeneratePdfResumeService blankDefaultService = new GeneratePdfResumeService(workflow, " ");
+        assertThrows(org.instruct.jobenginespring.application.profile.ProfileService.ProfileNotFoundException.class,
+                () -> blankDefaultService.generatePdfResume(new GeneratePdfResumeRequest(PROFILE_ID)));
+
+        ApplicationException exception = assertThrows(
+                ApplicationException.class,
+                () -> new GeneratePdfResumeService(workflow, "bad\0path")
+        );
+
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals("outputDirectory", exception.details().get("field"));
+    }
+
+    @Test
+    void rejectsBlankResumeTypeInSharedWorkflow() {
+        profileRepository.saveProfileAggregate(sampleAggregate(PROFILE_ID));
+        ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
+                profileRepository,
+                new DocumentStorageService(documentRepository, mock(PdfTextExtractionService.class), Clock.fixed(NOW, ZoneOffset.UTC)),
+                resumeDocumentRepository,
+                Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        ApplicationException blankException = assertThrows(
+                ApplicationException.class,
+                () -> workflow.generateAndLink(new ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand(
+                        PROFILE_ID,
+                        " ",
+                        tempDir,
+                        "resume.pdf",
+                        "Resume",
+                        "Body"
+                ))
+        );
+        ApplicationException nullException = assertThrows(
+                ApplicationException.class,
+                () -> workflow.generateAndLink(new ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand(
+                        PROFILE_ID,
+                        null,
+                        tempDir,
+                        "resume.pdf",
+                        "Resume",
+                        "Body"
+                ))
+        );
+
+        assertEquals("validation_error", blankException.errorCode().code());
+        assertEquals("resumeType", blankException.details().get("field"));
+        assertEquals("validation_error", nullException.errorCode().code());
+        assertEquals("resumeType", nullException.details().get("field"));
+    }
+
+    @Test
+    void rendersCanadianResumeWithOptionalFallbacksAndReverseChronologicalExperience() {
+        ProfileAggregate aggregate = sparseAggregate(PROFILE_ID);
+
+        String rendered = ResumeBodyRenderer.renderCanadianResume(aggregate);
+        String emptyRendered = ResumeBodyRenderer.renderMasterResume(emptyAggregate(PROFILE_ID));
+
+        assertTrue(rendered.contains("Profile summary not provided."));
+        assertTrue(rendered.contains("personal: +1-555-0100"));
+        assertTrue(rendered.contains("English"));
+        assertTrue(rendered.contains("Education"));
+        assertTrue(rendered.contains("Dates not provided"));
+        assertTrue(rendered.indexOf("Current Role") < rendered.indexOf("Past Role"));
+        assertTrue(rendered.indexOf("Past Role") < rendered.indexOf("Undated Role"));
+        assertTrue(emptyRendered.contains("Agentic Dev"));
+        assertFalse(emptyRendered.contains("SKILLS"));
+        assertFalse(emptyRendered.contains("EXPERIENCE"));
+    }
+
+    private static ProfileAggregate emptyAggregate(UUID profileId) {
+        return new ProfileAggregate(
+                new UserProfile(profileId, "Agentic Dev", "agentic@example.test", null, null, NOW, NOW),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+    }
+
+    private static ProfileAggregate sparseAggregate(UUID profileId) {
+        UUID projectId = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+        return new ProfileAggregate(
+                new UserProfile(profileId, "Agentic Dev", "agentic@example.test", " ", null, NOW, NOW),
+                List.of(new ProfileContact(UUID.randomUUID(), profileId, "personal", "+1-555-0100", " ", NOW, NOW)),
+                List.of(new ProfileLink(UUID.randomUUID(), profileId, "portfolio", "https://example.test", " ", NOW, NOW)),
+                List.of(),
+                List.of(new ProfileLanguage(UUID.randomUUID(), profileId, "English", "english", " ", 0, NOW)),
+                List.of(new Education(UUID.randomUUID(), profileId, " ", " ", " ", " ", null, null, " ", NOW)),
+                List.of(
+                        new Experience(UUID.randomUUID(), profileId, "Current Co", "Current Role", " ", LocalDate.of(2025, 1, 1), null, " ", 3, NOW),
+                        new Experience(UUID.randomUUID(), profileId, "End Only Co", "End Only Role", null, null, LocalDate.of(2024, 1, 1), null, 2, NOW),
+                        new Experience(UUID.randomUUID(), profileId, "Past Co", "Past Role", null, LocalDate.of(2020, 1, 1), LocalDate.of(2022, 1, 1), "Past work", 1, NOW),
+                        new Experience(UUID.randomUUID(), profileId, "Undated Co", "Undated Role", null, null, null, null, 0, NOW)
+                ),
+                List.of(new ProfileProject(projectId, profileId, "Project", " ", " ", List.of(), 0, NOW)),
+                List.of()
+        );
     }
 
     private static ProfileAggregate sampleAggregate(UUID profileId) {

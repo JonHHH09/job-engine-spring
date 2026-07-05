@@ -4,6 +4,8 @@ import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.contentstream.operator.Operator;
 import org.apache.pdfbox.cos.COSNumber;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.apache.pdfbox.pdfparser.PDFStreamParser;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratePdfFileRequest;
@@ -13,6 +15,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -136,6 +141,102 @@ class PdfGenerationServiceTests {
         );
     }
 
+    @Test
+    void usesDefaultOutputDirectoryForBlankConfigurationAndRejectsInvalidConfiguration() {
+        PdfGenerationService defaultService = new PdfGenerationService(" ");
+
+        GeneratedPdfFileResult result = defaultService.generatePdfFile(new GeneratePdfFileRequest(
+                null,
+                null,
+                "Body"
+        ));
+
+        assertEquals("generated.pdf", result.fileName());
+        assertTrue(Path.of(result.path()).endsWith("tmp/generated-pdfs/generated.pdf"));
+
+        PdfGenerationService nullDefaultService = new PdfGenerationService((String) null);
+        GeneratedPdfFileResult nullDefaultResult = nullDefaultService.generatePdfFile(new GeneratePdfFileRequest(
+                "null-default",
+                "Title",
+                "Body"
+        ));
+        assertTrue(Path.of(nullDefaultResult.path()).endsWith("tmp/generated-pdfs/null-default.pdf"));
+
+        ApplicationException exception = assertThrows(
+                ApplicationException.class,
+                () -> new PdfGenerationService("bad\0path")
+        );
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals("outputDirectory", exception.details().get("field"));
+    }
+
+    @Test
+    void rejectsInvalidFileNameConfiguration() throws Exception {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        ApplicationException exception = assertThrows(
+                ApplicationException.class,
+                () -> service.generatePdfFile(new GeneratePdfFileRequest("bad\0name", "Title", "Body"))
+        );
+
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals("fileName", exception.details().get("field"));
+
+        PdfGenerationService guardedService = new PdfGenerationService(tempDir.resolve("base"));
+        Field outputDirectory = PdfGenerationService.class.getDeclaredField("outputDirectory");
+        outputDirectory.setAccessible(true);
+        outputDirectory.set(guardedService, tempDir.resolve("base").resolve(".."));
+        ApplicationException escaped = assertThrows(
+                ApplicationException.class,
+                () -> guardedService.generatePdfFile(new GeneratePdfFileRequest("sample.pdf", "Title", "Body"))
+        );
+        assertEquals("fileName", escaped.details().get("field"));
+    }
+
+    @Test
+    void coversPdfTextSanitizingWrappingAndChromeFittingEdges() throws Exception {
+        assertEquals("generated.pdf", invokeString("sanitizeFileName", new Class<?>[]{String.class}, " "));
+        assertEquals("generated.pdf", invokeString("sanitizeFileName", new Class<?>[]{String.class}, "/"));
+        assertEquals("generated.pdf", invokeString("sanitizeFileName", new Class<?>[]{String.class}, "."));
+        assertEquals("generated.pdf", invokeString("sanitizeFileName", new Class<?>[]{String.class}, ".."));
+        assertEquals("Generated PDF", invokeString("resolveTitle", new Class<?>[]{String.class}, "\t"));
+        assertEquals("A B ?", invokeString("sanitizeText", new Class<?>[]{String.class}, "A\tB\n\u2603"));
+        assertThrows(ApplicationException.class, () -> invokeString("validateBody", new Class<?>[]{String.class}, new Object[]{null}));
+
+        @SuppressWarnings("unchecked")
+        List<String> wrapped = (List<String>) invoke("wrap", new Class<?>[]{String.class, int.class}, "abcdefghij", 4);
+        assertEquals(List.of("abcd", "efgh", "ij"), wrapped);
+        @SuppressWarnings("unchecked")
+        List<String> wrappedAtSpace = (List<String>) invoke("wrap", new Class<?>[]{String.class, int.class}, "abc def ghi", 7);
+        assertEquals("abc def", wrappedAtSpace.getFirst());
+        assertEquals("ghi", wrappedAtSpace.get(1));
+        @SuppressWarnings("unchecked")
+        List<Object> emptyPages = (List<Object>) invoke("paginate", new Class<?>[]{List.class}, List.of());
+        assertEquals(1, emptyPages.size());
+
+        assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, new Object[]{null}));
+        assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, "SECTION: VALUE"));
+        assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, "1234"));
+
+        PDType1Font font = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+        assertEquals("Short", invokeString("fitText", new Class<?>[]{String.class, PDType1Font.class, float.class, float.class}, "Short", font, 9.0f, 500.0f));
+        assertEquals("Very...", invokeString("fitText", new Class<?>[]{String.class, PDType1Font.class, float.class, float.class}, "Very long title", font, 9.0f, 30.0f));
+        assertEquals("...", invokeString("fitText", new Class<?>[]{String.class, PDType1Font.class, float.class, float.class}, "Very long title", font, 9.0f, 1.0f));
+    }
+
+    @Test
+    void mapsIoFailuresToInternalErrors() throws IOException {
+        Path notADirectory = Files.createTempFile(tempDir, "not-a-directory", ".tmp");
+        PdfGenerationService service = new PdfGenerationService(notADirectory);
+
+        ApplicationException exception = assertThrows(
+                ApplicationException.class,
+                () -> service.generatePdfFile(new GeneratePdfFileRequest("sample.pdf", "Title", "Body"))
+        );
+
+        assertEquals("internal_error", exception.errorCode().code());
+    }
+
     private static int countOccurrences(String text, String needle) {
         int count = 0;
         int index = 0;
@@ -201,5 +302,22 @@ class PdfGenerationServiceTests {
 
     private static boolean closeTo(float actual, float expected) {
         return Math.abs(actual - expected) < 0.001f;
+    }
+
+    private static String invokeString(String methodName, Class<?>[] parameterTypes, Object... args) throws Exception {
+        return (String) invoke(methodName, parameterTypes, args);
+    }
+
+    private static Object invoke(String methodName, Class<?>[] parameterTypes, Object... args) throws Exception {
+        Method method = PdfGenerationService.class.getDeclaredMethod(methodName, parameterTypes);
+        method.setAccessible(true);
+        try {
+            return method.invoke(null, args);
+        } catch (InvocationTargetException exception) {
+            if (exception.getCause() instanceof Exception cause) {
+                throw cause;
+            }
+            throw exception;
+        }
     }
 }

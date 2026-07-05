@@ -169,6 +169,23 @@ class PostgresProfileRepositoryIntegrationTests {
         assertEquals(List.of(PROFILE_ID, PROFILE_ID), candidates.stream()
                 .map(ProfileIdentityCandidate::profileId)
                 .toList());
+
+        assertEquals(List.of("email"), repository.findIdentityCandidates(new ProfileIdentitySearch(
+                        "agentic-dev@example.test",
+                        List.of()
+                )).stream()
+                .map(ProfileIdentityCandidate::matchedOn)
+                .toList());
+        assertEquals(List.of("link:portfolio"), repository.findIdentityCandidates(new ProfileIdentitySearch(
+                        null,
+                        List.of(new ProfileIdentitySearch.LinkIdentity("portfolio", "https://example.test"))
+                )).stream()
+                .map(ProfileIdentityCandidate::matchedOn)
+                .toList());
+        assertEquals(List.of(), repository.findIdentityCandidates(new ProfileIdentitySearch(
+                " ",
+                List.of()
+        )));
     }
 
     @Test
