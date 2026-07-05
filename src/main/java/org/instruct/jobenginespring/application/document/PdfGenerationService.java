@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.awt.Color;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
@@ -33,6 +34,15 @@ public class PdfGenerationService {
     private static final float BODY_FONT_SIZE = 11;
     private static final float LEADING = 16;
     private static final int BODY_WRAP_CHARACTERS = 86;
+    private static final float HEADER_HEIGHT = 42;
+    private static final float FOOTER_HEIGHT = 42;
+    private static final float CHROME_FONT_SIZE = 9;
+    private static final Color PAGE_BACKGROUND_COLOR = Color.WHITE;
+    private static final Color CHROME_BACKGROUND_COLOR = new Color(64, 64, 64);
+    private static final Color TEXT_COLOR = new Color(14, 14, 14);
+    private static final Color TITLE_COLOR = new Color(14, 14, 14);
+    private static final Color CHROME_TEXT_COLOR = new Color(245, 245, 245);
+    private static final float SECTION_SEPARATOR_WIDTH = 0.5f;
 
     private final Path outputDirectory;
 
@@ -135,31 +145,13 @@ public class PdfGenerationService {
             List<String> lines = bodyLines(title, body);
             PDType1Font titleFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
             PDType1Font bodyFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
-            PDPage page = addPage(document);
-            PDPageContentStream contentStream = startPage(document, page);
-            float y = page.getMediaBox().getHeight() - MARGIN;
-            boolean titleWritten = false;
+            PDType1Font chromeFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+            List<PageLines> pages = paginate(lines);
 
-            for (String line : lines) {
-                if (y < MARGIN) {
-                    contentStream.endText();
-                    contentStream.close();
-                    page = addPage(document);
-                    contentStream = startPage(document, page);
-                    y = page.getMediaBox().getHeight() - MARGIN;
-                }
-                if (!titleWritten) {
-                    contentStream.setFont(titleFont, TITLE_FONT_SIZE);
-                    titleWritten = true;
-                } else {
-                    contentStream.setFont(bodyFont, BODY_FONT_SIZE);
-                }
-                contentStream.newLineAtOffset(0, y == page.getMediaBox().getHeight() - MARGIN ? 0 : -LEADING);
-                contentStream.showText(line);
-                y -= LEADING;
+            for (int pageIndex = 0; pageIndex < pages.size(); pageIndex++) {
+                PDPage page = addPage(document);
+                writePage(document, page, pages.get(pageIndex), pageIndex + 1, pages.size(), title, titleFont, bodyFont, chromeFont);
             }
-            contentStream.endText();
-            contentStream.close();
             document.save(outputPath.toFile());
             return document.getNumberOfPages();
         }
@@ -171,11 +163,127 @@ public class PdfGenerationService {
         return page;
     }
 
-    private static PDPageContentStream startPage(PDDocument document, PDPage page) throws IOException {
-        PDPageContentStream contentStream = new PDPageContentStream(document, page);
+    private static List<PageLines> paginate(List<String> lines) {
+        int linesPerPage = Math.max(1, (int) Math.floor((bodyStartY() - bodyEndY()) / LEADING) + 1);
+        List<PageLines> pages = new ArrayList<>();
+        for (int startIndex = 0; startIndex < lines.size(); startIndex += linesPerPage) {
+            int endIndex = Math.min(lines.size(), startIndex + linesPerPage);
+            pages.add(new PageLines(lines.subList(startIndex, endIndex), startIndex));
+        }
+        if (pages.isEmpty()) {
+            pages.add(new PageLines(List.of(), 0));
+        }
+        return pages;
+    }
+
+    private static void writePage(
+            PDDocument document,
+            PDPage page,
+            PageLines pageLines,
+            int pageNumber,
+            int pageCount,
+            String title,
+            PDType1Font titleFont,
+            PDType1Font bodyFont,
+            PDType1Font chromeFont
+    ) throws IOException {
+        try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
+            drawBackground(contentStream, page);
+            drawChrome(contentStream, page, chromeFont, title, pageNumber, pageCount);
+            drawBody(contentStream, pageLines, titleFont, bodyFont);
+        }
+    }
+
+    private static void drawBackground(PDPageContentStream contentStream, PDPage page) throws IOException {
+        PDRectangle box = page.getMediaBox();
+        contentStream.setNonStrokingColor(PAGE_BACKGROUND_COLOR);
+        contentStream.addRect(0, 0, box.getWidth(), box.getHeight());
+        contentStream.fill();
+    }
+
+    private static void drawChrome(
+            PDPageContentStream contentStream,
+            PDPage page,
+            PDType1Font chromeFont,
+            String title,
+            int pageNumber,
+            int pageCount
+    ) throws IOException {
+        PDRectangle box = page.getMediaBox();
+        String chromeText = fitText(title + " | Page " + pageNumber + " of " + pageCount, chromeFont, CHROME_FONT_SIZE, box.getWidth() - (MARGIN * 2));
+
+        contentStream.setNonStrokingColor(CHROME_BACKGROUND_COLOR);
+        contentStream.addRect(0, box.getHeight() - HEADER_HEIGHT, box.getWidth(), HEADER_HEIGHT);
+        contentStream.fill();
+        contentStream.addRect(0, 0, box.getWidth(), FOOTER_HEIGHT);
+        contentStream.fill();
+
+        drawText(contentStream, chromeFont, CHROME_FONT_SIZE, CHROME_TEXT_COLOR, MARGIN, box.getHeight() - 25, chromeText);
+        drawText(contentStream, chromeFont, CHROME_FONT_SIZE, CHROME_TEXT_COLOR, MARGIN, 17, chromeText);
+    }
+
+    private static void drawBody(PDPageContentStream contentStream, PageLines pageLines, PDType1Font titleFont, PDType1Font bodyFont) throws IOException {
+        for (int index = 0; index < pageLines.lines().size(); index++) {
+            int globalIndex = pageLines.startIndex() + index;
+            float y = bodyStartY() - (index * LEADING);
+            String line = pageLines.lines().get(index);
+            if (globalIndex == 0) {
+                drawText(contentStream, titleFont, TITLE_FONT_SIZE, TITLE_COLOR, MARGIN, y, line);
+            } else {
+                if (isSectionHeading(line)) {
+                    drawSectionSeparator(contentStream, y + 9);
+                }
+                if (!line.isEmpty()) {
+                    drawText(contentStream, bodyFont, BODY_FONT_SIZE, TEXT_COLOR, MARGIN, y, line);
+                }
+            }
+        }
+    }
+
+    private static boolean isSectionHeading(String line) {
+        if (line == null || line.isBlank() || line.length() > 48 || line.contains(":")) {
+            return false;
+        }
+        String stripped = line.strip();
+        return stripped.chars().anyMatch(Character::isLetter)
+                && stripped.equals(stripped.toUpperCase(java.util.Locale.ROOT));
+    }
+
+    private static void drawSectionSeparator(PDPageContentStream contentStream, float y) throws IOException {
+        contentStream.setStrokingColor(CHROME_BACKGROUND_COLOR);
+        contentStream.setLineWidth(SECTION_SEPARATOR_WIDTH);
+        contentStream.moveTo(MARGIN, y);
+        contentStream.lineTo(PDRectangle.LETTER.getWidth() - MARGIN, y);
+        contentStream.stroke();
+    }
+
+    private static void drawText(PDPageContentStream contentStream, PDType1Font font, float fontSize, Color color, float x, float y, String text) throws IOException {
         contentStream.beginText();
-        contentStream.newLineAtOffset(MARGIN, page.getMediaBox().getHeight() - MARGIN);
-        return contentStream;
+        contentStream.setFont(font, fontSize);
+        contentStream.setNonStrokingColor(color);
+        contentStream.newLineAtOffset(x, y);
+        contentStream.showText(text);
+        contentStream.endText();
+    }
+
+    private static String fitText(String text, PDType1Font font, float fontSize, float maxWidth) throws IOException {
+        if (font.getStringWidth(text) / 1000 * fontSize <= maxWidth) {
+            return text;
+        }
+        String ellipsis = "...";
+        String remaining = text;
+        while (!remaining.isEmpty() && font.getStringWidth(remaining + ellipsis) / 1000 * fontSize > maxWidth) {
+            remaining = remaining.substring(0, remaining.length() - 1).stripTrailing();
+        }
+        return remaining.isEmpty() ? ellipsis : remaining + ellipsis;
+    }
+
+    private static float bodyStartY() {
+        return PDRectangle.LETTER.getHeight() - HEADER_HEIGHT - MARGIN;
+    }
+
+    private static float bodyEndY() {
+        return FOOTER_HEIGHT + MARGIN;
     }
 
     private static List<String> bodyLines(String title, String body) {
@@ -243,5 +351,8 @@ public class PdfGenerationService {
             int pageCount,
             String generatedAt
     ) {
+    }
+
+    private record PageLines(List<String> lines, int startIndex) {
     }
 }

@@ -17,6 +17,8 @@ The current verified MCP surface is intentionally small:
 - `get_document_metadata` — returns stored document metadata by UUID without returning binary content.
 - `extract_stored_pdf_text` — extracts text from a stored PDF and optionally persists bounded extracted text.
 - `generate_pdf_file` — generates a PDF file under `tmp/generated-pdfs/` and returns file metadata.
+- `generate_pdf_resume` — generates a master resume PDF from a normalized profile, stores it as a document, and links it uniquely to that profile as the `master_resume` variant.
+- `generate_canadian_pdf_resume` — generates a Canadian-format resume PDF from the same normalized profile, stores it as a document, and links it uniquely to that profile as the `canadian_resume` variant.
 - `ingest_profile_from_stored_pdf` — populates the normalized profile schema from a stored PDF extraction and links the profile to that extraction.
 - `get_profile_pdf_source` — returns the one-to-one PDF extraction source link for a profile.
 
@@ -49,6 +51,24 @@ Never commit real credentials, private resume data, API keys, or production conn
 
 For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not polluted.
 
+## Local STDIO MCP deployment
+
+The default local deployment is a packaged Spring Boot jar launched by an MCP client over STDIO. The application is not a standalone HTTP daemon in this mode: Hermes or another MCP client starts `java -jar ...`, keeps stdin/stdout open, and discovers tools from that live subprocess.
+
+Build and verify the local jar with:
+
+```bash
+./scripts/rebuild-local-mcp-jar.sh
+```
+
+The script runs `./mvnw test`, packages `target/job-engine-spring-0.0.1-SNAPSHOT.jar`, and then runs `hermes mcp test job-engine-spring` when the Hermes CLI is available. To skip unit tests after they have already passed, run:
+
+```bash
+RUN_TESTS=false ./scripts/rebuild-local-mcp-jar.sh
+```
+
+Rebuilding the jar updates the file on disk only. Any already-running Hermes MCP connection keeps using the old Java process until it reconnects. After rebuilding, run `/reload-mcp` in the active Hermes session. If tool names, argument schemas, prompts, or resources changed, start a fresh Hermes session with `/reset` after reloading so the tool schema in the agent context is current.
+
 ## Document storage and extraction contract
 
 `extract_pdf_text` accepts a local PDF path and returns extracted text with optional page-level text. PDF content is treated as untrusted user data: the server returns the extracted content but does not persist it, execute it, or follow instructions embedded in the document. Invalid paths, non-PDF files, unreadable files, and extraction failures are returned as sanitized validation errors.
@@ -59,7 +79,9 @@ The tool rejects oversized PDFs before parsing and caps page count before extrac
 
 `get_document_metadata` returns only metadata and never returns binary file content. `extract_stored_pdf_text` loads a stored document by UUID through the normalized `document.documents -> document.blobs` relationship, extracts bounded text using the same PDF reader path, and persists the returned bounded extraction text to `document.pdf_extractions` only when `persistExtraction` is `true`. Persisted extraction is idempotent per stored document: `document.pdf_extractions.file_id` is unique and references `document.documents(id)`, so repeated persisted extraction calls for the same stored document return/reuse the existing canonical extraction row instead of creating duplicates. Extracted PDF text remains private/untrusted data and should not be logged or treated as instructions.
 
-`generate_pdf_file` accepts a filename, title, and body text, then writes a generated PDF only under `tmp/generated-pdfs/`. The directory is intentionally runtime-only: `.gitignore` ignores generated PDFs while preserving `tmp/generated-pdfs/.gitkeep` so the directory exists in version control. Filenames are sanitized and forced to `.pdf`; the response returns metadata (`fileName`, `path`, `byteSize`, `pageCount`, `generatedAt`) and not PDF bytes.
+`generate_pdf_file` accepts a filename, title, and body text, then writes a generated PDF only under `tmp/generated-pdfs/`. The directory is intentionally runtime-only: `.gitignore` ignores generated PDFs while preserving `tmp/generated-pdfs/.gitkeep` so the directory exists in version control. Filenames are sanitized and forced to `.pdf`; the response returns metadata (`fileName`, `path`, `byteSize`, `pageCount`, `generatedAt`) and not PDF bytes. Generated PDFs use a white page background, identical header/footer chrome, page numbering in the header/footer text, and thin chrome-colored separators before section headings.
+
+`generate_pdf_resume` accepts a profile UUID, renders a master resume from the normalized profile schema, writes the runtime PDF under `tmp/generated-pdfs/master-resume/`, stores that generated file through the document storage slice, and upserts one current `profile.profile_resume_documents` link per profile/resume type. `generate_canadian_pdf_resume` reuses the same profile-loading, PDF-generation, document-storage, and profile-link workflow, but renders the Canadian variant under `tmp/generated-pdfs/canadian-resume/` with Canadian resume defaults: no photo/personal-demographic fields, professional contact links only, professional summary, grouped technical skills, reverse-chronological professional experience, projects, education, and languages. Resume PDFs use the same white background, identical header/footer chrome, page numbering, and thin chrome-colored section separators as generated PDFs. Responses return profile/document/link/generated-file metadata only; they do not return PDF bytes or rendered resume body text.
 
 ## Profile PDF ingestion contract
 
@@ -105,7 +127,7 @@ Run focused unit tests while working on profile or document behavior:
 
 ```bash
 ./mvnw -q -Dtest=ProfileWriteValidatorTests,ProfileWriteCanonicalizerTests,ProfileServiceTests,ProfileMcpAdapterTests test
-./mvnw -q -Dtest=PdfTextExtractionServiceTests,DocumentStorageServiceTests,PdfGenerationServiceTests,DocumentMcpAdapterTests test
+./mvnw -q -Dtest=PdfTextExtractionServiceTests,DocumentStorageServiceTests,PdfGenerationServiceTests,GeneratePdfResumeServiceTests,DocumentMcpAdapterTests,DocumentPdfGenerateResumeMcpTests test
 ./mvnw -q -Dtest=ProfilePdfIngestionServiceTests,ProfilePdfIngestionMcpAdapterTests test
 ```
 

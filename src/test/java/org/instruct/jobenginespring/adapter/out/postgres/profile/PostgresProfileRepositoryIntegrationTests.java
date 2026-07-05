@@ -95,6 +95,7 @@ class PostgresProfileRepositoryIntegrationTests {
                 "profile_languages",
                 "profile_links",
                 "profile_pdf_sources",
+                "profile_resume_documents",
                 "profile_skills",
                 "profiles",
                 "project_technologies",

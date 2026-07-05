@@ -4,6 +4,7 @@ import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
+import org.instruct.jobenginespring.application.profile.port.ProfileResumeDocumentRepository;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
@@ -15,6 +16,7 @@ import org.instruct.jobenginespring.domain.profile.ProfileLanguage;
 import org.instruct.jobenginespring.domain.profile.ProfileLink;
 import org.instruct.jobenginespring.domain.profile.ProfilePdfSource;
 import org.instruct.jobenginespring.domain.profile.ProfileProject;
+import org.instruct.jobenginespring.domain.profile.ProfileResumeDocument;
 import org.instruct.jobenginespring.domain.profile.ProfileSkill;
 import org.instruct.jobenginespring.domain.profile.ProjectTechnology;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
@@ -177,6 +179,26 @@ class JobEngineSpringApplicationTests {
 
                 @Override
                 public Optional<ProfilePdfSource> findByDocumentSha256(String sha256) {
+                    return Optional.empty();
+                }
+            };
+        }
+
+        @Bean
+        ProfileResumeDocumentRepository profileResumeDocumentRepository() {
+            return new ProfileResumeDocumentRepository() {
+                @Override
+                public ProfileResumeDocument save(ProfileResumeDocument resumeDocument) {
+                    return resumeDocument;
+                }
+
+                @Override
+                public Optional<ProfileResumeDocument> findByProfileIdAndResumeType(UUID profileId, String resumeType) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public Optional<ProfileResumeDocument> findByDocumentId(UUID documentId) {
                     return Optional.empty();
                 }
             };

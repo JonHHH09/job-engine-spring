@@ -1,0 +1,255 @@
+package org.instruct.jobenginespring.application.document;
+
+import org.instruct.jobenginespring.domain.profile.Education;
+import org.instruct.jobenginespring.domain.profile.Experience;
+import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
+import org.instruct.jobenginespring.domain.profile.ProfileContact;
+import org.instruct.jobenginespring.domain.profile.ProfileLanguage;
+import org.instruct.jobenginespring.domain.profile.ProfileLink;
+import org.instruct.jobenginespring.domain.profile.ProfileProject;
+import org.instruct.jobenginespring.domain.profile.ProfileSkill;
+import org.instruct.jobenginespring.domain.profile.ProjectTechnology;
+import org.instruct.jobenginespring.domain.profile.UserProfile;
+
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+final class ResumeBodyRenderer {
+
+    private static final DateTimeFormatter MONTH_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM");
+
+    private ResumeBodyRenderer() {
+    }
+
+    static String renderMasterResume(ProfileAggregate aggregate) {
+        StringBuilder body = new StringBuilder();
+        UserProfile profile = aggregate.profile();
+        appendLine(body, profile.fullName());
+        appendLine(body, profile.email());
+        appendContacts(body, aggregate.contacts());
+        appendLinks(body, aggregate.links());
+        appendBlank(body);
+        appendSection(body, "SUMMARY");
+        appendLine(body, defaultText(profile.summary(), "Profile summary not provided."));
+        appendBlank(body);
+        appendSkills(body, aggregate.skills(), "SKILLS");
+        appendLanguages(body, aggregate.languages());
+        appendExperiencesByDisplayOrder(body, aggregate.experiences(), "EXPERIENCE");
+        appendProjects(body, aggregate.projects());
+        appendEducation(body, aggregate.education());
+        return body.toString().strip();
+    }
+
+    static String renderCanadianResume(ProfileAggregate aggregate) {
+        StringBuilder body = new StringBuilder();
+        UserProfile profile = aggregate.profile();
+
+        // Canadian resume rendering uses only normalized profile fields that are appropriate
+        // for an applicant-facing resume. It deliberately avoids photos, SIN, references,
+        // and protected personal details; those fields are not part of this profile schema.
+        appendLine(body, profile.fullName());
+        appendLine(body, profile.email());
+        appendContacts(body, aggregate.contacts());
+        appendLinks(body, aggregate.links());
+        appendBlank(body);
+
+        // Keep the section order aligned with Canadian resume norms: concise professional
+        // summary, scannable technical skills, reverse-chronological experience, then
+        // supporting projects, education, and languages.
+        appendSection(body, "PROFESSIONAL SUMMARY");
+        appendLine(body, defaultText(profile.summary(), "Profile summary not provided."));
+        appendBlank(body);
+        appendSkills(body, aggregate.skills(), "TECHNICAL SKILLS");
+        appendExperiencesReverseChronological(body, aggregate.experiences(), "PROFESSIONAL EXPERIENCE");
+        appendProjects(body, aggregate.projects());
+        appendEducation(body, aggregate.education());
+        appendLanguages(body, aggregate.languages());
+        return body.toString().strip();
+    }
+
+    private static void appendContacts(StringBuilder body, List<ProfileContact> contacts) {
+        if (contacts.isEmpty()) {
+            return;
+        }
+        appendLine(body, contacts.stream()
+                .map(contact -> labelValue(contact.label(), contact.contactType(), contact.contactValue()))
+                .collect(Collectors.joining(" | ")));
+    }
+
+    private static void appendLinks(StringBuilder body, List<ProfileLink> links) {
+        if (links.isEmpty()) {
+            return;
+        }
+        appendLine(body, links.stream()
+                .map(link -> labelValue(link.label(), link.linkType(), link.url()))
+                .collect(Collectors.joining(" | ")));
+    }
+
+    private static void appendSkills(StringBuilder body, List<ProfileSkill> skills, String heading) {
+        if (skills.isEmpty()) {
+            return;
+        }
+        appendSection(body, heading);
+        Map<String, List<ProfileSkill>> byCategory = skills.stream()
+                .sorted(Comparator.comparingInt(ProfileSkill::displayOrder).thenComparing(ProfileSkill::skill))
+                .collect(Collectors.groupingBy(skill -> defaultText(skill.category(), "General"), java.util.LinkedHashMap::new, Collectors.toList()));
+        byCategory.forEach((category, categorySkills) -> appendLine(body, category + ": " + categorySkills.stream()
+                .map(ProfileSkill::skill)
+                .collect(Collectors.joining(", "))));
+        appendBlank(body);
+    }
+
+    private static void appendLanguages(StringBuilder body, List<ProfileLanguage> languages) {
+        if (languages.isEmpty()) {
+            return;
+        }
+        appendSection(body, "LANGUAGES");
+        appendLine(body, languages.stream()
+                .sorted(Comparator.comparingInt(ProfileLanguage::displayOrder).thenComparing(ProfileLanguage::language))
+                .map(language -> language.language() + optionalSuffix(language.proficiency()))
+                .collect(Collectors.joining(", ")));
+        appendBlank(body);
+    }
+
+    private static void appendExperiencesByDisplayOrder(StringBuilder body, List<Experience> experiences, String heading) {
+        appendExperiences(
+                body,
+                experiences.stream()
+                        .sorted(Comparator.comparingInt(Experience::displayOrder).thenComparing(Experience::company, Comparator.nullsLast(String::compareTo)))
+                        .toList(),
+                heading
+        );
+    }
+
+    private static void appendExperiencesReverseChronological(StringBuilder body, List<Experience> experiences, String heading) {
+        appendExperiences(
+                body,
+                experiences.stream()
+                        .sorted(Comparator.comparing(ResumeBodyRenderer::experienceSortDate, Comparator.reverseOrder())
+                                .thenComparing(Experience::displayOrder)
+                                .thenComparing(Experience::company, Comparator.nullsLast(String::compareTo)))
+                        .toList(),
+                heading
+        );
+    }
+
+    private static LocalDate experienceSortDate(Experience experience) {
+        if (experience.endDate() != null) {
+            return experience.endDate();
+        }
+        if (experience.startDate() != null) {
+            return experience.startDate();
+        }
+        return LocalDate.MIN;
+    }
+
+    private static void appendExperiences(StringBuilder body, List<Experience> experiences, String heading) {
+        if (experiences.isEmpty()) {
+            return;
+        }
+        appendSection(body, heading);
+        experiences.forEach(experience -> {
+            appendLine(body, defaultText(experience.title(), "Role") + " - " + defaultText(experience.company(), "Company"));
+            appendLine(body, period(experience.startDate(), experience.endDate()) + optionalLocation(experience.location()));
+            if (hasText(experience.description())) {
+                appendLine(body, "- " + experience.description().strip());
+            }
+            appendBlank(body);
+        });
+    }
+
+    private static void appendProjects(StringBuilder body, List<ProfileProject> projects) {
+        if (projects.isEmpty()) {
+            return;
+        }
+        appendSection(body, "PROJECTS");
+        projects.stream()
+                .sorted(Comparator.comparingInt(ProfileProject::displayOrder).thenComparing(ProfileProject::name, Comparator.nullsLast(String::compareTo)))
+                .forEach(project -> {
+                    appendLine(body, defaultText(project.name(), "Project") + optionalUrl(project.url()));
+                    String technologies = project.technologies().stream()
+                            .sorted(Comparator.comparingInt(ProjectTechnology::displayOrder).thenComparing(ProjectTechnology::technology))
+                            .map(ProjectTechnology::technology)
+                            .collect(Collectors.joining(", "));
+                    if (hasText(technologies)) {
+                        appendLine(body, "Technologies: " + technologies);
+                    }
+                    if (hasText(project.description())) {
+                        appendLine(body, "- " + project.description().strip());
+                    }
+                    appendBlank(body);
+                });
+    }
+
+    private static void appendEducation(StringBuilder body, List<Education> education) {
+        if (education.isEmpty()) {
+            return;
+        }
+        appendSection(body, "EDUCATION");
+        education.stream()
+                .sorted(Comparator.comparing(Education::endDate, Comparator.nullsLast(Comparator.reverseOrder())))
+                .forEach(item -> {
+                    appendLine(body, defaultText(item.degree(), "Education") + optionalField(item.field()));
+                    appendLine(body, defaultText(item.institution(), "Institution") + optionalLocation(item.location()));
+                    appendLine(body, period(item.startDate(), item.endDate()));
+                    if (hasText(item.relevantFocus())) {
+                        appendLine(body, "- " + item.relevantFocus().strip());
+                    }
+                    appendBlank(body);
+                });
+    }
+
+    private static String labelValue(String label, String type, String value) {
+        String resolvedLabel = hasText(label) ? label.strip() : type.strip();
+        return resolvedLabel + ": " + value.strip();
+    }
+
+    private static String period(LocalDate startDate, LocalDate endDate) {
+        if (startDate == null && endDate == null) {
+            return "Dates not provided";
+        }
+        String start = startDate == null ? "Unknown" : MONTH_FORMATTER.format(startDate);
+        String end = endDate == null ? "Present" : MONTH_FORMATTER.format(endDate);
+        return start + " - " + end;
+    }
+
+    private static String optionalSuffix(String text) {
+        return hasText(text) ? " (" + text.strip() + ")" : "";
+    }
+
+    private static String optionalLocation(String location) {
+        return hasText(location) ? " | " + location.strip() : "";
+    }
+
+    private static String optionalUrl(String url) {
+        return hasText(url) ? " - " + url.strip() : "";
+    }
+
+    private static String optionalField(String field) {
+        return hasText(field) ? ", " + field.strip() : "";
+    }
+
+    private static String defaultText(String text, String fallback) {
+        return hasText(text) ? text.strip() : fallback;
+    }
+
+    private static boolean hasText(String text) {
+        return text != null && !text.isBlank();
+    }
+
+    private static void appendSection(StringBuilder body, String title) {
+        appendLine(body, title);
+    }
+
+    private static void appendLine(StringBuilder body, String line) {
+        body.append(line).append('\n');
+    }
+
+    private static void appendBlank(StringBuilder body) {
+        body.append('\n');
+    }
+}
