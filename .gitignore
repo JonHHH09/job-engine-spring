@@ -34,3 +34,5 @@ build/
 /.hermes/plans/
 /.hermes/
 /plans/
+/tmp/generated-pdfs/*
+!/tmp/generated-pdfs/.gitkeep

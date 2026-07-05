@@ -5,6 +5,8 @@ import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.ExtractStoredPdfTextRequest;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.StoreDocumentFileRequest;
+import org.instruct.jobenginespring.application.document.PdfGenerationService;
+import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratePdfFileRequest;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionRequest;
 import org.instruct.jobenginespring.application.error.ApplicationExceptionMapper;
@@ -21,6 +23,7 @@ public class DocumentMcpAdapter {
 
     private final PdfTextExtractionService pdfTextExtractionService;
     private final DocumentStorageService documentStorageService;
+    private final PdfGenerationService pdfGenerationService;
     private final ApplicationExceptionMapper exceptionMapper = new ApplicationExceptionMapper();
 
     @McpTool(
@@ -64,6 +67,17 @@ public class DocumentMcpAdapter {
             ExtractStoredPdfTextRequest request
     ) {
         return call(() -> documentStorageService.extractStoredPdfText(request));
+    }
+
+    @McpTool(
+            name = "generate_pdf_file",
+            description = "Generate a PDF file in the repository temporary generated-PDF directory and return file metadata."
+    )
+    public CallToolResult generatePdfFile(
+            @McpToolParam(required = true, description = "PDF generation request")
+            GeneratePdfFileRequest request
+    ) {
+        return call(() -> pdfGenerationService.generatePdfFile(request));
     }
 
     private CallToolResult call(Supplier<Object> operation) {

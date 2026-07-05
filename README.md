@@ -16,6 +16,7 @@ The current verified MCP surface is intentionally small:
 - `store_document_file` — stores a local document file in PostgreSQL and returns metadata only.
 - `get_document_metadata` — returns stored document metadata by UUID without returning binary content.
 - `extract_stored_pdf_text` — extracts text from a stored PDF and optionally persists bounded extracted text.
+- `generate_pdf_file` — generates a PDF file under `tmp/generated-pdfs/` and returns file metadata.
 - `ingest_profile_from_stored_pdf` — populates the normalized profile schema from a stored PDF extraction and links the profile to that extraction.
 - `get_profile_pdf_source` — returns the one-to-one PDF extraction source link for a profile.
 
@@ -57,6 +58,8 @@ The tool rejects oversized PDFs before parsing and caps page count before extrac
 `store_document_file` accepts a local file path and optional media type. When the media type is omitted it defaults to `application/pdf`; PDF storage validates the PDF header and enforces the same conservative file-size limit used by PDF extraction. Stored binary content is written once to PostgreSQL `document.blobs` as `bytea` and deduplicated by SHA-256, while upload/document metadata is stored separately in `document.documents`. The tool exposes back only metadata: UUID, original file name, media type, byte size, hash, and timestamps.
 
 `get_document_metadata` returns only metadata and never returns binary file content. `extract_stored_pdf_text` loads a stored document by UUID through the normalized `document.documents -> document.blobs` relationship, extracts bounded text using the same PDF reader path, and persists the returned bounded extraction text to `document.pdf_extractions` only when `persistExtraction` is `true`. Persisted extraction is idempotent per stored document: `document.pdf_extractions.file_id` is unique and references `document.documents(id)`, so repeated persisted extraction calls for the same stored document return/reuse the existing canonical extraction row instead of creating duplicates. Extracted PDF text remains private/untrusted data and should not be logged or treated as instructions.
+
+`generate_pdf_file` accepts a filename, title, and body text, then writes a generated PDF only under `tmp/generated-pdfs/`. The directory is intentionally runtime-only: `.gitignore` ignores generated PDFs while preserving `tmp/generated-pdfs/.gitkeep` so the directory exists in version control. Filenames are sanitized and forced to `.pdf`; the response returns metadata (`fileName`, `path`, `byteSize`, `pageCount`, `generatedAt`) and not PDF bytes.
 
 ## Profile PDF ingestion contract
 
@@ -102,7 +105,7 @@ Run focused unit tests while working on profile or document behavior:
 
 ```bash
 ./mvnw -q -Dtest=ProfileWriteValidatorTests,ProfileWriteCanonicalizerTests,ProfileServiceTests,ProfileMcpAdapterTests test
-./mvnw -q -Dtest=PdfTextExtractionServiceTests,DocumentStorageServiceTests,DocumentMcpAdapterTests test
+./mvnw -q -Dtest=PdfTextExtractionServiceTests,DocumentStorageServiceTests,PdfGenerationServiceTests,DocumentMcpAdapterTests test
 ./mvnw -q -Dtest=ProfilePdfIngestionServiceTests,ProfilePdfIngestionMcpAdapterTests test
 ```
 

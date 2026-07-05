@@ -5,6 +5,9 @@ import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.ExtractStoredPdfTextRequest;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.StoreDocumentFileRequest;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.StoredPdfTextExtractionResult;
+import org.instruct.jobenginespring.application.document.PdfGenerationService;
+import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratePdfFileRequest;
+import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratedPdfFileResult;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionRequest;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
@@ -47,7 +50,12 @@ class DocumentMcpAdapterTests {
 
     private final PdfTextExtractionService pdfTextExtractionService = mock(PdfTextExtractionService.class);
     private final DocumentStorageService documentStorageService = mock(DocumentStorageService.class);
-    private final DocumentMcpAdapter adapter = new DocumentMcpAdapter(pdfTextExtractionService, documentStorageService);
+    private final PdfGenerationService pdfGenerationService = mock(PdfGenerationService.class);
+    private final DocumentMcpAdapter adapter = new DocumentMcpAdapter(
+            pdfTextExtractionService,
+            documentStorageService,
+            pdfGenerationService
+    );
 
     @Test
     void exposesStableDocumentToolNames() {
@@ -61,7 +69,8 @@ class DocumentMcpAdapterTests {
                 "extract_pdf_text",
                 "store_document_file",
                 "get_document_metadata",
-                "extract_stored_pdf_text"
+                "extract_stored_pdf_text",
+                "generate_pdf_file"
         ), toolNames);
     }
 
@@ -83,15 +92,21 @@ class DocumentMcpAdapterTests {
                 "extractStoredPdfText",
                 ExtractStoredPdfTextRequest.class
         );
+        Method generatePdfFile = DocumentMcpAdapter.class.getDeclaredMethod(
+                "generatePdfFile",
+                GeneratePdfFileRequest.class
+        );
 
         assertEquals("extract_pdf_text", extractPdfText.getAnnotation(McpTool.class).name());
         assertEquals("store_document_file", storeDocumentFile.getAnnotation(McpTool.class).name());
         assertEquals("get_document_metadata", getDocumentMetadata.getAnnotation(McpTool.class).name());
         assertEquals("extract_stored_pdf_text", extractStoredPdfText.getAnnotation(McpTool.class).name());
+        assertEquals("generate_pdf_file", generatePdfFile.getAnnotation(McpTool.class).name());
         assertEquals(1, extractPdfText.getParameterAnnotations()[0].length);
         assertEquals(1, storeDocumentFile.getParameterAnnotations()[0].length);
         assertEquals(1, getDocumentMetadata.getParameterAnnotations()[0].length);
         assertEquals(1, extractStoredPdfText.getParameterAnnotations()[0].length);
+        assertEquals(1, generatePdfFile.getParameterAnnotations()[0].length);
     }
 
     @Test
@@ -145,6 +160,25 @@ class DocumentMcpAdapterTests {
         assertFalse(result.isError());
         assertEquals(extractionResult, result.structuredContent());
         verify(documentStorageService).extractStoredPdfText(request);
+    }
+
+    @Test
+    void generatePdfFileDelegatesToService() {
+        GeneratePdfFileRequest request = new GeneratePdfFileRequest("sample-report", "Sample Report", "Body text");
+        GeneratedPdfFileResult generationResult = new GeneratedPdfFileResult(
+                "sample-report.pdf",
+                "tmp/generated-pdfs/sample-report.pdf",
+                512,
+                1,
+                "2026-07-05T01:00:00Z"
+        );
+        when(pdfGenerationService.generatePdfFile(request)).thenReturn(generationResult);
+
+        CallToolResult result = adapter.generatePdfFile(request);
+
+        assertFalse(result.isError());
+        assertEquals(generationResult, result.structuredContent());
+        verify(pdfGenerationService).generatePdfFile(request);
     }
 
     @Test
