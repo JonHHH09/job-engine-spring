@@ -8,6 +8,7 @@ The current verified MCP surface is intentionally small:
 
 - `health` — checks database readiness without returning connection details or secrets.
 - `list_profiles` — lists saved profile identities in a `{ "profiles": [...] }` wrapper without raw resume text or credentials.
+- `search_profiles` — searches normalized profile identities by query terms across profile fields and owned child collections without returning raw resume text.
 - `get_profile` — returns a normalized profile aggregate by UUID.
 - `create_profile` — creates a normalized profile aggregate.
 - `update_profile` — replaces a normalized profile aggregate by UUID.
@@ -107,6 +108,8 @@ The deterministic fallback extractor is section-aware: it reads summary text fro
 MCP success responses use object-shaped `structuredContent` so clients that reject raw top-level arrays can validate responses consistently. For example, `list_profiles` returns `{ "profiles": [...] }` rather than a bare array.
 
 `create_profile` and `update_profile` validate profile write requests in the application layer before persistence. Invalid payloads are rejected with `validation_error` application exceptions and safe details containing only the invalid field path and reason. The profile MCP adapter maps application and unexpected failures to MCP `CallToolResult` errors with sanitized structured content instead of leaking raw exception text.
+
+`search_profiles` is backed by a deterministic `ProfileSearchService` over the normalized profile aggregate. It tokenizes the query, searches profile identity fields and owned child collections (contacts, links, skills, languages, education, experience, projects, and project technologies), ranks matches by weighted evidence, and returns profile identities with score and matched field names only. It does not return raw resume text, descriptions, or private document content.
 
 After validation, profile writes are canonicalized before persistence: required text is trimmed, email and normalized keys are lower-cased, blank optional text becomes `null`, and `null` child collections become empty lists. PostgreSQL also enforces canonical uniqueness and future-write canonical form for profile email and normalized profile child keys through Flyway-managed indexes and `NOT VALID` check constraints. Persistence constraint failures are mapped to sanitized validation errors.
 
