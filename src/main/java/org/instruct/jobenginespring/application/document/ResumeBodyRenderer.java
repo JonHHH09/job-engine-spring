@@ -55,7 +55,7 @@ final class ResumeBodyRenderer {
         // Canadian resume rendering uses only normalized profile fields that are appropriate
         // for an applicant-facing resume. It deliberately avoids photos, SIN, references,
         // and protected personal details; those fields are not part of this profile schema.
-        appendCanadianContactLine(body, profile, aggregate.contacts(), aggregate.links());
+        appendCanadianContactBlock(body, profile, aggregate.contacts(), aggregate.links());
         appendBlank(body);
 
         // Keep the section order aligned with the current Canadian resume variant:
@@ -72,21 +72,40 @@ final class ResumeBodyRenderer {
         return body.toString().strip();
     }
 
-    private static void appendCanadianContactLine(
+    private static void appendCanadianContactBlock(
             StringBuilder body,
             UserProfile profile,
             List<ProfileContact> contacts,
             List<ProfileLink> links
     ) {
-        List<String> headerItems = new java.util.ArrayList<>();
-        headerItems.add("Email: " + profile.email().strip());
+        List<String> contactItems = new java.util.ArrayList<>();
+        contactItems.add(profile.email().strip());
         contacts.stream()
+                .filter(contact -> !isEmailContact(contact))
                 .map(contact -> labelValue(contact.label(), contact.contactType(), contact.contactValue()))
-                .forEach(headerItems::add);
-        links.stream()
+                .forEach(contactItems::add);
+        appendLine(body, "Contact: " + String.join(" | ", contactItems));
+
+        String professionalLinks = links.stream()
                 .map(link -> labelValue(link.label(), link.linkType(), link.url()))
-                .forEach(headerItems::add);
-        appendLine(body, String.join(" | ", headerItems));
+                .collect(Collectors.joining(" | "));
+        if (hasText(professionalLinks)) {
+            appendLine(body, "Links: " + professionalLinks);
+        }
+    }
+
+    private static boolean isEmailContact(ProfileContact contact) {
+        return containsEmailSignal(contact.contactType())
+                || containsEmailSignal(contact.label())
+                || containsEmailSignal(contact.contactValue());
+    }
+
+    private static boolean containsEmailSignal(String text) {
+        if (!hasText(text)) {
+            return false;
+        }
+        String stripped = text.strip();
+        return stripped.toLowerCase(Locale.ROOT).contains("email") || stripped.contains("@");
     }
 
     private static void appendContacts(StringBuilder body, List<ProfileContact> contacts) {

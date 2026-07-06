@@ -156,7 +156,11 @@ class GeneratePdfResumeServiceTests {
         assertEquals(1, countOccurrences(text.text(), "Agentic Dev"));
         assertFalse(text.text().contains("Canadian Resume"));
         assertEquals(2, countOccurrences(text.text(), "Page 1 of 1"));
-        assertTrue(text.text().contains("Email: agentic@example.test | Location: Montreal, QC | GitHub: https://github.example/agentic"));
+        assertTrue(text.text().contains("Contact: agentic@example.test | Location: Montreal, QC"));
+        assertFalse(text.text().contains("Personal/Resume email"));
+        assertFalse(text.text().contains("personal@example.test"));
+        assertTrue(text.text().contains("Links: GitHub: https://github.example/agentic"));
+        assertTrue(text.text().indexOf("Links: GitHub: https://github.example/agentic") < text.text().indexOf("PROFESSIONAL SUMMARY"));
         assertTrue(text.text().contains("PROFESSIONAL SUMMARY"));
         assertTrue(text.text().contains("TECHNICAL SKILLS"));
         assertTrue(text.text().contains("PROFESSIONAL EXPERIENCE"));
@@ -285,6 +289,7 @@ class GeneratePdfResumeServiceTests {
         assertTrue(rendered.contains("Profile summary not provided."));
         assertFalse(rendered.contains("Agentic Dev"));
         assertTrue(rendered.contains("personal: +1-555-0100"));
+        assertTrue(rendered.indexOf("portfolio: https://example.test") < rendered.indexOf("PROFESSIONAL SUMMARY"));
         assertTrue(rendered.contains("English"));
         assertTrue(rendered.contains("Education"));
         assertTrue(rendered.contains("Dates not provided"));
@@ -392,7 +397,10 @@ class GeneratePdfResumeServiceTests {
         UUID projectId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
         return new ProfileAggregate(
                 new UserProfile(profileId, "Agentic Dev", "agentic@example.test", "Builds MCP-native systems.", null, NOW, NOW),
-                List.of(new ProfileContact(UUID.randomUUID(), profileId, "location", "Montreal, QC", "Location", NOW, NOW)),
+                List.of(
+                        new ProfileContact(UUID.randomUUID(), profileId, "location", "Montreal, QC", "Location", NOW, NOW),
+                        new ProfileContact(UUID.randomUUID(), profileId, "email", "personal@example.test", "Personal/Resume email", NOW, NOW)
+                ),
                 List.of(new ProfileLink(UUID.randomUUID(), profileId, "github", "https://github.example/agentic", "GitHub", NOW, NOW)),
                 List.of(new ProfileSkill(UUID.randomUUID(), profileId, "Java", "java", "Backend", 0, NOW)),
                 List.of(new ProfileLanguage(UUID.randomUUID(), profileId, "English", "english", "Fluent", 0, NOW)),
