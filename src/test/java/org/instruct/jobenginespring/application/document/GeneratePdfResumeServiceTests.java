@@ -108,7 +108,8 @@ class GeneratePdfResumeServiceTests {
         assertTrue(text.text().contains("agentic@example.test"));
         assertTrue(text.text().contains("Java"));
         assertTrue(text.text().contains("Job Engine Spring"));
-        assertEquals(2, countOccurrences(text.text(), "Agentic Dev - Master Resume | Page 1 of 1"));
+        assertEquals(1, countOccurrences(text.text(), "Agentic Dev - Master Resume"));
+        assertEquals(2, countOccurrences(text.text(), "Page 1 of 1"));
     }
 
     @Test
@@ -152,7 +153,9 @@ class GeneratePdfResumeServiceTests {
 
         PdfTextExtractionService.PdfTextExtractionResult text = new PdfTextExtractionService()
                 .extractText(Files.readAllBytes(Path.of(canadian.filePath())), "canadian-resume.pdf", null, false);
-        assertTrue(text.text().contains("Agentic Dev - Canadian Resume | Page 1 of 1"));
+        assertEquals(1, countOccurrences(text.text(), "Agentic Dev"));
+        assertFalse(text.text().contains("Canadian Resume"));
+        assertEquals(2, countOccurrences(text.text(), "Page 1 of 1"));
         assertTrue(text.text().contains("Email: agentic@example.test | Location: Montreal, QC | GitHub: https://github.example/agentic"));
         assertTrue(text.text().contains("PROFESSIONAL SUMMARY"));
         assertTrue(text.text().contains("TECHNICAL SKILLS"));
@@ -280,6 +283,7 @@ class GeneratePdfResumeServiceTests {
         String emptyRendered = ResumeBodyRenderer.renderMasterResume(emptyAggregate(PROFILE_ID));
 
         assertTrue(rendered.contains("Profile summary not provided."));
+        assertFalse(rendered.contains("Agentic Dev"));
         assertTrue(rendered.contains("personal: +1-555-0100"));
         assertTrue(rendered.contains("English"));
         assertTrue(rendered.contains("Education"));

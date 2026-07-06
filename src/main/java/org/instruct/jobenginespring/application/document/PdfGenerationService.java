@@ -152,7 +152,7 @@ public class PdfGenerationService {
 
             for (int pageIndex = 0; pageIndex < pages.size(); pageIndex++) {
                 PDPage page = addPage(document);
-                writePage(document, page, pages.get(pageIndex), pageIndex + 1, pages.size(), title, titleFont, bodyFont, chromeFont);
+                writePage(document, page, pages.get(pageIndex), pageIndex + 1, pages.size(), titleFont, bodyFont, chromeFont);
             }
             document.save(outputPath.toFile());
             return document.getNumberOfPages();
@@ -184,14 +184,13 @@ public class PdfGenerationService {
             PageLines pageLines,
             int pageNumber,
             int pageCount,
-            String title,
             PDType1Font titleFont,
             PDType1Font bodyFont,
             PDType1Font chromeFont
     ) throws IOException {
         try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
             drawBackground(contentStream, page);
-            drawChrome(contentStream, page, chromeFont, title, pageNumber, pageCount);
+            drawChrome(contentStream, page, chromeFont, pageNumber, pageCount);
             drawBody(contentStream, pageLines, titleFont, bodyFont, chromeFont);
         }
     }
@@ -207,12 +206,11 @@ public class PdfGenerationService {
             PDPageContentStream contentStream,
             PDPage page,
             PDType1Font chromeFont,
-            String title,
             int pageNumber,
             int pageCount
     ) throws IOException {
         PDRectangle box = page.getMediaBox();
-        String chromeText = fitText(title + " | Page " + pageNumber + " of " + pageCount, chromeFont, CHROME_FONT_SIZE, box.getWidth() - (MARGIN * 2));
+        String chromeText = "Page " + pageNumber + " of " + pageCount;
 
         contentStream.setNonStrokingColor(CHROME_BACKGROUND_COLOR);
         contentStream.addRect(0, box.getHeight() - HEADER_HEIGHT, box.getWidth(), HEADER_HEIGHT);
@@ -220,8 +218,10 @@ public class PdfGenerationService {
         contentStream.addRect(0, 0, box.getWidth(), FOOTER_HEIGHT);
         contentStream.fill();
 
-        drawText(contentStream, chromeFont, CHROME_FONT_SIZE, CHROME_TEXT_COLOR, MARGIN, box.getHeight() - 19, chromeText);
-        drawText(contentStream, chromeFont, CHROME_FONT_SIZE, CHROME_TEXT_COLOR, MARGIN, 10, chromeText);
+        drawRightAlignedText(contentStream, chromeFont, CHROME_FONT_SIZE, CHROME_TEXT_COLOR,
+                box.getWidth() - MARGIN, box.getHeight() - 19, chromeText);
+        drawRightAlignedText(contentStream, chromeFont, CHROME_FONT_SIZE, CHROME_TEXT_COLOR,
+                box.getWidth() - MARGIN, 10, chromeText);
     }
 
     private static void drawBody(PDPageContentStream contentStream, PageLines pageLines, PDType1Font titleFont, PDType1Font bodyFont, PDType1Font chromeFont) throws IOException {
@@ -272,6 +272,19 @@ public class PdfGenerationService {
         contentStream.newLineAtOffset(x, y);
         contentStream.showText(text);
         contentStream.endText();
+    }
+
+    private static void drawRightAlignedText(
+            PDPageContentStream contentStream,
+            PDType1Font font,
+            float fontSize,
+            Color color,
+            float rightX,
+            float y,
+            String text
+    ) throws IOException {
+        float width = font.getStringWidth(text) / 1000 * fontSize;
+        drawText(contentStream, font, fontSize, color, rightX - width, y, text);
     }
 
     private static String fitText(String text, PDType1Font font, float fontSize, float maxWidth) throws IOException {

@@ -3,6 +3,7 @@ package org.instruct.jobenginespring.application.document;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.contentstream.operator.Operator;
 import org.apache.pdfbox.cos.COSNumber;
+import org.apache.pdfbox.cos.COSString;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
@@ -96,8 +97,10 @@ class PdfGenerationServiceTests {
         try (PDDocument document = Loader.loadPDF(Path.of(result.path()).toFile())) {
             assertEquals(1, document.getNumberOfPages());
             String text = new PDFTextStripper().getText(document);
-            String chromeText = "Styled Report | Page 1 of 1";
+            String chromeText = "Page 1 of 1";
             assertEquals(2, countOccurrences(text, chromeText));
+            assertEquals(1, countOccurrences(text, "Styled Report"));
+            assertTrue(hasTextOffsetAtOrBeyond(document, chromeText, 500), "header/footer page numbers should be right aligned");
             assertTrue(text.contains("SUMMARY"));
             assertTrue(text.contains("Short body for a styled generated PDF."));
 
@@ -291,6 +294,26 @@ class PdfGenerationServiceTests {
     private static boolean hasStrokeOperator(PDDocument document) throws IOException {
         return new PDFStreamParser(document.getPage(0)).parse().stream()
                 .anyMatch(token -> token instanceof Operator operator && "S".equals(operator.getName()));
+    }
+
+    private static boolean hasTextOffsetAtOrBeyond(PDDocument document, String text, float minimumX) throws IOException {
+        List<Object> tokens = new PDFStreamParser(document.getPage(0)).parse();
+        for (int index = 3; index < tokens.size(); index++) {
+            if (tokens.get(index) instanceof Operator operator
+                    && "Tj".equals(operator.getName())
+                    && tokens.get(index - 1) instanceof COSString string
+                    && text.equals(string.getString())) {
+                for (int previous = index - 2; previous >= 2; previous--) {
+                    if (tokens.get(previous) instanceof Operator offsetOperator && "Td".equals(offsetOperator.getName())) {
+                        if (tokens.get(previous - 2) instanceof COSNumber x && x.floatValue() >= minimumX) {
+                            return true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private static String fillColors(PDDocument document) throws IOException {

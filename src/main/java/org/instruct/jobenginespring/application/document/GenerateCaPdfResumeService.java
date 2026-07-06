@@ -48,7 +48,7 @@ public class GenerateCaPdfResumeService {
                 CANADIAN_RESUME_TYPE,
                 outputDirectory,
                 canadianResumeFileName(profileId),
-                aggregate.profile().fullName() + " - Canadian Resume",
+                aggregate.profile().fullName(),
                 ResumeBodyRenderer.renderCanadianResume(aggregate)
         ));
         return GeneratePdfResumeResult.from(generated);

@@ -51,7 +51,6 @@ final class ResumeBodyRenderer {
         // Canadian resume rendering uses only normalized profile fields that are appropriate
         // for an applicant-facing resume. It deliberately avoids photos, SIN, references,
         // and protected personal details; those fields are not part of this profile schema.
-        appendLine(body, profile.fullName());
         appendCanadianContactLine(body, profile, aggregate.contacts(), aggregate.links());
         appendBlank(body);
 
