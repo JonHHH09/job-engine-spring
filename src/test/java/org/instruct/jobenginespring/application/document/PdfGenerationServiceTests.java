@@ -114,6 +114,54 @@ class PdfGenerationServiceTests {
     }
 
     @Test
+    void generatedPdfRendersBulletsWithMarkerAndHangingIndent() throws Exception {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+        String longBullet = "Built a long deterministic resume bullet that should wrap onto a continuation line while retaining visual bullet formatting and indentation for readable Canadian resume experience sections.";
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest(
+                "bullet-report.pdf",
+                "Bullet Report",
+                "EXPERIENCE\n- " + longBullet
+        ));
+
+        @SuppressWarnings("unchecked")
+        List<String> bodyLines = (List<String>) invoke("bodyLines", new Class<?>[]{String.class, String.class}, "Bullet Report", "EXPERIENCE\n- " + longBullet);
+        assertTrue(bodyLines.stream().anyMatch(line -> line.startsWith("- Built a long deterministic")));
+        assertTrue(bodyLines.stream().anyMatch(line -> line.startsWith("  ") && line.contains("experience sections.")));
+
+        try (PDDocument document = Loader.loadPDF(Path.of(result.path()).toFile())) {
+            String text = new PDFTextStripper().getText(document);
+            assertTrue(text.contains("•"), "bullet marker should be rendered as a real bullet glyph");
+            assertFalse(text.contains("- Built a long deterministic"), "hyphen should not be rendered as the visible bullet marker");
+        }
+    }
+
+    @Test
+    void generatedPdfRendersLabeledSkillCategoriesBoldAndWrapsContinuationsWithoutSeparators() throws Exception {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+        String skills = "TECHNICAL SKILLS\nCloud / Security: AWS S3, CloudFront, Docker, Docker Compose, Supabase, Vercel, CI/CD, OAuth2, JWT, RBAC, MFA, IAM";
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest(
+                "skills-report.pdf",
+                "Skills Report",
+                skills
+        ));
+
+        @SuppressWarnings("unchecked")
+        List<String> bodyLines = (List<String>) invoke("bodyLines", new Class<?>[]{String.class, String.class}, "Skills Report", skills);
+        assertTrue(bodyLines.stream().anyMatch(line -> line.startsWith("Cloud / Security:")));
+        assertTrue(bodyLines.stream().anyMatch(line -> line.startsWith("  ") && line.contains("RBAC")));
+        assertTrue((Boolean) invoke("isLabeledLine", new Class<?>[]{String.class}, "Cloud / Security: AWS S3"));
+
+        try (PDDocument document = Loader.loadPDF(Path.of(result.path()).toFile())) {
+            String text = new PDFTextStripper().getText(document);
+            assertTrue(text.contains("Cloud / Security:"));
+            assertTrue(text.contains("RBAC"));
+            assertEquals(1, countStrokeOperators(document), "only the TECHNICAL SKILLS heading should draw a separator");
+        }
+    }
+
+    @Test
     void rejectsBlankBody() {
         PdfGenerationService service = new PdfGenerationService(tempDir);
 
@@ -215,12 +263,17 @@ class PdfGenerationServiceTests {
         assertEquals("abc def", wrappedAtSpace.getFirst());
         assertEquals("ghi", wrappedAtSpace.get(1));
         @SuppressWarnings("unchecked")
+        List<String> wrappedBullet = (List<String>) invoke("wrapBullet", new Class<?>[]{String.class, int.class}, "- abc def ghi", 7);
+        assertEquals(List.of("- abc", "  def", "  ghi"), wrappedBullet);
+        @SuppressWarnings("unchecked")
         List<Object> emptyPages = (List<Object>) invoke("paginate", new Class<?>[]{List.class}, List.of());
         assertEquals(1, emptyPages.size());
 
         assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, new Object[]{null}));
         assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, "SECTION: VALUE"));
         assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, "1234"));
+        assertFalse((Boolean) invoke("isBulletContinuationLine", new Class<?>[]{String.class}, "normal line"));
+        assertTrue((Boolean) invoke("isBulletContinuationLine", new Class<?>[]{String.class}, "  continuation"));
 
         PDType1Font font = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
         assertEquals("Short", invokeString("fitText", new Class<?>[]{String.class, PDType1Font.class, float.class, float.class}, "Short", font, 9.0f, 500.0f));
@@ -292,8 +345,13 @@ class PdfGenerationServiceTests {
     }
 
     private static boolean hasStrokeOperator(PDDocument document) throws IOException {
+        return countStrokeOperators(document) > 0;
+    }
+
+    private static long countStrokeOperators(PDDocument document) throws IOException {
         return new PDFStreamParser(document.getPage(0)).parse().stream()
-                .anyMatch(token -> token instanceof Operator operator && "S".equals(operator.getName()));
+                .filter(token -> token instanceof Operator operator && "S".equals(operator.getName()))
+                .count();
     }
 
     private static boolean hasTextOffsetAtOrBeyond(PDDocument document, String text, float minimumX) throws IOException {

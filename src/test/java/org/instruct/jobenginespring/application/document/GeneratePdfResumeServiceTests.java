@@ -297,6 +297,24 @@ class GeneratePdfResumeServiceTests {
         assertFalse(emptyRendered.contains("EXPERIENCE"));
     }
 
+    @Test
+    void canadianResumeDerivesCappedExperienceBulletsFromExistingDescriptionText() {
+        ProfileAggregate aggregate = experienceBulletAggregate(PROFILE_ID);
+
+        String rendered = ResumeBodyRenderer.renderCanadianResume(aggregate);
+        String masterRendered = ResumeBodyRenderer.renderMasterResume(aggregate);
+
+        assertTrue(rendered.contains("- Built MCP-native PDF generation tools."));
+        assertTrue(rendered.contains("- Added deterministic resume rendering tests."));
+        assertTrue(rendered.contains("- Improved document provenance handling."));
+        assertFalse(rendered.contains("Kept this fourth sentence out of the Canadian resume."));
+        assertTrue(rendered.contains("- Preserved existing bullet text"));
+        assertTrue(rendered.contains("- Normalized star-prefixed bullet text"));
+        assertTrue(rendered.contains("- Normalized numbered bullet text"));
+        assertFalse(rendered.contains("Hidden fourth existing bullet"));
+        assertTrue(masterRendered.contains("- Built MCP-native PDF generation tools. Added deterministic resume rendering tests. Improved document provenance handling. Kept this fourth sentence out of the Canadian resume."));
+    }
+
     private static ProfileAggregate emptyAggregate(UUID profileId) {
         return new ProfileAggregate(
                 new UserProfile(profileId, "Agentic Dev", "agentic@example.test", null, null, NOW, NOW),
@@ -327,6 +345,45 @@ class GeneratePdfResumeServiceTests {
                         new Experience(UUID.randomUUID(), profileId, "Undated Co", "Undated Role", null, null, null, null, 0, NOW)
                 ),
                 List.of(new ProfileProject(projectId, profileId, "Project", " ", " ", List.of(), 0, NOW)),
+                List.of()
+        );
+    }
+
+    private static ProfileAggregate experienceBulletAggregate(UUID profileId) {
+        return new ProfileAggregate(
+                new UserProfile(profileId, "Agentic Dev", "agentic@example.test", "Builds MCP-native systems.", null, NOW, NOW),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(
+                        new Experience(
+                                UUID.randomUUID(),
+                                profileId,
+                                "Current Co",
+                                "Current Role",
+                                "Remote",
+                                LocalDate.of(2025, 1, 1),
+                                null,
+                                "Built MCP-native PDF generation tools. Added deterministic resume rendering tests. Improved document provenance handling. Kept this fourth sentence out of the Canadian resume.",
+                                0,
+                                NOW
+                        ),
+                        new Experience(
+                                UUID.randomUUID(),
+                                profileId,
+                                "Past Co",
+                                "Past Role",
+                                "Remote",
+                                LocalDate.of(2023, 1, 1),
+                                LocalDate.of(2024, 1, 1),
+                                "- Preserved existing bullet text\n* Normalized star-prefixed bullet text\n1. Normalized numbered bullet text\n- Hidden fourth existing bullet",
+                                1,
+                                NOW
+                        )
+                ),
+                List.of(),
                 List.of()
         );
     }

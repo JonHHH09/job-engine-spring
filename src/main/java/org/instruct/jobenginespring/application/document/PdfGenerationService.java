@@ -38,6 +38,10 @@ public class PdfGenerationService {
     private static final float HEADER_HEIGHT = 30;
     private static final float FOOTER_HEIGHT = 24;
     private static final float CHROME_FONT_SIZE = 9;
+    private static final String BULLET_MARKER = "•";
+    private static final String BULLET_CONTINUATION_PREFIX = "  ";
+    private static final float BULLET_MARKER_INDENT = 12;
+    private static final float BULLET_TEXT_INDENT = 24;
     private static final Color PAGE_BACKGROUND_COLOR = Color.WHITE;
     private static final Color CHROME_BACKGROUND_COLOR = new Color(64, 64, 64);
     private static final Color SECTION_COLOR = CHROME_BACKGROUND_COLOR;
@@ -232,11 +236,15 @@ public class PdfGenerationService {
             if (globalIndex == 0) {
                 drawText(contentStream, titleFont, TITLE_FONT_SIZE, TITLE_COLOR, MARGIN, y, line);
             } else {
-                if (isSectionHeading(line)) {
+                if (isBulletContinuationLine(line)) {
+                    drawText(contentStream, bodyFont, BODY_FONT_SIZE, TEXT_COLOR, MARGIN + BULLET_TEXT_INDENT, y, line.stripLeading());
+                } else if (isSectionHeading(line)) {
                     drawSectionSeparator(contentStream, y + 9);
                     drawText(contentStream, chromeFont, SECTION_FONT_SIZE, SECTION_COLOR, MARGIN, y, line);
                 } else if (isBulletLine(line)) {
-                    drawText(contentStream, bodyFont, BODY_FONT_SIZE, TEXT_COLOR, MARGIN + 12, y, line);
+                    drawBulletLine(contentStream, bodyFont, y, line);
+                } else if (isLabeledLine(line)) {
+                    drawLabeledLine(contentStream, chromeFont, bodyFont, y, line);
                 } else if (!line.isEmpty()) {
                     drawText(contentStream, bodyFont, BODY_FONT_SIZE, TEXT_COLOR, MARGIN, y, line);
                 }
@@ -255,6 +263,32 @@ public class PdfGenerationService {
 
     private static boolean isBulletLine(String line) {
         return line != null && line.stripLeading().startsWith("-");
+    }
+
+    private static boolean isBulletContinuationLine(String line) {
+        return line != null && line.startsWith(BULLET_CONTINUATION_PREFIX) && !line.isBlank();
+    }
+
+    private static void drawBulletLine(PDPageContentStream contentStream, PDType1Font bodyFont, float y, String line) throws IOException {
+        drawText(contentStream, bodyFont, BODY_FONT_SIZE, TEXT_COLOR, MARGIN + BULLET_MARKER_INDENT, y, BULLET_MARKER);
+        drawText(contentStream, bodyFont, BODY_FONT_SIZE, TEXT_COLOR, MARGIN + BULLET_TEXT_INDENT, y, stripBulletPrefix(line));
+    }
+
+    private static boolean isLabeledLine(String line) {
+        if (line == null || line.isBlank()) {
+            return false;
+        }
+        int colonIndex = line.indexOf(':');
+        return colonIndex > 0 && colonIndex <= 32;
+    }
+
+    private static void drawLabeledLine(PDPageContentStream contentStream, PDType1Font labelFont, PDType1Font bodyFont, float y, String line) throws IOException {
+        int colonIndex = line.indexOf(':');
+        String label = line.substring(0, colonIndex + 1);
+        String value = line.substring(colonIndex + 1).stripLeading();
+        drawText(contentStream, labelFont, BODY_FONT_SIZE, TEXT_COLOR, MARGIN, y, label);
+        float labelWidth = labelFont.getStringWidth(label + " ") / 1000 * BODY_FONT_SIZE;
+        drawText(contentStream, bodyFont, BODY_FONT_SIZE, TEXT_COLOR, MARGIN + labelWidth, y, value);
     }
 
     private static void drawSectionSeparator(PDPageContentStream contentStream, float y) throws IOException {
@@ -315,10 +349,51 @@ public class PdfGenerationService {
             if (paragraph.isBlank()) {
                 lines.add("");
             } else {
-                lines.addAll(wrap(sanitizeText(paragraph.strip()), BODY_WRAP_CHARACTERS));
+                String sanitizedParagraph = sanitizeText(paragraph.strip());
+                if (isBulletLine(sanitizedParagraph)) {
+                    lines.addAll(wrapBullet(sanitizedParagraph, BODY_WRAP_CHARACTERS));
+                } else if (isLabeledLine(sanitizedParagraph)) {
+                    lines.addAll(wrapLabeledLine(sanitizedParagraph, BODY_WRAP_CHARACTERS));
+                } else {
+                    lines.addAll(wrap(sanitizedParagraph, BODY_WRAP_CHARACTERS));
+                }
             }
         }
         return lines;
+    }
+
+    private static List<String> wrapBullet(String text, int maxCharacters) {
+        List<String> wrappedText = wrap(stripBulletPrefix(text), Math.max(1, maxCharacters - 4));
+        List<String> lines = new ArrayList<>();
+        for (int index = 0; index < wrappedText.size(); index++) {
+            if (index == 0) {
+                lines.add("- " + wrappedText.get(index));
+            } else {
+                lines.add(BULLET_CONTINUATION_PREFIX + wrappedText.get(index));
+            }
+        }
+        return lines;
+    }
+
+    private static List<String> wrapLabeledLine(String text, int maxCharacters) {
+        int colonIndex = text.indexOf(':');
+        String label = text.substring(0, colonIndex + 1);
+        String value = text.substring(colonIndex + 1).stripLeading();
+        List<String> wrappedText = wrap(value, Math.max(1, maxCharacters - label.length() - 1));
+        List<String> lines = new ArrayList<>();
+        for (int index = 0; index < wrappedText.size(); index++) {
+            if (index == 0) {
+                lines.add(label + " " + wrappedText.get(index));
+            } else {
+                lines.add(BULLET_CONTINUATION_PREFIX + wrappedText.get(index));
+            }
+        }
+        return lines;
+    }
+
+    private static String stripBulletPrefix(String line) {
+        String stripped = line.stripLeading();
+        return stripped.startsWith("-") ? stripped.substring(1).stripLeading() : stripped;
     }
 
     private static List<String> wrap(String text, int maxCharacters) {

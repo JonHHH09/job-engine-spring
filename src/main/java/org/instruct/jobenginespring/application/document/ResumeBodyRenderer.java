@@ -11,16 +11,20 @@ import org.instruct.jobenginespring.domain.profile.ProfileSkill;
 import org.instruct.jobenginespring.domain.profile.ProjectTechnology;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
 
+import java.text.BreakIterator;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
 final class ResumeBodyRenderer {
 
     private static final DateTimeFormatter MONTH_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM");
+    private static final int CANADIAN_EXPERIENCE_BULLET_LIMIT = 3;
 
     private ResumeBodyRenderer() {
     }
@@ -135,7 +139,8 @@ final class ResumeBodyRenderer {
                 experiences.stream()
                         .sorted(Comparator.comparingInt(Experience::displayOrder).thenComparing(Experience::company, Comparator.nullsLast(String::compareTo)))
                         .toList(),
-                heading
+                heading,
+                false
         );
     }
 
@@ -147,7 +152,8 @@ final class ResumeBodyRenderer {
                                 .thenComparing(Experience::displayOrder)
                                 .thenComparing(Experience::company, Comparator.nullsLast(String::compareTo)))
                         .toList(),
-                heading
+                heading,
+                true
         );
     }
 
@@ -161,7 +167,7 @@ final class ResumeBodyRenderer {
         return LocalDate.MIN;
     }
 
-    private static void appendExperiences(StringBuilder body, List<Experience> experiences, String heading) {
+    private static void appendExperiences(StringBuilder body, List<Experience> experiences, String heading, boolean splitDescriptionBullets) {
         if (experiences.isEmpty()) {
             return;
         }
@@ -170,10 +176,68 @@ final class ResumeBodyRenderer {
             appendLine(body, defaultText(experience.title(), "Role") + " | " + defaultText(experience.company(), "Company"));
             appendLine(body, period(experience.startDate(), experience.endDate()) + optionalLocation(experience.location()));
             if (hasText(experience.description())) {
-                appendLine(body, "- " + experience.description().strip());
+                if (splitDescriptionBullets) {
+                    experienceBullets(experience.description(), CANADIAN_EXPERIENCE_BULLET_LIMIT)
+                            .forEach(bullet -> appendLine(body, "- " + bullet));
+                } else {
+                    appendLine(body, "- " + experience.description().strip());
+                }
             }
             appendBlank(body);
         });
+    }
+
+    private static List<String> experienceBullets(String description, int limit) {
+        if (!hasText(description) || limit <= 0) {
+            return List.of();
+        }
+
+        List<String> lines = description.strip().lines()
+                .map(String::strip)
+                .filter(ResumeBodyRenderer::hasText)
+                .map(ResumeBodyRenderer::stripBulletPrefix)
+                .filter(ResumeBodyRenderer::hasText)
+                .toList();
+
+        if (lines.size() > 1) {
+            return limitBullets(lines, limit);
+        }
+
+        List<String> sentences = splitSentences(lines.isEmpty() ? description.strip() : lines.getFirst());
+        return limitBullets(sentences.isEmpty() ? lines : sentences, limit);
+    }
+
+    private static List<String> splitSentences(String text) {
+        if (!hasText(text)) {
+            return List.of();
+        }
+        BreakIterator iterator = BreakIterator.getSentenceInstance(Locale.CANADA);
+        iterator.setText(text.strip());
+        List<String> sentences = new ArrayList<>();
+        int start = iterator.first();
+        for (int end = iterator.next(); end != BreakIterator.DONE; start = end, end = iterator.next()) {
+            String sentence = text.substring(start, end).strip();
+            if (hasText(sentence)) {
+                sentences.add(sentence);
+            }
+        }
+        return sentences;
+    }
+
+    private static String stripBulletPrefix(String text) {
+        String stripped = text.strip();
+        if (stripped.length() >= 2 && (stripped.startsWith("- ") || stripped.startsWith("* ") || stripped.startsWith("• "))) {
+            return stripped.substring(2).strip();
+        }
+        return stripped.replaceFirst("^\\d+[.)]\\s+", "").strip();
+    }
+
+    private static List<String> limitBullets(List<String> bullets, int limit) {
+        return bullets.stream()
+                .map(String::strip)
+                .filter(ResumeBodyRenderer::hasText)
+                .limit(limit)
+                .toList();
     }
 
     private static void appendProjects(StringBuilder body, List<ProfileProject> projects) {
