@@ -103,8 +103,9 @@ class PdfGenerationServiceTests {
 
             String fillColors = fillColors(document);
             assertTrue(hasNonStrokingColor(document, 255), () -> "page background should use white fill color; colors=" + fillColors);
-            assertTrue(hasNonStrokingColor(document, 64), () -> "header/footer chrome should use grey fill color; colors=" + fillColors);
-            assertTrue(hasStrokingColor(document, 64), () -> "section separator should use grey stroke color; colors=" + fillColors);
+            assertTrue(hasNonStrokingColor(document, 64), () -> "header/footer chrome should use chrome fill color; colors=" + fillColors);
+            assertTrue(hasNonStrokingColor(document, 255), () -> "header/footer text should use white fill color; colors=" + fillColors);
+            assertTrue(hasStrokingColor(document, 64), () -> "section separator should use chrome stroke color; colors=" + fillColors);
             assertTrue(hasStrokeOperator(document), "section separator should draw a stroked line");
         }
     }
@@ -251,12 +252,26 @@ class PdfGenerationServiceTests {
         return hasColor(document, rgbChannel, "rg", "sc");
     }
 
+    private static boolean hasNonStrokingColor(PDDocument document, int red, int green, int blue) throws IOException {
+        return hasColor(document, red, green, blue, "rg", "sc");
+    }
+
     private static boolean hasStrokingColor(PDDocument document, int rgbChannel) throws IOException {
         return hasColor(document, rgbChannel, "RG", "SC");
     }
 
+    private static boolean hasStrokingColor(PDDocument document, int red, int green, int blue) throws IOException {
+        return hasColor(document, red, green, blue, "RG", "SC");
+    }
+
     private static boolean hasColor(PDDocument document, int rgbChannel, String rgbOperator, String colorSpaceOperator) throws IOException {
-        float expected = rgbChannel / 255.0f;
+        return hasColor(document, rgbChannel, rgbChannel, rgbChannel, rgbOperator, colorSpaceOperator);
+    }
+
+    private static boolean hasColor(PDDocument document, int redChannel, int greenChannel, int blueChannel, String rgbOperator, String colorSpaceOperator) throws IOException {
+        float expectedRed = redChannel / 255.0f;
+        float expectedGreen = greenChannel / 255.0f;
+        float expectedBlue = blueChannel / 255.0f;
         List<Object> tokens = new PDFStreamParser(document.getPage(0)).parse();
         for (int index = 3; index < tokens.size(); index++) {
             if (tokens.get(index) instanceof Operator operator
@@ -264,9 +279,9 @@ class PdfGenerationServiceTests {
                     && tokens.get(index - 3) instanceof COSNumber red
                     && tokens.get(index - 2) instanceof COSNumber green
                     && tokens.get(index - 1) instanceof COSNumber blue
-                    && closeTo(red.floatValue(), expected)
-                    && closeTo(green.floatValue(), expected)
-                    && closeTo(blue.floatValue(), expected)) {
+                    && closeTo(red.floatValue(), expectedRed)
+                    && closeTo(green.floatValue(), expectedGreen)
+                    && closeTo(blue.floatValue(), expectedBlue)) {
                 return true;
             }
         }

@@ -29,19 +29,21 @@ public class PdfGenerationService {
     public static final int MAX_BODY_CHARACTERS = 50_000;
     private static final String DEFAULT_FILE_NAME = "generated.pdf";
     private static final String DEFAULT_TITLE = "Generated PDF";
-    private static final float MARGIN = 72;
-    private static final float TITLE_FONT_SIZE = 16;
-    private static final float BODY_FONT_SIZE = 11;
-    private static final float LEADING = 16;
-    private static final int BODY_WRAP_CHARACTERS = 86;
-    private static final float HEADER_HEIGHT = 42;
-    private static final float FOOTER_HEIGHT = 42;
+    private static final float MARGIN = 54;
+    private static final float TITLE_FONT_SIZE = 20;
+    private static final float SECTION_FONT_SIZE = 10;
+    private static final float BODY_FONT_SIZE = 9.5f;
+    private static final float LEADING = 13.5f;
+    private static final int BODY_WRAP_CHARACTERS = 104;
+    private static final float HEADER_HEIGHT = 30;
+    private static final float FOOTER_HEIGHT = 24;
     private static final float CHROME_FONT_SIZE = 9;
     private static final Color PAGE_BACKGROUND_COLOR = Color.WHITE;
     private static final Color CHROME_BACKGROUND_COLOR = new Color(64, 64, 64);
+    private static final Color SECTION_COLOR = CHROME_BACKGROUND_COLOR;
     private static final Color TEXT_COLOR = new Color(14, 14, 14);
     private static final Color TITLE_COLOR = new Color(14, 14, 14);
-    private static final Color CHROME_TEXT_COLOR = new Color(245, 245, 245);
+    private static final Color CHROME_TEXT_COLOR = Color.WHITE;
     private static final float SECTION_SEPARATOR_WIDTH = 0.5f;
 
     private final Path outputDirectory;
@@ -190,7 +192,7 @@ public class PdfGenerationService {
         try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
             drawBackground(contentStream, page);
             drawChrome(contentStream, page, chromeFont, title, pageNumber, pageCount);
-            drawBody(contentStream, pageLines, titleFont, bodyFont);
+            drawBody(contentStream, pageLines, titleFont, bodyFont, chromeFont);
         }
     }
 
@@ -218,11 +220,11 @@ public class PdfGenerationService {
         contentStream.addRect(0, 0, box.getWidth(), FOOTER_HEIGHT);
         contentStream.fill();
 
-        drawText(contentStream, chromeFont, CHROME_FONT_SIZE, CHROME_TEXT_COLOR, MARGIN, box.getHeight() - 25, chromeText);
-        drawText(contentStream, chromeFont, CHROME_FONT_SIZE, CHROME_TEXT_COLOR, MARGIN, 17, chromeText);
+        drawText(contentStream, chromeFont, CHROME_FONT_SIZE, CHROME_TEXT_COLOR, MARGIN, box.getHeight() - 19, chromeText);
+        drawText(contentStream, chromeFont, CHROME_FONT_SIZE, CHROME_TEXT_COLOR, MARGIN, 10, chromeText);
     }
 
-    private static void drawBody(PDPageContentStream contentStream, PageLines pageLines, PDType1Font titleFont, PDType1Font bodyFont) throws IOException {
+    private static void drawBody(PDPageContentStream contentStream, PageLines pageLines, PDType1Font titleFont, PDType1Font bodyFont, PDType1Font chromeFont) throws IOException {
         for (int index = 0; index < pageLines.lines().size(); index++) {
             int globalIndex = pageLines.startIndex() + index;
             float y = bodyStartY() - (index * LEADING);
@@ -232,8 +234,10 @@ public class PdfGenerationService {
             } else {
                 if (isSectionHeading(line)) {
                     drawSectionSeparator(contentStream, y + 9);
-                }
-                if (!line.isEmpty()) {
+                    drawText(contentStream, chromeFont, SECTION_FONT_SIZE, SECTION_COLOR, MARGIN, y, line);
+                } else if (isBulletLine(line)) {
+                    drawText(contentStream, bodyFont, BODY_FONT_SIZE, TEXT_COLOR, MARGIN + 12, y, line);
+                } else if (!line.isEmpty()) {
                     drawText(contentStream, bodyFont, BODY_FONT_SIZE, TEXT_COLOR, MARGIN, y, line);
                 }
             }
@@ -247,6 +251,10 @@ public class PdfGenerationService {
         String stripped = line.strip();
         return stripped.chars().anyMatch(Character::isLetter)
                 && stripped.equals(stripped.toUpperCase(java.util.Locale.ROOT));
+    }
+
+    private static boolean isBulletLine(String line) {
+        return line != null && line.stripLeading().startsWith("-");
     }
 
     private static void drawSectionSeparator(PDPageContentStream contentStream, float y) throws IOException {
@@ -279,11 +287,11 @@ public class PdfGenerationService {
     }
 
     private static float bodyStartY() {
-        return PDRectangle.LETTER.getHeight() - HEADER_HEIGHT - MARGIN;
+        return PDRectangle.LETTER.getHeight() - HEADER_HEIGHT - 36;
     }
 
     private static float bodyEndY() {
-        return FOOTER_HEIGHT + MARGIN;
+        return FOOTER_HEIGHT + 36;
     }
 
     private static List<String> bodyLines(String title, String body) {

@@ -52,23 +52,38 @@ final class ResumeBodyRenderer {
         // for an applicant-facing resume. It deliberately avoids photos, SIN, references,
         // and protected personal details; those fields are not part of this profile schema.
         appendLine(body, profile.fullName());
-        appendLine(body, profile.email());
-        appendContacts(body, aggregate.contacts());
-        appendLinks(body, aggregate.links());
+        appendCanadianContactLine(body, profile, aggregate.contacts(), aggregate.links());
         appendBlank(body);
 
-        // Keep the section order aligned with Canadian resume norms: concise professional
-        // summary, scannable technical skills, reverse-chronological experience, then
-        // supporting projects, education, and languages.
+        // Keep the section order aligned with the current Canadian resume variant:
+        // concise professional summary, scannable technical skills, reverse-chronological
+        // experience, education, and languages. Projects intentionally stay out of this
+        // variant so education remains visible in the generated resume.
         appendSection(body, "PROFESSIONAL SUMMARY");
         appendLine(body, defaultText(profile.summary(), "Profile summary not provided."));
         appendBlank(body);
         appendSkills(body, aggregate.skills(), "TECHNICAL SKILLS");
         appendExperiencesReverseChronological(body, aggregate.experiences(), "PROFESSIONAL EXPERIENCE");
-        appendProjects(body, aggregate.projects());
         appendEducation(body, aggregate.education());
         appendLanguages(body, aggregate.languages());
         return body.toString().strip();
+    }
+
+    private static void appendCanadianContactLine(
+            StringBuilder body,
+            UserProfile profile,
+            List<ProfileContact> contacts,
+            List<ProfileLink> links
+    ) {
+        List<String> headerItems = new java.util.ArrayList<>();
+        headerItems.add("Email: " + profile.email().strip());
+        contacts.stream()
+                .map(contact -> labelValue(contact.label(), contact.contactType(), contact.contactValue()))
+                .forEach(headerItems::add);
+        links.stream()
+                .map(link -> labelValue(link.label(), link.linkType(), link.url()))
+                .forEach(headerItems::add);
+        appendLine(body, String.join(" | ", headerItems));
     }
 
     private static void appendContacts(StringBuilder body, List<ProfileContact> contacts) {
@@ -153,7 +168,7 @@ final class ResumeBodyRenderer {
         }
         appendSection(body, heading);
         experiences.forEach(experience -> {
-            appendLine(body, defaultText(experience.title(), "Role") + " - " + defaultText(experience.company(), "Company"));
+            appendLine(body, defaultText(experience.title(), "Role") + " | " + defaultText(experience.company(), "Company"));
             appendLine(body, period(experience.startDate(), experience.endDate()) + optionalLocation(experience.location()));
             if (hasText(experience.description())) {
                 appendLine(body, "- " + experience.description().strip());

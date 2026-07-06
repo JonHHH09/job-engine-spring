@@ -153,9 +153,14 @@ class GeneratePdfResumeServiceTests {
         PdfTextExtractionService.PdfTextExtractionResult text = new PdfTextExtractionService()
                 .extractText(Files.readAllBytes(Path.of(canadian.filePath())), "canadian-resume.pdf", null, false);
         assertTrue(text.text().contains("Agentic Dev - Canadian Resume | Page 1 of 1"));
+        assertTrue(text.text().contains("Email: agentic@example.test | Location: Montreal, QC | GitHub: https://github.example/agentic"));
         assertTrue(text.text().contains("PROFESSIONAL SUMMARY"));
         assertTrue(text.text().contains("TECHNICAL SKILLS"));
         assertTrue(text.text().contains("PROFESSIONAL EXPERIENCE"));
+        assertTrue(text.text().contains("EDUCATION"));
+        assertTrue(text.text().contains("B.A., Computer Science"));
+        assertFalse(text.text().contains("PROJECTS"));
+        assertFalse(text.text().contains("Job Engine Spring"));
     }
 
     @Test
@@ -279,6 +284,8 @@ class GeneratePdfResumeServiceTests {
         assertTrue(rendered.contains("English"));
         assertTrue(rendered.contains("Education"));
         assertTrue(rendered.contains("Dates not provided"));
+        assertFalse(rendered.contains("PROJECTS"));
+        assertFalse(rendered.contains("Project"));
         assertTrue(rendered.indexOf("Current Role") < rendered.indexOf("Past Role"));
         assertTrue(rendered.indexOf("Past Role") < rendered.indexOf("Undated Role"));
         assertTrue(emptyRendered.contains("Agentic Dev"));
