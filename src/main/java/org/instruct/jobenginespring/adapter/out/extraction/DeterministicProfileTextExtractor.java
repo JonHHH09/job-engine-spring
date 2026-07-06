@@ -3,18 +3,26 @@ package org.instruct.jobenginespring.adapter.out.extraction;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfileService.ContactWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.EducationWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.ExperienceWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.LanguageWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.LinkWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.ProjectTechnologyWriteRequest;
+import org.instruct.jobenginespring.application.profile.ProfileService.ProjectWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.SkillWriteRequest;
 import org.instruct.jobenginespring.application.profile.port.ProfileTextExtractor;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
+import java.time.Month;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -35,6 +43,9 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
     private static final Pattern LINKEDIN = Pattern.compile("(?:https?://)?(?:www\\.)?linkedin\\.com/in/[^\\s)>,]+", Pattern.CASE_INSENSITIVE);
     private static final Pattern GITHUB = Pattern.compile("(?:https?://)?(?:www\\.)?github\\.com/[^\\s)>,]+", Pattern.CASE_INSENSITIVE);
     private static final Pattern SECTION_HEADER = Pattern.compile("^(summary|profile|professional summary|skills|technical skills|technologies|technology stack|languages|language skills|experience|work experience|projects|education)\\s*:?");
+    private static final Pattern DATE_RANGE = Pattern.compile(
+            "(?<start>(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)?\\s*\\d{4})\\s*(?:-|–|—|to)\\s*(?<end>present|current|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)?\\s*\\d{4})",
+            Pattern.CASE_INSENSITIVE);
     private static final List<String> KNOWN_SKILLS = List.of(
             "kotlin multiplatform", "spring boot", "spring cloud", "spring ai", "testcontainers",
             "typescript", "javascript", "postgresql", "next.js", "pyside6", "sqlite", "python",
@@ -71,6 +82,9 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
         List<LinkWriteRequest> links = links(text);
         List<SkillWriteRequest> skills = skills(sections.skillsText());
         List<LanguageWriteRequest> languages = languages(sections.languagesText());
+        List<EducationWriteRequest> education = education(sections.educationEntries());
+        List<ExperienceWriteRequest> experiences = experiences(sections.experienceEntries());
+        List<ProjectWriteRequest> projects = projects(sections.projectEntries());
         String summary = summary(text, sections.summaryText());
         return new ProfileWriteRequest(
                 fullName,
@@ -80,9 +94,9 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
                 links,
                 skills,
                 languages,
-                List.of(),
-                List.of(),
-                List.of()
+                education,
+                experiences,
+                projects
         );
     }
 
@@ -158,14 +172,20 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
         StringBuilder summary = new StringBuilder();
         StringBuilder skills = new StringBuilder();
         StringBuilder languages = new StringBuilder();
+        List<List<String>> educationEntries = new ArrayList<>();
+        List<List<String>> experienceEntries = new ArrayList<>();
+        List<List<String>> projectEntries = new ArrayList<>();
+        List<String> currentEntry = new ArrayList<>();
         String currentSection = "";
         for (String rawLine : text.lines().toList()) {
             String line = rawLine.strip();
             if (line.isBlank()) {
+                flushEntry(currentSection, currentEntry, educationEntries, experienceEntries, projectEntries);
                 continue;
             }
             Matcher header = SECTION_HEADER.matcher(line.toLowerCase(Locale.ROOT));
             if (header.matches()) {
+                flushEntry(currentSection, currentEntry, educationEntries, experienceEntries, projectEntries);
                 currentSection = header.group(1);
                 continue;
             }
@@ -175,9 +195,40 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
                 skills.append(line).append('\n');
             } else if (isLanguageSection(currentSection)) {
                 languages.append(line).append('\n');
+            } else if (isStructuredSection(currentSection)) {
+                if (!currentEntry.isEmpty() && startsStructuredEntry(line)) {
+                    flushEntry(currentSection, currentEntry, educationEntries, experienceEntries, projectEntries);
+                }
+                currentEntry.add(line);
             }
         }
-        return new ResumeSections(summary.toString(), skills.toString(), languages.toString());
+        flushEntry(currentSection, currentEntry, educationEntries, experienceEntries, projectEntries);
+        return new ResumeSections(summary.toString(), skills.toString(), languages.toString(),
+                educationEntries, experienceEntries, projectEntries);
+    }
+
+    private static void flushEntry(
+            String currentSection,
+            List<String> currentEntry,
+            List<List<String>> educationEntries,
+            List<List<String>> experienceEntries,
+            List<List<String>> projectEntries
+    ) {
+        if (currentEntry.isEmpty()) {
+            return;
+        }
+        if (isEducationSection(currentSection)) {
+            educationEntries.add(List.copyOf(currentEntry));
+        } else if (isExperienceSection(currentSection)) {
+            experienceEntries.add(List.copyOf(currentEntry));
+        } else if (isProjectSection(currentSection)) {
+            projectEntries.add(List.copyOf(currentEntry));
+        }
+        currentEntry.clear();
+    }
+
+    private static boolean startsStructuredEntry(String line) {
+        return DATE_RANGE.matcher(line).find() || line.contains("|") || line.matches("^[\\p{L}0-9][\\p{L}0-9 .'-]+\\s+[-–—]\\s+.+");
     }
 
     private static boolean isSummarySection(String section) {
@@ -191,6 +242,164 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
 
     private static boolean isLanguageSection(String section) {
         return section.equals("languages") || section.equals("language skills");
+    }
+
+    private static boolean isStructuredSection(String section) {
+        return isEducationSection(section) || isExperienceSection(section) || isProjectSection(section);
+    }
+
+    private static boolean isEducationSection(String section) {
+        return section.equals("education");
+    }
+
+    private static boolean isExperienceSection(String section) {
+        return section.equals("experience") || section.equals("work experience");
+    }
+
+    private static boolean isProjectSection(String section) {
+        return section.equals("projects");
+    }
+
+    private static List<ExperienceWriteRequest> experiences(List<List<String>> entries) {
+        List<ExperienceWriteRequest> experiences = new ArrayList<>();
+        for (int index = 0; index < entries.size(); index++) {
+            List<String> entry = entries.get(index);
+            if (entry.isEmpty()) {
+                continue;
+            }
+            DateRange dateRange = dateRange(entry.getFirst());
+            String header = removeDateRange(entry.getFirst()).strip();
+            List<String> parts = parts(header);
+            String title = parts.isEmpty() ? null : parts.getFirst();
+            String company = parts.size() > 1 ? parts.get(1) : null;
+            String location = parts.size() > 2 ? parts.get(2) : null;
+            String description = description(entry.subList(1, entry.size()));
+            experiences.add(new ExperienceWriteRequest(null, company, title, location,
+                    dateRange.startDate(), dateRange.endDate(), description, index));
+        }
+        return experiences;
+    }
+
+    private static List<EducationWriteRequest> education(List<List<String>> entries) {
+        List<EducationWriteRequest> education = new ArrayList<>();
+        for (List<String> entry : entries) {
+            if (entry.isEmpty()) {
+                continue;
+            }
+            DateRange dateRange = dateRange(entry.getFirst());
+            String header = removeDateRange(entry.getFirst()).strip();
+            List<String> parts = parts(header);
+            String institution = parts.isEmpty() ? null : parts.getFirst();
+            DegreeField degreeField = degreeField(parts.size() > 1 ? parts.get(1) : null);
+            String location = parts.size() > 2 ? parts.get(2) : null;
+            String focus = description(entry.subList(1, entry.size()));
+            education.add(new EducationWriteRequest(null, institution, degreeField.degree(), degreeField.field(),
+                    location, dateRange.startDate(), dateRange.endDate(), focus));
+        }
+        return education;
+    }
+
+    private static List<ProjectWriteRequest> projects(List<List<String>> entries) {
+        List<ProjectWriteRequest> projects = new ArrayList<>();
+        for (int index = 0; index < entries.size(); index++) {
+            List<String> entry = entries.get(index);
+            if (entry.isEmpty()) {
+                continue;
+            }
+            List<String> parts = parts(entry.getFirst());
+            String name = parts.isEmpty() ? null : parts.getFirst();
+            String url = parts.stream().filter(part -> URL.matcher(part).find()).findFirst()
+                    .map(DeterministicProfileTextExtractor::normalizeUrl)
+                    .orElse(null);
+            String searchableText = String.join("\n", entry);
+            List<ProjectTechnologyWriteRequest> technologies = technologies(searchableText);
+            String description = description(entry.subList(1, entry.size()));
+            projects.add(new ProjectWriteRequest(null, name, url, description, index, technologies));
+        }
+        return projects;
+    }
+
+    private static List<ProjectTechnologyWriteRequest> technologies(String text) {
+        return skills(text).stream()
+                .map(skill -> new ProjectTechnologyWriteRequest(null, skill.skill(), skill.normalizedSkill(), skill.displayOrder()))
+                .toList();
+    }
+
+    private static List<String> parts(String header) {
+        String normalized = header.replaceAll("\\s+[–—]\\s+", " | ");
+        return Arrays.stream(normalized.split("\\s*\\|\\s*"))
+                .map(String::strip)
+                .filter(part -> !part.isBlank())
+                .toList();
+    }
+
+    private static String description(List<String> lines) {
+        String value = lines.stream()
+                .map(line -> line.replaceFirst("^[•*-]\\s*", "").strip())
+                .filter(line -> !line.isBlank())
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse(null);
+        return value == null ? null : truncate(value);
+    }
+
+    private static DateRange dateRange(String line) {
+        Matcher matcher = DATE_RANGE.matcher(line);
+        if (!matcher.find()) {
+            return new DateRange(null, null);
+        }
+        return new DateRange(parseDate(matcher.group("start")), parseEndDate(matcher.group("end")));
+    }
+
+    private static String removeDateRange(String line) {
+        return DATE_RANGE.matcher(line).replaceFirst("").replaceAll("\\s*[|,;-]+\\s*$", "");
+    }
+
+    private static LocalDate parseEndDate(String rawDate) {
+        String normalized = rawDate.strip().toLowerCase(Locale.ROOT);
+        if (normalized.equals("present") || normalized.equals("current")) {
+            return null;
+        }
+        return parseDate(rawDate);
+    }
+
+    private static LocalDate parseDate(String rawDate) {
+        String normalized = rawDate.strip().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+        String[] tokens = normalized.split(" ");
+        int year = Integer.parseInt(tokens[tokens.length - 1]);
+        Month month = tokens.length == 1 ? Month.JANUARY : month(tokens[0]);
+        return LocalDate.of(year, month, 1);
+    }
+
+    private static Month month(String token) {
+        String prefix = token.substring(0, Math.min(3, token.length()));
+        return switch (prefix) {
+            case "jan" -> Month.JANUARY;
+            case "feb" -> Month.FEBRUARY;
+            case "mar" -> Month.MARCH;
+            case "apr" -> Month.APRIL;
+            case "may" -> Month.MAY;
+            case "jun" -> Month.JUNE;
+            case "jul" -> Month.JULY;
+            case "aug" -> Month.AUGUST;
+            case "sep" -> Month.SEPTEMBER;
+            case "oct" -> Month.OCTOBER;
+            case "nov" -> Month.NOVEMBER;
+            case "dec" -> Month.DECEMBER;
+            default -> Month.JANUARY;
+        };
+    }
+
+    private static DegreeField degreeField(String value) {
+        if (value == null || value.isBlank()) {
+            return new DegreeField(null, null);
+        }
+        String cleaned = value.strip();
+        Matcher matcher = Pattern.compile("^(?<degree>B\\.?A\\.?|B\\.?S\\.?|BSc|BA|M\\.?S\\.?|MSc|MA|PhD|Bachelor(?:'s)?|Master(?:'s)?)\\s+(?:in\\s+)?(?<field>.+)$",
+                Pattern.CASE_INSENSITIVE).matcher(cleaned);
+        if (matcher.find()) {
+            return new DegreeField(matcher.group("degree"), matcher.group("field"));
+        }
+        return new DegreeField(cleaned, null);
     }
 
     private static String summary(String text, String summarySectionText) {
@@ -240,7 +449,32 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
                 .find();
     }
 
-    private record ResumeSections(String summaryText, String skillsText, String languagesText) {
+    private record ResumeSections(
+            String summaryText,
+            String skillsText,
+            String languagesText,
+            List<List<String>> educationEntries,
+            List<List<String>> experienceEntries,
+            List<List<String>> projectEntries
+    ) {
+        private ResumeSections {
+            educationEntries = immutableEntries(educationEntries);
+            experienceEntries = immutableEntries(experienceEntries);
+            projectEntries = immutableEntries(projectEntries);
+        }
+    }
+
+    private record DateRange(LocalDate startDate, LocalDate endDate) {
+    }
+
+    private record DegreeField(String degree, String field) {
+    }
+
+    private static List<List<String>> immutableEntries(List<List<String>> entries) {
+        return entries.stream()
+                .filter(Objects::nonNull)
+                .map(List::copyOf)
+                .toList();
     }
 
     private static String displayName(String normalized) {
