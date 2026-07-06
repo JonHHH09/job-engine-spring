@@ -222,23 +222,20 @@ final class ResumeBodyRenderer {
             return limitBullets(lines, limit);
         }
 
-        List<String> sentences = splitSentences(lines.isEmpty() ? description.strip() : lines.getFirst());
-        return limitBullets(sentences.isEmpty() ? lines : sentences, limit);
+        return limitBullets(splitSentences(lines.getFirst()), limit);
     }
 
     private static List<String> splitSentences(String text) {
         if (!hasText(text)) {
             return List.of();
         }
+        String strippedText = text.strip();
         BreakIterator iterator = BreakIterator.getSentenceInstance(Locale.CANADA);
-        iterator.setText(text.strip());
+        iterator.setText(strippedText);
         List<String> sentences = new ArrayList<>();
         int start = iterator.first();
         for (int end = iterator.next(); end != BreakIterator.DONE; start = end, end = iterator.next()) {
-            String sentence = text.substring(start, end).strip();
-            if (hasText(sentence)) {
-                sentences.add(sentence);
-            }
+            sentences.add(strippedText.substring(start, end).strip());
         }
         return sentences;
     }

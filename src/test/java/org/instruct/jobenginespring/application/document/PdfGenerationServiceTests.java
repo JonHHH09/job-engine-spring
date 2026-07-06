@@ -272,8 +272,18 @@ class PdfGenerationServiceTests {
         assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, new Object[]{null}));
         assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, "SECTION: VALUE"));
         assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, "1234"));
+        assertFalse((Boolean) invoke("isBulletLine", new Class<?>[]{String.class}, new Object[]{null}));
+        assertFalse((Boolean) invoke("isBulletLine", new Class<?>[]{String.class}, "plain line"));
+        assertTrue((Boolean) invoke("isBulletLine", new Class<?>[]{String.class}, "  - indented bullet"));
+        assertFalse((Boolean) invoke("isBulletContinuationLine", new Class<?>[]{String.class}, new Object[]{null}));
+        assertFalse((Boolean) invoke("isBulletContinuationLine", new Class<?>[]{String.class}, "  "));
         assertFalse((Boolean) invoke("isBulletContinuationLine", new Class<?>[]{String.class}, "normal line"));
         assertTrue((Boolean) invoke("isBulletContinuationLine", new Class<?>[]{String.class}, "  continuation"));
+        assertFalse((Boolean) invoke("isLabeledLine", new Class<?>[]{String.class}, new Object[]{null}));
+        assertFalse((Boolean) invoke("isLabeledLine", new Class<?>[]{String.class}, " "));
+        assertFalse((Boolean) invoke("isLabeledLine", new Class<?>[]{String.class}, ": missing label"));
+        assertFalse((Boolean) invoke("isLabeledLine", new Class<?>[]{String.class}, "This label is intentionally longer than thirty two chars: value"));
+        assertEquals("plain line", invokeString("stripBulletPrefix", new Class<?>[]{String.class}, "plain line"));
 
         PDType1Font font = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
         assertEquals("Short", invokeString("fitText", new Class<?>[]{String.class, PDType1Font.class, float.class, float.class}, "Short", font, 9.0f, 500.0f));

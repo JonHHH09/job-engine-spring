@@ -26,6 +26,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -320,6 +322,42 @@ class GeneratePdfResumeServiceTests {
         assertTrue(masterRendered.contains("- Built MCP-native PDF generation tools. Added deterministic resume rendering tests. Improved document provenance handling. Kept this fourth sentence out of the Canadian resume."));
     }
 
+    @Test
+    void canadianResumeFiltersEmailContactsByTypeLabelOrValueAndKeepsNonEmailContacts() {
+        ProfileAggregate aggregate = contactFilteringAggregate(PROFILE_ID);
+
+        String rendered = ResumeBodyRenderer.renderCanadianResume(aggregate);
+
+        assertTrue(rendered.contains("Contact: agentic@example.test | Phone: +1-555-0100 | Website: https://example.test"));
+        assertFalse(rendered.contains("type-filtered@example.test"));
+        assertFalse(rendered.contains("label-filtered@example.test"));
+        assertFalse(rendered.contains("value-filtered@example.test"));
+        assertFalse(rendered.contains("Links:"));
+    }
+
+    @Test
+    void masterResumeRendersProjectsWithOptionalFallbacksAndBlankOptionalFields() {
+        ProfileAggregate aggregate = projectFallbackAggregate(PROFILE_ID);
+
+        String rendered = ResumeBodyRenderer.renderMasterResume(aggregate);
+
+        assertTrue(rendered.contains("Project - https://example.test/fallback"));
+        assertTrue(rendered.contains("Named Project"));
+        assertFalse(rendered.contains("Named Project -"));
+        assertFalse(rendered.contains("Technologies:"));
+        assertFalse(rendered.contains("-  "));
+    }
+
+    @Test
+    void coversPrivateResumeBulletAndSentenceFallbackEdges() throws Exception {
+        assertEquals(List.of(), invokeResumeList("experienceBullets", new Class<?>[]{String.class, int.class}, " ", 3));
+        assertEquals(List.of(), invokeResumeList("experienceBullets", new Class<?>[]{String.class, int.class}, "Handled platform work.", 0));
+        assertEquals(List.of(), invokeResumeList("splitSentences", new Class<?>[]{String.class}, " "));
+        assertEquals(List.of("."), invokeResumeList("splitSentences", new Class<?>[]{String.class}, " . "));
+        assertEquals(List.of("Normalized bullet"), invokeResumeList("experienceBullets", new Class<?>[]{String.class, int.class}, "• Normalized bullet", 3));
+        assertEquals("-", invokeResumeString("stripBulletPrefix", new Class<?>[]{String.class}, "-"));
+    }
+
     private static ProfileAggregate emptyAggregate(UUID profileId) {
         return new ProfileAggregate(
                 new UserProfile(profileId, "Agentic Dev", "agentic@example.test", null, null, NOW, NOW),
@@ -389,6 +427,45 @@ class GeneratePdfResumeServiceTests {
                         )
                 ),
                 List.of(),
+                List.of()
+        );
+    }
+
+    private static ProfileAggregate contactFilteringAggregate(UUID profileId) {
+        return new ProfileAggregate(
+                new UserProfile(profileId, "Agentic Dev", "agentic@example.test", "Builds MCP-native systems.", null, NOW, NOW),
+                List.of(
+                        new ProfileContact(UUID.randomUUID(), profileId, "Email", "type-filtered@example.test", "Personal", NOW, NOW),
+                        new ProfileContact(UUID.randomUUID(), profileId, "personal", "label-filtered@example.test", "Email", NOW, NOW),
+                        new ProfileContact(UUID.randomUUID(), profileId, "personal", "value-filtered@example.test", "Website", NOW, NOW),
+                        new ProfileContact(UUID.randomUUID(), profileId, "phone", "+1-555-0100", "Phone", NOW, NOW),
+                        new ProfileContact(UUID.randomUUID(), profileId, "website", "https://example.test", "Website", NOW, NOW)
+                ),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+    }
+
+    private static ProfileAggregate projectFallbackAggregate(UUID profileId) {
+        UUID fallbackProjectId = UUID.randomUUID();
+        UUID namedProjectId = UUID.randomUUID();
+        return new ProfileAggregate(
+                new UserProfile(profileId, "Agentic Dev", "agentic@example.test", "Builds MCP-native systems.", null, NOW, NOW),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(
+                        new ProfileProject(fallbackProjectId, profileId, " ", "https://example.test/fallback", " ", List.of(), 0, NOW),
+                        new ProfileProject(namedProjectId, profileId, "Named Project", " ", " ", List.of(), 1, NOW)
+                ),
                 List.of()
         );
     }
@@ -575,5 +652,27 @@ class GeneratePdfResumeServiceTests {
             index += needle.length();
         }
         return count;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> invokeResumeList(String methodName, Class<?>[] parameterTypes, Object... args) throws Exception {
+        return (List<String>) invokeResume(methodName, parameterTypes, args);
+    }
+
+    private static String invokeResumeString(String methodName, Class<?>[] parameterTypes, Object... args) throws Exception {
+        return (String) invokeResume(methodName, parameterTypes, args);
+    }
+
+    private static Object invokeResume(String methodName, Class<?>[] parameterTypes, Object... args) throws Exception {
+        Method method = ResumeBodyRenderer.class.getDeclaredMethod(methodName, parameterTypes);
+        method.setAccessible(true);
+        try {
+            return method.invoke(null, args);
+        } catch (InvocationTargetException exception) {
+            if (exception.getCause() instanceof Exception cause) {
+                throw cause;
+            }
+            throw exception;
+        }
     }
 }
