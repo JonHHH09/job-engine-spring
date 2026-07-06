@@ -172,14 +172,54 @@ public class PdfGenerationService {
     private static List<PageLines> paginate(List<String> lines) {
         int linesPerPage = Math.max(1, (int) Math.floor((bodyStartY() - bodyEndY()) / LEADING) + 1);
         List<PageLines> pages = new ArrayList<>();
-        for (int startIndex = 0; startIndex < lines.size(); startIndex += linesPerPage) {
-            int endIndex = Math.min(lines.size(), startIndex + linesPerPage);
-            pages.add(new PageLines(lines.subList(startIndex, endIndex), startIndex));
+        List<String> pageLines = new ArrayList<>();
+        int pageStartIndex = 0;
+        for (int lineIndex = 0; lineIndex < lines.size(); lineIndex++) {
+            if (shouldStartNewPage(lines, lineIndex, pageLines.size(), linesPerPage)) {
+                pages.add(new PageLines(List.copyOf(pageLines), pageStartIndex));
+                pageLines.clear();
+                pageStartIndex = lineIndex;
+            }
+            pageLines.add(lines.get(lineIndex));
+            if (pageLines.size() == linesPerPage) {
+                pages.add(new PageLines(List.copyOf(pageLines), pageStartIndex));
+                pageLines.clear();
+                pageStartIndex = lineIndex + 1;
+            }
         }
-        if (pages.isEmpty()) {
-            pages.add(new PageLines(List.of(), 0));
+        if (!pageLines.isEmpty() || pages.isEmpty()) {
+            pages.add(new PageLines(List.copyOf(pageLines), pageStartIndex));
         }
         return pages;
+    }
+
+    private static boolean shouldStartNewPage(List<String> lines, int lineIndex, int pageLineCount, int linesPerPage) {
+        if (pageLineCount == 0) {
+            return false;
+        }
+        int remainingSlots = linesPerPage - pageLineCount;
+        String line = lines.get(lineIndex);
+        return (isSectionHeading(line) && remainingSlots < 2)
+                || (isResumeEntryHeading(lines, lineIndex) && remainingSlots < 3);
+    }
+
+    private static boolean isResumeEntryHeading(List<String> lines, int lineIndex) {
+        if (lineIndex + 1 >= lines.size()) {
+            return false;
+        }
+        String line = lines.get(lineIndex);
+        String nextLine = lines.get(lineIndex + 1);
+        return line != null
+                && line.contains(" | ")
+                && !isLabeledLine(line)
+                && !isSectionHeading(line)
+                && isResumeDateLine(nextLine);
+    }
+
+    private static boolean isResumeDateLine(String line) {
+        return line != null && (line.startsWith("Dates not provided")
+                || line.startsWith("Unknown - ")
+                || line.matches("^\\d{4}-\\d{2} - .+"));
     }
 
     private static void writePage(

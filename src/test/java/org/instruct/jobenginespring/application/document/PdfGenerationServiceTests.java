@@ -162,6 +162,44 @@ class PdfGenerationServiceTests {
     }
 
     @Test
+    void paginationKeepsSectionHeadingWithFollowingContent() throws Exception {
+        int linesPerPage = firstPageLineCountForGeneratedFiller();
+        List<String> lines = new java.util.ArrayList<>();
+        for (int index = 0; index < linesPerPage - 1; index++) {
+            lines.add("Filler " + index);
+        }
+        lines.add("SUMMARY");
+        lines.add("Section body should start below its heading.");
+
+        @SuppressWarnings("unchecked")
+        List<Object> pages = (List<Object>) invoke("paginate", new Class<?>[]{List.class}, lines);
+
+        assertEquals(linesPerPage - 1, pageLines(pages.getFirst()).size());
+        assertEquals("SUMMARY", pageLines(pages.get(1)).getFirst());
+        assertEquals("Section body should start below its heading.", pageLines(pages.get(1)).get(1));
+    }
+
+    @Test
+    void paginationKeepsResumeEntryHeadingDateAndFirstDetailTogether() throws Exception {
+        int linesPerPage = firstPageLineCountForGeneratedFiller();
+        List<String> lines = new java.util.ArrayList<>();
+        for (int index = 0; index < linesPerPage - 2; index++) {
+            lines.add("Filler " + index);
+        }
+        lines.add("Developer | Example Co");
+        lines.add("2024-01 - Present | Remote");
+        lines.add("- Built deterministic resume layout checks.");
+
+        @SuppressWarnings("unchecked")
+        List<Object> pages = (List<Object>) invoke("paginate", new Class<?>[]{List.class}, lines);
+
+        assertEquals(linesPerPage - 2, pageLines(pages.getFirst()).size());
+        assertEquals("Developer | Example Co", pageLines(pages.get(1)).getFirst());
+        assertEquals("2024-01 - Present | Remote", pageLines(pages.get(1)).get(1));
+        assertEquals("- Built deterministic resume layout checks.", pageLines(pages.get(1)).get(2));
+    }
+
+    @Test
     void rejectsBlankBody() {
         PdfGenerationService service = new PdfGenerationService(tempDir);
 
@@ -268,6 +306,20 @@ class PdfGenerationServiceTests {
         @SuppressWarnings("unchecked")
         List<Object> emptyPages = (List<Object>) invoke("paginate", new Class<?>[]{List.class}, List.of());
         assertEquals(1, emptyPages.size());
+
+        assertFalse((Boolean) invoke("shouldStartNewPage", new Class<?>[]{List.class, int.class, int.class, int.class}, List.of("SUMMARY", "Body"), 0, 0, 2));
+        assertTrue((Boolean) invoke("shouldStartNewPage", new Class<?>[]{List.class, int.class, int.class, int.class}, List.of("SUMMARY", "Body"), 0, 1, 2));
+        assertFalse((Boolean) invoke("isResumeEntryHeading", new Class<?>[]{List.class, int.class}, List.of("Developer | Example Co"), 0));
+        assertFalse((Boolean) invoke("isResumeEntryHeading", new Class<?>[]{List.class, int.class}, java.util.Arrays.asList(null, "2024-01 - Present"), 0));
+        assertFalse((Boolean) invoke("isResumeEntryHeading", new Class<?>[]{List.class, int.class}, List.of("Plain heading", "2024-01 - Present"), 0));
+        assertFalse((Boolean) invoke("isResumeEntryHeading", new Class<?>[]{List.class, int.class}, List.of("Backend: Java | Spring", "2024-01 - Present"), 0));
+        assertFalse((Boolean) invoke("isResumeEntryHeading", new Class<?>[]{List.class, int.class}, List.of("ROLE | COMPANY", "2024-01 - Present"), 0));
+        assertFalse((Boolean) invoke("isResumeEntryHeading", new Class<?>[]{List.class, int.class}, List.of("Developer | Example Co", "plain detail"), 0));
+        assertFalse((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, new Object[]{null}));
+        assertTrue((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "Dates not provided"));
+        assertTrue((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "Unknown - 2024-01"));
+        assertTrue((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "2024-01 - Present | Remote"));
+        assertFalse((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "Spring Boot - Java"));
 
         assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, new Object[]{null}));
         assertFalse((Boolean) invoke("isSectionHeading", new Class<?>[]{String.class}, "SECTION: VALUE"));
@@ -408,6 +460,22 @@ class PdfGenerationServiceTests {
 
     private static boolean closeTo(float actual, float expected) {
         return Math.abs(actual - expected) < 0.001f;
+    }
+
+    private static int firstPageLineCountForGeneratedFiller() throws Exception {
+        List<String> filler = java.util.stream.IntStream.range(0, 100)
+                .mapToObj(index -> "Filler " + index)
+                .toList();
+        @SuppressWarnings("unchecked")
+        List<Object> pages = (List<Object>) invoke("paginate", new Class<?>[]{List.class}, filler);
+        return pageLines(pages.getFirst()).size();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> pageLines(Object pageLines) throws Exception {
+        Method method = pageLines.getClass().getDeclaredMethod("lines");
+        method.setAccessible(true);
+        return (List<String>) method.invoke(pageLines);
     }
 
     private static String invokeString(String methodName, Class<?>[] parameterTypes, Object... args) throws Exception {
