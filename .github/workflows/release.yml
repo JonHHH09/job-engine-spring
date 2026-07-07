@@ -33,11 +33,13 @@ jobs:
       - name: Run full verification and build jar
         run: ./mvnw -Pintegration-tests verify
 
-      - name: Verify release jar
-        run: test -f target/job-engine-spring-0.0.1-SNAPSHOT.jar
+      - name: Prepare versioned release jar
+        run: |
+          test -f target/job-engine-spring-0.0.1-SNAPSHOT.jar
+          cp target/job-engine-spring-0.0.1-SNAPSHOT.jar "job-engine-spring-${GITHUB_REF_NAME}.jar"
 
       - name: Create jar checksum
-        run: sha256sum target/job-engine-spring-0.0.1-SNAPSHOT.jar > SHA256SUMS
+        run: sha256sum "job-engine-spring-${GITHUB_REF_NAME}.jar" > SHA256SUMS
 
       - name: Build release container image from verified jar
         run: |
@@ -71,18 +73,28 @@ jobs:
       - name: Publish container image
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}/job-engine-spring:${GITHUB_REF_NAME}
+          IMAGE_REPOSITORY=ghcr.io/${GITHUB_REPOSITORY,,}
+          IMAGE_NAME="${IMAGE_REPOSITORY}:${GITHUB_REF_NAME}"
+
           docker tag job-engine-spring:release-candidate "$IMAGE_NAME"
           docker push "$IMAGE_NAME"
+
+          if [[ "${GITHUB_REF_NAME}" != *-* ]]; then
+            docker tag job-engine-spring:release-candidate "${IMAGE_REPOSITORY}:latest"
+            docker push "${IMAGE_REPOSITORY}:latest"
+          fi
+
+          docker image inspect "$IMAGE_NAME" --format '{{index .RepoDigests 0}}' > IMAGE-DIGESTS
 
       - name: Create GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           files: |
-            target/job-engine-spring-0.0.1-SNAPSHOT.jar
+            job-engine-spring-${{ github.ref_name }}.jar
             SHA256SUMS
             IMAGE-ID
+            IMAGE-DIGESTS
 
       - name: Compose cleanup
         if: always()
