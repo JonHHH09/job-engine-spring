@@ -9,6 +9,8 @@ import org.springframework.ai.reader.pdf.config.PdfDocumentReaderConfig;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -31,6 +33,18 @@ public class PdfTextExtractionService {
     public static final long MAX_FILE_BYTES = 10L * 1024L * 1024L;
     public static final int MAX_PAGE_COUNT = 200;
     private static final byte[] PDF_MAGIC = new byte[]{'%', 'P', 'D', 'F', '-'};
+    private final LocalFileImportPolicy importPolicy;
+
+    public PdfTextExtractionService() {
+        this.importPolicy = LocalFileImportPolicy.unrestrictedForTests();
+    }
+
+    @Autowired
+    public PdfTextExtractionService(
+            @Value("${job-engine.document.import-root:" + LocalFileImportPolicy.DEFAULT_IMPORT_ROOT + "}") String importRoot
+    ) {
+        this.importPolicy = LocalFileImportPolicy.rootedAt(importRoot);
+    }
 
     public PdfTextExtractionResult extractText(PdfTextExtractionRequest request) {
         PdfTextExtractionRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
@@ -70,7 +84,7 @@ public class PdfTextExtractionService {
         );
     }
 
-    private static Path validatePath(String rawPath) {
+    private Path validatePath(String rawPath) {
         if (rawPath == null || rawPath.isBlank()) {
             throw validation("path", "must not be blank");
         }
@@ -88,11 +102,12 @@ public class PdfTextExtractionService {
         if (!Files.isRegularFile(path)) {
             throw validation("path", "must identify a regular file");
         }
-        validateFileSize(path);
-        if (!hasPdfHeader(path)) {
+        Path allowedPath = importPolicy.requireAllowed(path);
+        validateFileSize(allowedPath);
+        if (!hasPdfHeader(allowedPath)) {
             throw validation("path", "file must be a PDF document");
         }
-        return path;
+        return allowedPath;
     }
 
     @lombok.Generated

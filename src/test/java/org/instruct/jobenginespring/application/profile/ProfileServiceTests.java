@@ -12,6 +12,7 @@ import org.instruct.jobenginespring.application.profile.ProfileService.ProjectWr
 import org.instruct.jobenginespring.application.profile.ProfileService.SkillWriteRequest;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
+import org.instruct.jobenginespring.application.security.McpAccessPolicy;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -48,6 +49,40 @@ class ProfileServiceTests {
     private final ProfileService service = new ProfileService(repository, Clock.fixed(NOW, ZoneOffset.UTC));
 
     @Test
+    void rejectsCallerSuppliedProfileIdsWithoutValidAccessToken() {
+        ProfileService securedService = new ProfileService(
+                repository,
+                McpAccessPolicy.configured("secret"),
+                Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        ProfileAggregate created = securedService.createProfile(new ProfileWriteRequest(
+                "Agentic Dev",
+                "agentic@example.com",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "secret"
+        ));
+
+        ApplicationException readDenied = assertThrows(
+                ApplicationException.class,
+                () -> securedService.getProfile(created.profile().id(), "wrong")
+        );
+        ApplicationException deleteDenied = assertThrows(
+                ApplicationException.class,
+                () -> securedService.deleteProfile(created.profile().id(), null)
+        );
+
+        assertEquals("authorization_error", readDenied.errorCode().code());
+        assertEquals("authorization_error", deleteDenied.errorCode().code());
+    }
+
+    @Test
     void createProfilePersistsNormalizedAggregate() {
         ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
                 " Agentic Dev ",
@@ -72,7 +107,7 @@ class ProfileServiceTests {
         assertEquals("home", created.contacts().getFirst().label());
         assertEquals("spring ai", created.skills().getFirst().normalizedSkill());
         assertEquals("backend", created.skills().getFirst().category());
-        assertEquals(List.of(created.profile()), service.listProfiles());
+        assertEquals(List.of(created.profile()), service.listProfiles(null));
     }
 
     @Test
@@ -192,10 +227,10 @@ class ProfileServiceTests {
                 null
         ));
 
-        assertTrue(service.getProfile(created.profile().id()).isPresent());
-        assertTrue(service.deleteProfile(created.profile().id()));
-        assertFalse(service.getProfile(created.profile().id()).isPresent());
-        assertFalse(service.deleteProfile(created.profile().id()));
+        assertTrue(service.getProfile(created.profile().id(), null).isPresent());
+        assertTrue(service.deleteProfile(created.profile().id(), null));
+        assertFalse(service.getProfile(created.profile().id(), null).isPresent());
+        assertFalse(service.deleteProfile(created.profile().id(), null));
     }
 
     @Test
@@ -236,12 +271,12 @@ class ProfileServiceTests {
         );
 
         assertInvalidProfileWriteRequest(null, "request", "must not be null");
-        assertThrows(NullPointerException.class, () -> service.getProfile(null));
+        assertThrows(NullPointerException.class, () -> service.getProfile(null, null));
         assertThrows(NullPointerException.class, () -> service.updateProfile(null, request));
         ApplicationException updateException = assertThrows(ApplicationException.class, () -> service.updateProfile(UUID.randomUUID(), null));
         assertEquals("validation_error", updateException.errorCode().code());
         assertEquals(Map.of("field", "request", "reason", "must not be null"), updateException.details());
-        assertThrows(NullPointerException.class, () -> service.deleteProfile(null));
+        assertThrows(NullPointerException.class, () -> service.deleteProfile(null, null));
     }
 
     @Test

@@ -34,6 +34,7 @@ class ProfilePdfIngestionMcpAdapterTests {
     private static final UUID PROFILE_ID = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
     private static final UUID EXTRACTION_ID = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
     private static final UUID SOURCE_ID = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
+    private static final String ACCESS_TOKEN = "test-token";
 
     private final ProfilePdfIngestionService service = mock(ProfilePdfIngestionService.class);
     private final ProfilePdfIngestionMcpAdapter adapter = new ProfilePdfIngestionMcpAdapter(service);
@@ -55,12 +56,13 @@ class ProfilePdfIngestionMcpAdapterTests {
                 "ingestProfileFromStoredPdf",
                 IngestProfileFromStoredPdfRequest.class
         );
-        Method getSource = ProfilePdfIngestionMcpAdapter.class.getDeclaredMethod("getProfilePdfSource", UUID.class);
+        Method getSource = ProfilePdfIngestionMcpAdapter.class.getDeclaredMethod("getProfilePdfSource", UUID.class, String.class);
 
         assertEquals("ingest_profile_from_stored_pdf", ingest.getAnnotation(McpTool.class).name());
         assertEquals("get_profile_pdf_source", getSource.getAnnotation(McpTool.class).name());
         assertEquals(1, ingest.getParameterAnnotations()[0].length);
         assertEquals(1, getSource.getParameterAnnotations()[0].length);
+        assertEquals(1, getSource.getParameterAnnotations()[1].length);
     }
 
     @Test
@@ -94,13 +96,13 @@ class ProfilePdfIngestionMcpAdapterTests {
     @Test
     void getProfilePdfSourceDelegatesToService() {
         ProfilePdfSource expected = new ProfilePdfSource(SOURCE_ID, PROFILE_ID, EXTRACTION_ID, "resume_pdf", Instant.parse("2026-07-03T19:00:00Z"));
-        when(service.getProfilePdfSource(PROFILE_ID)).thenReturn(expected);
+        when(service.getProfilePdfSource(PROFILE_ID, ACCESS_TOKEN)).thenReturn(expected);
 
-        CallToolResult result = adapter.getProfilePdfSource(PROFILE_ID);
+        CallToolResult result = adapter.getProfilePdfSource(PROFILE_ID, ACCESS_TOKEN);
 
         assertFalse(result.isError());
         assertEquals(expected, result.structuredContent());
-        verify(service).getProfilePdfSource(PROFILE_ID);
+        verify(service).getProfilePdfSource(PROFILE_ID, ACCESS_TOKEN);
     }
 
     @Test

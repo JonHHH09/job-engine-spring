@@ -5,6 +5,7 @@ import org.instruct.jobenginespring.application.document.ProfileResumePdfGenerat
 import org.instruct.jobenginespring.application.document.ProfileResumePdfGenerationWorkflow.GeneratedProfileResumePdf;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
+import org.instruct.jobenginespring.application.security.McpAccessPolicy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -21,25 +22,37 @@ public class GeneratePdfResumeService {
     private static final String DEFAULT_OUTPUT_DIRECTORY = "tmp/generated-pdfs/master-resume";
 
     private final ProfileResumePdfGenerationWorkflow workflow;
+    private final McpAccessPolicy accessPolicy;
     private final Path outputDirectory;
 
     @Autowired
     public GeneratePdfResumeService(
             ProfileResumePdfGenerationWorkflow workflow,
+            McpAccessPolicy accessPolicy,
             @Value("${job-engine.pdf-generation.master-resume-output-dir:" + DEFAULT_OUTPUT_DIRECTORY + "}") String outputDirectory
     ) {
         this.workflow = java.util.Objects.requireNonNull(workflow, "workflow must not be null");
+        this.accessPolicy = java.util.Objects.requireNonNull(accessPolicy, "accessPolicy must not be null");
         this.outputDirectory = toPath(outputDirectory, DEFAULT_OUTPUT_DIRECTORY);
     }
 
     GeneratePdfResumeService(ProfileResumePdfGenerationWorkflow workflow, Path outputDirectory) {
         this.workflow = java.util.Objects.requireNonNull(workflow, "workflow must not be null");
+        this.accessPolicy = McpAccessPolicy.permitAllForTests();
         this.outputDirectory = java.util.Objects.requireNonNull(outputDirectory, "outputDirectory must not be null");
+    }
+
+    GeneratePdfResumeService(ProfileResumePdfGenerationWorkflow workflow, String outputDirectory) {
+        this.workflow = java.util.Objects.requireNonNull(workflow, "workflow must not be null");
+        this.accessPolicy = McpAccessPolicy.permitAllForTests();
+        this.outputDirectory = toPath(outputDirectory, DEFAULT_OUTPUT_DIRECTORY);
     }
 
     @Transactional
     public GeneratePdfResumeResult generatePdfResume(GeneratePdfResumeRequest request) {
-        UUID profileId = java.util.Objects.requireNonNull(request, "request must not be null").profileId();
+        GeneratePdfResumeRequest safeRequest = java.util.Objects.requireNonNull(request, "request must not be null");
+        accessPolicy.authorize(safeRequest.accessToken(), "generate_pdf_resume");
+        UUID profileId = safeRequest.profileId();
         ProfileAggregate aggregate = workflow.requireProfile(profileId);
         GeneratedProfileResumePdf generated = workflow.generateAndLink(new GenerateProfileResumePdfCommand(
                 profileId,
@@ -69,7 +82,10 @@ public class GeneratePdfResumeService {
         return "master-resume-" + profileId + ".pdf";
     }
 
-    public record GeneratePdfResumeRequest(UUID profileId) {
+    public record GeneratePdfResumeRequest(UUID profileId, String accessToken) {
+        public GeneratePdfResumeRequest(UUID profileId) {
+            this(profileId, null);
+        }
     }
 
     public record GeneratePdfResumeResult(

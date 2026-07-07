@@ -8,6 +8,7 @@ import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileResumeDocumentRepository;
+import org.instruct.jobenginespring.application.security.McpAccessPolicy;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
@@ -47,6 +48,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class GeneratePdfResumeServiceTests {
 
@@ -180,6 +182,36 @@ class GeneratePdfResumeServiceTests {
         );
 
         assertEquals("not_found", exception.errorCode().code());
+    }
+
+    @Test
+    void rejectsResumeGenerationWithoutValidAccessTokenBeforeLoadingProfile() {
+        ProfileResumePdfGenerationWorkflow workflow = mock(ProfileResumePdfGenerationWorkflow.class);
+        GeneratePdfResumeService securedMasterService = new GeneratePdfResumeService(
+                workflow,
+                McpAccessPolicy.configured("secret"),
+                tempDir.resolve("secured-master").toString()
+        );
+        GenerateCaPdfResumeService securedCanadianService = new GenerateCaPdfResumeService(
+                workflow,
+                McpAccessPolicy.configured("secret"),
+                tempDir.resolve("secured-canadian").toString()
+        );
+
+        ApplicationException masterDenied = assertThrows(
+                ApplicationException.class,
+                () -> securedMasterService.generatePdfResume(new GeneratePdfResumeRequest(PROFILE_ID, "wrong"))
+        );
+        ApplicationException canadianDenied = assertThrows(
+                ApplicationException.class,
+                () -> securedCanadianService.generateCanadianPdfResume(
+                        new GenerateCaPdfResumeService.GenerateCaPdfResumeRequest(PROFILE_ID, null)
+                )
+        );
+
+        assertEquals("authorization_error", masterDenied.errorCode().code());
+        assertEquals("authorization_error", canadianDenied.errorCode().code());
+        verifyNoInteractions(workflow);
     }
 
     @Test

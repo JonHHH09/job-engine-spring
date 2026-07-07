@@ -6,6 +6,7 @@ import org.instruct.jobenginespring.application.document.DocumentStorageService.
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
 import org.instruct.jobenginespring.application.error.ApplicationException;
+import org.instruct.jobenginespring.application.security.McpAccessPolicy;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
@@ -45,6 +46,44 @@ class DocumentStorageServiceTests {
     private final InMemoryDocumentRepository repository = new InMemoryDocumentRepository();
     private final PdfTextExtractionService pdfTextExtractionService = mock(PdfTextExtractionService.class);
     private final DocumentStorageService service = new DocumentStorageService(repository, pdfTextExtractionService, CLOCK);
+
+    @Test
+    void rejectsStoredDocumentImportOutsideConfiguredRoot() throws IOException {
+        Path importRoot = tempDir.resolve("imports");
+        Files.createDirectories(importRoot);
+        Path outsideRoot = writePdfLikeFile("outside.pdf", "outside root");
+        DocumentStorageService rootedService = new DocumentStorageService(
+                repository,
+                pdfTextExtractionService,
+                McpAccessPolicy.configured("secret"),
+                importRoot.toString()
+        );
+
+        ApplicationException exception = assertThrows(
+                ApplicationException.class,
+                () -> rootedService.storeDocumentFile(new StoreDocumentFileRequest(outsideRoot.toString(), null, "secret"))
+        );
+
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals("file must be under configured import root", exception.details().get("reason"));
+    }
+
+    @Test
+    void rejectsStoredDocumentHandlesWithoutValidAccessToken() {
+        DocumentStorageService securedService = new DocumentStorageService(
+                repository,
+                pdfTextExtractionService,
+                McpAccessPolicy.configured("secret"),
+                tempDir.toString()
+        );
+
+        ApplicationException exception = assertThrows(
+                ApplicationException.class,
+                () -> securedService.getDocumentMetadata(UUID.randomUUID(), "wrong")
+        );
+
+        assertEquals("authorization_error", exception.errorCode().code());
+    }
 
     @Test
     void storesPdfFileAsMetadataWithoutExposingContent() throws IOException {
@@ -143,7 +182,7 @@ class DocumentStorageServiceTests {
     void reportsMissingStoredDocumentSafely() {
         UUID missingId = UUID.fromString("11111111-1111-1111-1111-111111111111");
 
-        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.getDocumentMetadata(missingId));
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.getDocumentMetadata(missingId, null));
 
         assertEquals("not_found", exception.errorCode().code());
         assertEquals("Stored document was not found", exception.safeMessage());
@@ -154,7 +193,7 @@ class DocumentStorageServiceTests {
         Path pdf = writePdfLikeFile("metadata.pdf", "metadata text");
         StoredDocumentMetadata metadata = service.storeDocumentFile(new StoreDocumentFileRequest(pdf.toString(), null));
 
-        assertEquals(metadata, service.getDocumentMetadata(metadata.id()));
+        assertEquals(metadata, service.getDocumentMetadata(metadata.id(), null));
     }
 
     @Test
@@ -242,7 +281,7 @@ class DocumentStorageServiceTests {
     void rejectsNullRequestsAndDocumentIds() {
         assertThrows(NullPointerException.class, () -> service.storeDocumentFile(null));
         assertThrows(NullPointerException.class, () -> service.extractStoredPdfText(null));
-        assertThrows(NullPointerException.class, () -> service.getDocumentMetadata(null));
+        assertThrows(NullPointerException.class, () -> service.getDocumentMetadata(null, null));
         assertThrows(NullPointerException.class, () -> service.extractStoredPdfText(new ExtractStoredPdfTextRequest(null, null, null, null)));
     }
 

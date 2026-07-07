@@ -33,6 +33,23 @@ class PdfTextExtractionServiceTests {
     Path tempDir;
 
     @Test
+    void rejectsRawPdfPathsOutsideConfiguredImportRoot() throws IOException {
+        Path importRoot = tempDir.resolve("imports");
+        Files.createDirectories(importRoot);
+        Path outsideRoot = tempDir.resolve("outside.pdf");
+        Files.writeString(outsideRoot, "%PDF-1.3\noutside");
+        PdfTextExtractionService rootedService = new PdfTextExtractionService(importRoot.toString());
+
+        ApplicationException exception = assertThrows(
+                ApplicationException.class,
+                () -> rootedService.extractText(new PdfTextExtractionRequest(outsideRoot.toString(), null, null))
+        );
+
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals("file must be under configured import root", exception.details().get("reason"));
+    }
+
+    @Test
     void rejectsBlankPath() {
         ApplicationException exception = assertThrows(
                 ApplicationException.class,

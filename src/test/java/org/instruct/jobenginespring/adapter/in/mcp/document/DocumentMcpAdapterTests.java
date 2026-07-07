@@ -38,6 +38,7 @@ import static org.mockito.Mockito.when;
 class DocumentMcpAdapterTests {
 
     private static final UUID DOCUMENT_ID = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static final String ACCESS_TOKEN = "test-token";
     private static final StoredDocumentMetadata DOCUMENT_METADATA = new StoredDocumentMetadata(
             DOCUMENT_ID,
             "sample.pdf",
@@ -86,7 +87,8 @@ class DocumentMcpAdapterTests {
         );
         Method getDocumentMetadata = DocumentMcpAdapter.class.getDeclaredMethod(
                 "getDocumentMetadata",
-                UUID.class
+                UUID.class,
+                String.class
         );
         Method extractStoredPdfText = DocumentMcpAdapter.class.getDeclaredMethod(
                 "extractStoredPdfText",
@@ -105,6 +107,7 @@ class DocumentMcpAdapterTests {
         assertEquals(1, extractPdfText.getParameterAnnotations()[0].length);
         assertEquals(1, storeDocumentFile.getParameterAnnotations()[0].length);
         assertEquals(1, getDocumentMetadata.getParameterAnnotations()[0].length);
+        assertEquals(1, getDocumentMetadata.getParameterAnnotations()[1].length);
         assertEquals(1, extractStoredPdfText.getParameterAnnotations()[0].length);
         assertEquals(1, generatePdfFile.getParameterAnnotations()[0].length);
     }
@@ -136,13 +139,13 @@ class DocumentMcpAdapterTests {
 
     @Test
     void getDocumentMetadataDelegatesToService() {
-        when(documentStorageService.getDocumentMetadata(DOCUMENT_ID)).thenReturn(DOCUMENT_METADATA);
+        when(documentStorageService.getDocumentMetadata(DOCUMENT_ID, ACCESS_TOKEN)).thenReturn(DOCUMENT_METADATA);
 
-        CallToolResult result = adapter.getDocumentMetadata(DOCUMENT_ID);
+        CallToolResult result = adapter.getDocumentMetadata(DOCUMENT_ID, ACCESS_TOKEN);
 
         assertFalse(result.isError());
         assertEquals(DOCUMENT_METADATA, result.structuredContent());
-        verify(documentStorageService).getDocumentMetadata(DOCUMENT_ID);
+        verify(documentStorageService).getDocumentMetadata(DOCUMENT_ID, ACCESS_TOKEN);
     }
 
     @Test

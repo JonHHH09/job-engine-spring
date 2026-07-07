@@ -25,8 +25,10 @@ public class ProfileMcpAdapter {
             name = "list_profiles",
             description = "List available profile identities without returning raw resume text or private credentials."
     )
-    public CallToolResult listProfiles() {
-        return call(() -> new ListProfilesResult(profileService.listProfiles()));
+    public CallToolResult listProfiles(
+            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
+    ) {
+        return call(() -> new ListProfilesResult(profileService.listProfiles(accessToken)));
     }
 
     @McpTool(
@@ -34,9 +36,10 @@ public class ProfileMcpAdapter {
             description = "Get a normalized profile aggregate by profile UUID."
     )
     public CallToolResult getProfile(
-            @McpToolParam(required = true, description = "Profile UUID") UUID profileId
+            @McpToolParam(required = true, description = "Profile UUID") UUID profileId,
+            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
     ) {
-        return call(() -> profileService.getProfile(profileId)
+        return call(() -> profileService.getProfile(profileId, accessToken)
                 .orElseThrow(() -> new ProfileService.ProfileNotFoundException(profileId)));
     }
 
@@ -68,9 +71,10 @@ public class ProfileMcpAdapter {
             description = "Delete a profile aggregate by profile UUID. Child profile data is removed by database cascade."
     )
     public CallToolResult deleteProfile(
-            @McpToolParam(required = true, description = "Profile UUID") UUID profileId
+            @McpToolParam(required = true, description = "Profile UUID") UUID profileId,
+            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
     ) {
-        return call(() -> new DeleteProfileResult(profileId, profileService.deleteProfile(profileId)));
+        return call(() -> new DeleteProfileResult(profileId, profileService.deleteProfile(profileId, accessToken)));
     }
 
     private CallToolResult call(Supplier<Object> operation) {

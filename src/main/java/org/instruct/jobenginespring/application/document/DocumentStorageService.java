@@ -1,15 +1,16 @@
 package org.instruct.jobenginespring.application.document;
 
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
+import org.instruct.jobenginespring.application.security.McpAccessPolicy;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,7 +28,6 @@ import java.util.Objects;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class DocumentStorageService {
 
     public static final String PDF_MEDIA_TYPE = "application/pdf";
@@ -38,18 +38,48 @@ public class DocumentStorageService {
     private final DocumentRepository documentRepository;
     @NonNull
     private final PdfTextExtractionService pdfTextExtractionService;
+    @NonNull
+    private final McpAccessPolicy accessPolicy;
+    @NonNull
+    private final LocalFileImportPolicy importPolicy;
     private Clock clock = Clock.systemUTC();
 
+    @Autowired
+    public DocumentStorageService(
+            DocumentRepository documentRepository,
+            PdfTextExtractionService pdfTextExtractionService,
+            McpAccessPolicy accessPolicy,
+            @Value("${job-engine.document.import-root:" + LocalFileImportPolicy.DEFAULT_IMPORT_ROOT + "}") String importRoot
+    ) {
+        this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
+        this.pdfTextExtractionService = Objects.requireNonNull(pdfTextExtractionService, "pdfTextExtractionService must not be null");
+        this.accessPolicy = Objects.requireNonNull(accessPolicy, "accessPolicy must not be null");
+        this.importPolicy = LocalFileImportPolicy.rootedAt(importRoot);
+    }
+
     DocumentStorageService(DocumentRepository documentRepository, PdfTextExtractionService pdfTextExtractionService, Clock clock) {
-        this(documentRepository, pdfTextExtractionService);
+        this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
+        this.pdfTextExtractionService = Objects.requireNonNull(pdfTextExtractionService, "pdfTextExtractionService must not be null");
+        this.accessPolicy = McpAccessPolicy.permitAllForTests();
+        this.importPolicy = LocalFileImportPolicy.unrestrictedForTests();
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
     @Transactional
     public StoredDocumentMetadata storeDocumentFile(StoreDocumentFileRequest request) {
         StoreDocumentFileRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
-        Path path = validatePath(safeRequest.path());
+        accessPolicy.authorize(safeRequest.accessToken(), "store_document_file");
+        Path path = importPolicy.requireAllowed(validatePath(safeRequest.path()));
         String mediaType = resolveMediaType(safeRequest.mediaType());
+        return storeValidatedPath(path, mediaType);
+    }
+
+    StoredDocumentMetadata storeGeneratedDocumentFile(Path generatedPath, String mediaType) {
+        Path path = validatePath(Objects.requireNonNull(generatedPath, "generatedPath must not be null").toString());
+        return storeValidatedPath(path, resolveMediaType(mediaType));
+    }
+
+    private StoredDocumentMetadata storeValidatedPath(Path path, String mediaType) {
         byte[] content = readContent(path);
         validateByteSize(content.length);
         if (PDF_MEDIA_TYPE.equals(mediaType)) {
@@ -60,7 +90,8 @@ public class DocumentStorageService {
     }
 
     @Transactional(readOnly = true)
-    public StoredDocumentMetadata getDocumentMetadata(UUID documentId) {
+    public StoredDocumentMetadata getDocumentMetadata(UUID documentId, String accessToken) {
+        accessPolicy.authorize(accessToken, "get_document_metadata");
         return documentRepository.findFileMetadataById(validateDocumentId(documentId))
                 .orElseThrow(() -> notFound(documentId));
     }
@@ -68,6 +99,7 @@ public class DocumentStorageService {
     @Transactional
     public StoredPdfTextExtractionResult extractStoredPdfText(ExtractStoredPdfTextRequest request) {
         ExtractStoredPdfTextRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
+        accessPolicy.authorize(safeRequest.accessToken(), "extract_stored_pdf_text");
         UUID documentId = validateDocumentId(safeRequest.documentId());
         StoredDocumentFile file = documentRepository.findFileContentById(documentId)
                 .orElseThrow(() -> notFound(documentId));
@@ -234,10 +266,22 @@ public class DocumentStorageService {
         );
     }
 
-    public record StoreDocumentFileRequest(String path, String mediaType) {
+    public record StoreDocumentFileRequest(String path, String mediaType, String accessToken) {
+        public StoreDocumentFileRequest(String path, String mediaType) {
+            this(path, mediaType, null);
+        }
     }
 
-    public record ExtractStoredPdfTextRequest(UUID documentId, Integer maxCharacters, Boolean includePages, Boolean persistExtraction) {
+    public record ExtractStoredPdfTextRequest(
+            UUID documentId,
+            Integer maxCharacters,
+            Boolean includePages,
+            Boolean persistExtraction,
+            String accessToken
+    ) {
+        public ExtractStoredPdfTextRequest(UUID documentId, Integer maxCharacters, Boolean includePages, Boolean persistExtraction) {
+            this(documentId, maxCharacters, includePages, persistExtraction, null);
+        }
     }
 
     public record StoredPdfTextExtractionResult(

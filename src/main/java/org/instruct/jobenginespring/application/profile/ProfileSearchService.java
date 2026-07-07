@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
+import org.instruct.jobenginespring.application.security.McpAccessPolicy;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -42,10 +43,17 @@ public class ProfileSearchService {
 
     @NonNull
     private final ProfileRepository profileRepository;
+    @NonNull
+    private final McpAccessPolicy accessPolicy;
+
+    ProfileSearchService(ProfileRepository profileRepository) {
+        this(profileRepository, McpAccessPolicy.permitAllForTests());
+    }
 
     @Transactional(readOnly = true)
     public ProfileSearchResult searchProfiles(ProfileSearchRequest request) {
         ProfileSearchRequest safeRequest = validate(request);
+        accessPolicy.authorize(safeRequest.accessToken(), "search_profiles");
         List<String> queryTokens = tokens(safeRequest.query());
         List<ProfileSearchMatch> matches = profileRepository.listProfiles().stream()
                 .map(UserProfile::id)
@@ -76,7 +84,7 @@ public class ProfileSearchService {
         if (limit < 1 || limit > MAX_LIMIT) {
             throw validation("limit", "must be between 1 and " + MAX_LIMIT);
         }
-        return new ProfileSearchRequest(request.query().strip(), limit);
+        return new ProfileSearchRequest(request.query().strip(), limit, request.accessToken());
     }
 
     private static ProfileSearchMatch match(ProfileAggregate aggregate, List<String> queryTokens) {
@@ -209,7 +217,10 @@ public class ProfileSearchService {
         );
     }
 
-    public record ProfileSearchRequest(String query, Integer limit) {
+    public record ProfileSearchRequest(String query, Integer limit, String accessToken) {
+        public ProfileSearchRequest(String query, Integer limit) {
+            this(query, limit, null);
+        }
     }
 
     public record ProfileSearchResult(

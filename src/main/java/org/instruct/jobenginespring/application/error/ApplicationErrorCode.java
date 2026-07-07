@@ -3,6 +3,7 @@ package org.instruct.jobenginespring.application.error;
 /** Stable, protocol-neutral application error codes for adapters to expose safely. */
 public enum ApplicationErrorCode {
     VALIDATION_ERROR("validation_error", "Request validation failed"),
+    AUTHORIZATION_ERROR("authorization_error", "Request is not authorized"),
     NOT_FOUND("not_found", "Requested resource was not found"),
     INTERNAL_ERROR("internal_error", "Unexpected application error");
 

@@ -1,6 +1,5 @@
 package org.instruct.jobenginespring.application.document;
 
-import org.instruct.jobenginespring.application.document.DocumentStorageService.StoreDocumentFileRequest;
 import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratePdfFileRequest;
 import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratedPdfFileResult;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
@@ -69,10 +68,10 @@ public class ProfileResumePdfGenerationWorkflow {
                 safeCommand.title(),
                 safeCommand.body()
         ));
-        StoredDocumentMetadata document = documentStorageService.storeDocumentFile(new StoreDocumentFileRequest(
-                generatedFile.path(),
+        StoredDocumentMetadata document = documentStorageService.storeGeneratedDocumentFile(
+                Path.of(generatedFile.path()),
                 DocumentStorageService.PDF_MEDIA_TYPE
-        ));
+        );
         Instant now = clock.instant();
         ProfileResumeDocument savedLink = profileResumeDocumentRepository.save(new ProfileResumeDocument(
                 existingLink.map(ProfileResumeDocument::id).orElseGet(UUID::randomUUID),
