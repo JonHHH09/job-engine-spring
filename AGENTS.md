@@ -54,7 +54,7 @@ Use Conventional Commits, matching existing history examples such as
 Pull requests should summarize the behavior change, call out database
 migrations or configuration changes, and include the exact verification command
 and result. GitHub Actions runs fast unit tests on pull requests. Trusted pushes
-to `development`/`main` and manual CI runs add Docker-backed integration tests
+to `development`/`master` and manual CI runs add Docker-backed integration tests
 and a containerized MCP STDIO smoke test. Tag releases verify and publish one
 jar artifact, then build the release image from that same verified jar.
 
