@@ -80,12 +80,14 @@ Initial MCP tool surface should be small and verifiable:
 16. `list_jobs`
 17. `search_jobs`
 18. `get_job`
-19. `add_job_from_text`
-20. `add_job_from_link`
-21. `analyze_job_link`
-22. `add_job_from_analysis`
-23. `get_match_report`
-24. `run_pipeline_dry_run` only after the storage/CLI boundary is explicit
+19. `update_job`
+20. `delete_job`
+21. `add_job_from_text`
+22. `add_job_from_link`
+23. `analyze_job_link`
+24. `add_job_from_analysis`
+25. `get_match_report`
+26. `run_pipeline_dry_run` only after the storage/CLI boundary is explicit
 
 ## Dependency Baseline
 
@@ -123,8 +125,12 @@ Keep `src/main/resources/application.yaml` safe and environment-driven.
 
 - Never hardcode real database credentials, API keys, personal data, resume content, or private file paths.
 - Use placeholders such as `${JOB_ENGINE_POSTGRES_DSN}`, `${DB_USER}`, `${DB_PASS}`, and documented defaults.
+- Do not hardcode paths in configuration. Use environment placeholders, project-relative safe defaults, generated runtime directories, or documented caller-supplied settings instead of machine-local absolute paths.
 - Do not print secrets in logs, tests, docs, or chat summaries.
 - Prefer aggregate counts and IDs over raw resume/application content.
+- MCP is local-only by design: use STDIO subprocess transport, keep `spring.main.web-application-type=none`, do not add WebMVC/WebFlux MCP transport unless the architecture is intentionally changed, and do not pass per-call MCP access tokens through tool schemas. `McpLocalOnlyStartupGuard` must fail startup if the server is not configured as local STDIO/no-web.
+- Local user-supplied file imports are constrained by `job-engine.document.import-root` (default `tmp/imports`); internally generated PDFs may be stored through the generated-document path without widening that import root.
+- Job URL fetching is SSRF-hardened: reject local/private/metadata/userinfo targets before send, do not follow redirects, and keep ordinary DNS hostname access behind explicit allow-list configuration.
 
 Example MCP configuration shape, to be adapted only after verifying the selected transport:
 
@@ -134,6 +140,7 @@ spring:
     name: job-engine-spring
   main:
     banner-mode: off
+    web-application-type: none
   ai:
     mcp:
       server:
@@ -151,7 +158,7 @@ logging:
 
 For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not polluted.
 
-    Local STDIO MCP deployment uses the packaged Spring Boot jar as a client-owned subprocess, not an always-on HTTP daemon. Build and verify the jar with `./scripts/rebuild-local-mcp-jar.sh`; the script runs unit tests, packages `target/job-engine-spring-0.0.1-SNAPSHOT.jar`, and runs `hermes mcp test job-engine-spring` when the Hermes CLI is available. Rebuilding the jar only updates the file on disk; an already-running Hermes MCP connection keeps using the old Java process until `/reload-mcp` or a Hermes restart reconnects. If tool names, argument schemas, prompts, or resources changed, start a fresh Hermes session with `/reset` after reloading so the agent context receives the new tool schema.
+    Local STDIO MCP deployment uses the packaged Spring Boot jar as a client-owned subprocess, not an always-on HTTP daemon. Build and verify the jar with `./scripts/rebuild-local-mcp-jar.sh`; the script runs unit tests, packages `target/job-engine-spring-0.0.1-SNAPSHOT.jar`, and runs `hermes mcp test job-engine-spring` when the Hermes CLI is available. `scripts/restart-local-mcp-server.sh` is worth keeping as a local maintenance helper because it stops stale matching jar subprocesses, rebuilds without recursive smoke tests, and can foreground the STDIO server; it must remain local-only and must not grow into an HTTP daemon wrapper. Rebuilding the jar only updates the file on disk; an already-running Hermes MCP connection keeps using the old Java process until `/reload-mcp` or a Hermes restart reconnects. If tool names, argument schemas, prompts, or resources changed, start a fresh Hermes session with `/reset` after reloading so the agent context receives the new tool schema.
 
 If using HTTP transport with WebMVC/WebFlux, set the appropriate `spring.ai.mcp.server.protocol` value after confirming the selected starter. Prefer `STREAMABLE` over deprecated SSE for Spring AI 2.0+.
 
@@ -249,7 +256,7 @@ As of the health/profile/document/job MCP slice:
 
 - Profile MCP CRUD/search tools, application-layer profile write validation/canonicalization, deterministic profile search, and a PostgreSQL JDBC adapter exist for normalized profile data.
 - PDF text extraction exists as a stateless MCP tool backed by Spring AI's PDF document reader; stored-document MCP tools can persist document bytes, return metadata, extract stored PDFs, optionally persist bounded extraction text, and generate/store one current resume PDF document link per profile/resume type for master and Canadian variants. Generated PDFs use white pages, compact single-column spacing, chrome header/footer bars with white right-aligned page numbers only, indented bullets, thin chrome-colored section separators, and page-boundary guards that keep section headings with following content and resume entry headings with their date/first-detail lines; Canadian resumes additionally use an inline contact/link header and a concise Canadian section ordering that currently omits projects and keeps education visible.
-- Job insertion now uses Flyway-managed `job_schema` tables: `jobs` for canonical job fields and fingerprints, `job_skills` for normalized required skills, `job_text_ingestions` for pasted-text source hashes, `job_link_ingestions` for normalized URL provenance, and `job_analysis_runs` for persisted structured Hermes URL-analysis responses. `JobMcpAdapter` exposes `list_jobs`, `search_jobs`, `get_job`, `add_job_from_text`, `add_job_from_link`, `analyze_job_link`, and `add_job_from_analysis`; `JobService` owns normalized job validation, conservative field extraction, idempotency checks, deterministic search scoring, and blocked/security-check fetch rejection so URL-only false data such as Indeed/Cloudflare JavaScript verification pages cannot create normalized jobs, while `JobAnalysisService` stores Hermes analysis responses first and only creates/reuses jobs by reading the stored analysis row.
+- Job insertion now uses Flyway-managed `job_schema` tables: `jobs` for canonical job fields and fingerprints, `job_skills` for normalized required skills, `job_text_ingestions` for pasted-text source hashes, `job_link_ingestions` for normalized URL provenance, and `job_analysis_runs` for persisted structured Hermes URL-analysis responses. `JobMcpAdapter` exposes `list_jobs`, `search_jobs`, `get_job`, `update_job`, `delete_job`, `add_job_from_text`, `add_job_from_link`, `analyze_job_link`, and `add_job_from_analysis`; `JobService` owns normalized job validation, conservative field extraction, idempotency checks, deterministic search scoring, partial update/delete semantics, and blocked/security-check fetch rejection so URL-only false data such as Indeed/Cloudflare JavaScript verification pages cannot create normalized jobs, while `JobAnalysisService` stores Hermes analysis responses first and only creates/reuses jobs by reading the stored analysis row.
 - Health is exposed as a sanitized MCP tool backed by `DatabaseHealthService` and `PostgresDatabaseHealthPort`.
 - A minimal README documents the current MCP tool surface, configuration rules, validation contract, and verification commands.
 - The default app startup requires a PostgreSQL role matching the configured `JOB_ENGINE_POSTGRES_USER` placeholder. Local verification succeeded with endpoint readiness and a valid local role, but the default `postgres` role may not exist on every machine.

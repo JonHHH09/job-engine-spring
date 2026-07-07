@@ -25,6 +25,8 @@ The current verified MCP surface is intentionally small:
 - `list_jobs` — lists stored job postings without returning source ingestion raw text.
 - `search_jobs` — searches stored jobs by title, company, location, description, experience requirement, seniority, employment type, and required skills.
 - `get_job` — returns a stored job aggregate by UUID, including normalized skills and insertion provenance.
+- `update_job` — partially updates a stored job; omitted fields preserve current values, while a provided skills list replaces existing skills.
+- `delete_job` — hard-deletes a stored job by UUID.
 - `add_job_from_text` — inserts a job from pasted text plus optional structured fields; source text is hashed for idempotency and is not stored raw in the method-specific table.
 - `add_job_from_link` — inserts a job from a URL by fetching page content and combining extracted page text with optional structured fields. If the page fetch is blocked, returns HTTP 4xx/5xx, or resolves to bot/security-check content such as Indeed/Cloudflare JavaScript verification, the tool rejects the URL-only insertion instead of creating a false job; paste the real job description or provide a usable description to proceed.
 - `analyze_job_link` — fetches a job URL, calls the configured Hermes analysis provider, persists the structured Hermes response in `job_schema.job_analysis_runs`, and returns an analysis-run report without creating a job.
@@ -49,13 +51,23 @@ Configure the PostgreSQL connection through environment variables or safe local 
 
 ```yaml
 spring:
+  main:
+    web-application-type: none
   datasource:
     url: ${JOB_ENGINE_POSTGRES_URL:jdbc:postgresql://localhost:5432/job_engine}
     username: ${JOB_ENGINE_POSTGRES_USER:}
     password: ${JOB_ENGINE_POSTGRES_PASSWORD:}
+job-engine:
+  document:
+    import-root: ${JOB_ENGINE_DOCUMENT_IMPORT_ROOT:tmp/imports}
+  job:
+    link-fetcher:
+      allowed-hosts: ${JOB_ENGINE_JOB_ALLOWED_HOSTS:}
 ```
 
-Never commit real credentials, private resume data, API keys, or production connection details.
+Never commit real credentials, private resume data, API keys, production connection details, or machine-local absolute paths. Configuration paths must not be hardcoded; use environment placeholders, documented safe relative defaults, or caller-supplied runtime settings.
+
+MCP is local-only. The server is configured as an STDIO subprocess (`spring.ai.mcp.server.stdio=true`) with `spring.main.web-application-type=none`, and `McpLocalOnlyStartupGuard` fails startup if either local-only invariant is changed. Tool schemas do not carry per-call access tokens; the security boundary is the absence of any network listener plus the local OS/process boundary of the MCP client that launches the jar. Local file imports for PDF extraction/storage are restricted to `job-engine.document.import-root` by default; generated resume PDFs bypass that import-root check because they are produced internally under `tmp/generated-pdfs/`. Job URL fetching is SSRF-hardened: redirects are not followed, local/private/metadata/userinfo targets are rejected before send, and ordinary DNS hostnames require explicit allow-listing.
 
 For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not polluted.
 
@@ -76,6 +88,8 @@ RUN_TESTS=false ./scripts/rebuild-local-mcp-jar.sh
 ```
 
 Rebuilding the jar updates the file on disk only. Any already-running Hermes MCP connection keeps using the old Java process until it reconnects. After rebuilding, run `/reload-mcp` in the active Hermes session. If tool names, argument schemas, prompts, or resources changed, start a fresh Hermes session with `/reset` after reloading so the tool schema in the agent context is current.
+
+`scripts/restart-local-mcp-server.sh` is kept as a local maintenance helper because it stops stale matching local jar subprocesses, rebuilds the jar without recursively running the MCP smoke test, and optionally runs the server in foreground STDIO mode. It remains local-only and does not expose an HTTP daemon.
 
 ## Document storage and extraction contract
 
@@ -139,7 +153,7 @@ Job storage uses the Flyway-managed `job_schema` schema. Canonical job fields li
 - `job_schema.job_link_ingestions` for URL insertion metadata, keyed by normalized URL and storing fetch status/title provenance.
 - `job_schema.job_analysis_runs` for URL-analysis provenance: bounded structured input, persisted structured Hermes response, validation status/errors, response hashes, and the normalized job ID once an analysis is accepted.
 
-`add_job_from_text` and `add_job_from_link` are idempotent. They first check method-specific uniqueness (`input_text_hash` or `normalized_url`) and then the canonical job fingerprint over title/company/location/description. Duplicate submissions return `reused_existing_job`; new submissions return `created_job`. The application layer derives a conservative title, required skills, and experience requirement from the supplied/fetched text when explicit fields are absent, but callers can override the structured fields when better data is available.
+`add_job_from_text` and `add_job_from_link` are idempotent. They first check method-specific uniqueness (`input_text_hash` or `normalized_url`) and then the canonical job fingerprint over title/company/location/description. Duplicate submissions return `reused_existing_job`; new submissions return `created_job`. The application layer derives a conservative title, required skills, and experience requirement from the supplied/fetched text when explicit fields are absent, but callers can override the structured fields when better data is available. `update_job` preserves omitted fields, recalculates the canonical fingerprint when title/company/location/description change, replaces skills only when a skills list is provided, and preserves insertion provenance. `delete_job` removes the canonical row and cascades owned skill/provenance rows through the Flyway-managed schema.
 
 The staged Hermes URL flow is split intentionally. `analyze_job_link` validates/normalizes a URL, fetches bounded page content, calls the configured `JobPostingAnalysisPort`, stores the structured Hermes response in `job_schema.job_analysis_runs`, and returns an analysis-run report without writing a normalized job. `add_job_from_analysis` then loads that stored analysis row, validates/canonicalizes the persisted response in Java, rejects weak URL-only or JavaScript-shell analyses, and only then creates or reuses a normalized job. Until a live Hermes CLI adapter is configured, the default analysis provider records a safe failed analysis instead of pretending enrichment succeeded.
 

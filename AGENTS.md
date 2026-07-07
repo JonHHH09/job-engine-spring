@@ -56,4 +56,7 @@ and result.
 
 Do not commit secrets, local credentials, or environment-specific connection
 strings. Keep schema changes in Flyway migrations and make local configuration
-overrides explicit in ignored environment files or runtime settings.
+overrides explicit in ignored environment files or runtime settings. Do not
+hardcode paths in configuration; use environment placeholders, project-relative
+safe defaults, generated runtime directories, or documented caller-supplied
+settings instead of machine-local absolute paths.
