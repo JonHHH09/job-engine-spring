@@ -225,7 +225,7 @@ public class ProfileSearchService {
 
     public record ProfileSearchMatch(UserProfile profile, int score, List<String> matchedFields) {
         public ProfileSearchMatch {
-            profile = Objects.requireNonNull(profile, "profile must not be null");
+            Objects.requireNonNull(profile, "profile must not be null");
             matchedFields = matchedFields == null ? List.of() : List.copyOf(matchedFields);
         }
     }

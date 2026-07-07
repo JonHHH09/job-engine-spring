@@ -16,11 +16,11 @@ public record UserProfile(
         List<Double> embedding
 ) {
     public UserProfile {
-        id = ProfileRecordSupport.requireId(id, "id");
-        fullName = ProfileRecordSupport.requireText(fullName, "fullName");
-        email = ProfileRecordSupport.requireText(email, "email");
-        createdAt = ProfileRecordSupport.requireInstant(createdAt, "createdAt");
-        updatedAt = ProfileRecordSupport.requireInstant(updatedAt, "updatedAt");
+        ProfileRecordSupport.requireId(id, "id");
+        ProfileRecordSupport.requireText(fullName, "fullName");
+        ProfileRecordSupport.requireText(email, "email");
+        ProfileRecordSupport.requireInstant(createdAt, "createdAt");
+        ProfileRecordSupport.requireInstant(updatedAt, "updatedAt");
         embedding = ProfileRecordSupport.immutableCopy(embedding);
     }
 

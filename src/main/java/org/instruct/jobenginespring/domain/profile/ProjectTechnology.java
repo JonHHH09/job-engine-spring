@@ -13,12 +13,12 @@ public record ProjectTechnology(
         Instant createdAt
 ) {
     public ProjectTechnology {
-        id = ProfileRecordSupport.requireId(id, "id");
-        projectId = ProfileRecordSupport.requireId(projectId, "projectId");
-        technology = ProfileRecordSupport.requireText(technology, "technology");
+        ProfileRecordSupport.requireId(id, "id");
+        ProfileRecordSupport.requireId(projectId, "projectId");
+        ProfileRecordSupport.requireText(technology, "technology");
         normalizedTechnology = normalizedTechnology == null
                 ? ProfileRecordSupport.normalizeRequiredText(technology, "normalizedTechnology")
                 : ProfileRecordSupport.normalizeRequiredText(normalizedTechnology, "normalizedTechnology");
-        createdAt = ProfileRecordSupport.requireInstant(createdAt, "createdAt");
+        ProfileRecordSupport.requireInstant(createdAt, "createdAt");
     }
 }

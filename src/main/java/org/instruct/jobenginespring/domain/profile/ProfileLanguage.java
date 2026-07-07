@@ -14,12 +14,12 @@ public record ProfileLanguage(
         Instant createdAt
 ) {
     public ProfileLanguage {
-        id = ProfileRecordSupport.requireId(id, "id");
-        profileId = ProfileRecordSupport.requireId(profileId, "profileId");
-        language = ProfileRecordSupport.requireText(language, "language");
+        ProfileRecordSupport.requireId(id, "id");
+        ProfileRecordSupport.requireId(profileId, "profileId");
+        ProfileRecordSupport.requireText(language, "language");
         normalizedLanguage = normalizedLanguage == null
                 ? ProfileRecordSupport.normalizeRequiredText(language, "normalizedLanguage")
                 : ProfileRecordSupport.normalizeRequiredText(normalizedLanguage, "normalizedLanguage");
-        createdAt = ProfileRecordSupport.requireInstant(createdAt, "createdAt");
+        ProfileRecordSupport.requireInstant(createdAt, "createdAt");
     }
 }
