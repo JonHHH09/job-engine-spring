@@ -160,6 +160,8 @@ For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not po
 
     Local STDIO MCP deployment uses the packaged Spring Boot jar as a client-owned subprocess, not an always-on HTTP daemon. Build and verify the jar with `./scripts/rebuild-local-mcp-jar.sh`; the script runs unit tests, packages `target/job-engine-spring-0.0.1-SNAPSHOT.jar`, and runs `hermes mcp test job-engine-spring` when the Hermes CLI is available. `scripts/restart-local-mcp-server.sh` is worth keeping as a local maintenance helper because it stops stale matching jar subprocesses, rebuilds without recursive smoke tests, and can foreground the STDIO server; it must remain local-only and must not grow into an HTTP daemon wrapper. Rebuilding the jar only updates the file on disk; an already-running Hermes MCP connection keeps using the old Java process until `/reload-mcp` or a Hermes restart reconnects. If tool names, argument schemas, prompts, or resources changed, start a fresh Hermes session with `/reset` after reloading so the agent context receives the new tool schema.
 
+    Local containerized MCP deployment keeps the same STDIO boundary. `compose.yaml` provides PostgreSQL without publishing host ports, `Dockerfile` builds the Spring Boot jar into a non-root runtime image for local/dev container use, and `scripts/run-local-mcp-container.sh` starts PostgreSQL, attaches the MCP container to the Compose network, and reserves stdout for JSON-RPC. Use `docker compose build mcp` after code changes and configure Hermes to run `./scripts/run-local-mcp-container.sh` when the local MCP server should run in Docker. `scripts/smoke-mcp-stdio.py` is the portable CI/local smoke test for `initialize` plus `tools/list`; it should pass against both the jar launch path and the container launch path. Release builds use `Dockerfile.release` to copy the already verified Maven jar into the image so the published jar and container image share the same artifact. Do not publish MCP or database ports unless the local-only architecture is intentionally changed.
+
 If using HTTP transport with WebMVC/WebFlux, set the appropriate `spring.ai.mcp.server.protocol` value after confirming the selected starter. Prefer `STREAMABLE` over deprecated SSE for Spring AI 2.0+.
 
 ## Storage Boundary
@@ -217,6 +219,8 @@ Expected verification commands when terminal verification is necessary:
 ```bash
 ./mvnw test
 ./scripts/rebuild-local-mcp-jar.sh
+docker compose build mcp
+python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh
 ./mvnw -Pintegration-tests verify
 ./mvnw spring-boot:run
 ```
@@ -225,6 +229,7 @@ Before claiming code changes are done:
 
 - Run the narrowest relevant test first.
 - Run a broader Maven test/build when dependencies, wiring, or application startup changes. Docker-backed Testcontainers integration tests and the JaCoCo coverage gate are explicit through `./mvnw -Pintegration-tests verify`; plain `./mvnw test` is the Docker-free unit test path.
+- For container or CI/CD changes, validate `docker compose config`, build the MCP image, and run the STDIO smoke test before claiming the container path works.
 - Inspect `git status --short`.
 - Do not commit unless explicitly asked.
 - Remove generated junk or temporary artifacts.

@@ -91,6 +91,38 @@ Rebuilding the jar updates the file on disk only. Any already-running Hermes MCP
 
 `scripts/restart-local-mcp-server.sh` is kept as a local maintenance helper because it stops stale matching local jar subprocesses, rebuilds the jar without recursively running the MCP smoke test, and optionally runs the server in foreground STDIO mode. It remains local-only and does not expose an HTTP daemon.
 
+## Local containerized MCP deployment
+
+The local container deployment keeps the same STDIO MCP contract: the MCP server still has no published HTTP port, and the MCP client talks to the container through Docker stdin/stdout. `compose.yaml` starts a private PostgreSQL service with no host port binding, and `scripts/run-local-mcp-container.sh` starts the database, joins the MCP container to the Compose network, and then execs the MCP server container with clean stdout for JSON-RPC.
+
+Build the local image when application code changes:
+
+```bash
+docker compose build mcp
+```
+
+Run the containerized MCP server over STDIO:
+
+```bash
+./scripts/run-local-mcp-container.sh
+```
+
+For Hermes, configure the MCP command to invoke the script above instead of `java -jar ...`. The script writes Docker lifecycle output to stderr and reserves stdout for the MCP JSON-RPC transport. Use `MCP_CONTAINER_BUILD=always ./scripts/run-local-mcp-container.sh` when you want the script to rebuild the image before launching, or keep the default image-missing-only behavior for faster MCP client startup.
+
+Host-visible local file imports are mounted from `tmp/imports/` into the container as read-only files, and generated PDFs are mounted through `tmp/generated-pdfs/`. Do not publish the MCP container or database ports unless the local-only architecture is intentionally changed.
+
+Smoke-test the containerized MCP transport with:
+
+```bash
+MCP_CONTAINER_BUILD=always python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh
+```
+
+Stop the local database and remove its development volume when you intentionally want a clean local container database:
+
+```bash
+docker compose down -v
+```
+
 ## Document storage and extraction contract
 
 `extract_pdf_text` accepts a local PDF path and returns extracted text with optional page-level text. PDF content is treated as untrusted user data: the server returns the extracted content but does not persist it, execute it, or follow instructions embedded in the document. Invalid paths, non-PDF files, unreadable files, and extraction failures are returned as sanitized validation errors.
@@ -181,3 +213,5 @@ Run Docker-backed PostgreSQL integration tests and the JaCoCo coverage gate expl
 ```bash
 ./mvnw -Pintegration-tests verify
 ```
+
+The GitHub Actions pipeline mirrors this split: fast unit tests run on pull requests and pushes, while trusted pushes to `development`/`main` plus manual CI runs also run the Docker-backed integration job (`./mvnw -Pintegration-tests verify`) and the container smoke job that verifies the real STDIO `tools/list` contract through `scripts/smoke-mcp-stdio.py`. Tag releases run full verification, publish the verified jar, and build the release container image from that same jar through `Dockerfile.release`; manual release workflow runs are dry runs and do not publish artifacts.

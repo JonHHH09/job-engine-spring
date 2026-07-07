@@ -18,6 +18,9 @@ business concepts, `application` holds use cases and orchestration, and
 - `./mvnw test` runs the unit test suite through Surefire.
 - `./mvnw verify -Pintegration-tests` runs integration tests through Failsafe.
 - `./mvnw spring-boot:run` starts the application locally.
+- `docker compose build mcp` builds the local container image for the STDIO MCP server.
+- `./scripts/run-local-mcp-container.sh` runs the local MCP server in a Docker container over stdin/stdout, with PostgreSQL started by Compose and no published MCP port.
+- `python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh` verifies the containerized MCP `initialize` + `tools/list` STDIO contract.
 
 Surefire excludes `*IntegrationTests`; the integration profile enables Failsafe
 and includes those tests.
@@ -50,7 +53,10 @@ Use Conventional Commits, matching existing history examples such as
 
 Pull requests should summarize the behavior change, call out database
 migrations or configuration changes, and include the exact verification command
-and result.
+and result. GitHub Actions runs fast unit tests on pull requests. Trusted pushes
+to `development`/`main` and manual CI runs add Docker-backed integration tests
+and a containerized MCP STDIO smoke test. Tag releases verify and publish one
+jar artifact, then build the release image from that same verified jar.
 
 ## Security & Configuration Tips
 
@@ -60,3 +66,8 @@ overrides explicit in ignored environment files or runtime settings. Do not
 hardcode paths in configuration; use environment placeholders, project-relative
 safe defaults, generated runtime directories, or documented caller-supplied
 settings instead of machine-local absolute paths.
+
+The containerized MCP runtime must remain local-only: do not publish the MCP
+container or PostgreSQL ports unless the architecture is intentionally changed.
+Keep Docker lifecycle output off stdout for MCP launch scripts because stdout is
+reserved for JSON-RPC messages.
