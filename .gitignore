@@ -18,6 +18,8 @@ target/
 *.iws
 *.iml
 *.ipr
+__pycache__/
+*.py[cod]
 
 ### NetBeans ###
 /nbproject/private/

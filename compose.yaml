@@ -1,0 +1,37 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${JOB_ENGINE_POSTGRES_DB:-job_engine}
+      POSTGRES_USER: ${JOB_ENGINE_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${JOB_ENGINE_POSTGRES_PASSWORD:-postgres}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql
+
+  mcp:
+    image: ${MCP_IMAGE:-job-engine-spring:local}
+    build:
+      context: .
+    stdin_open: true
+    tty: false
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+      JOB_ENGINE_POSTGRES_URL: jdbc:postgresql://postgres:5432/${JOB_ENGINE_POSTGRES_DB:-job_engine}
+      JOB_ENGINE_POSTGRES_USER: ${JOB_ENGINE_POSTGRES_USER:-postgres}
+      JOB_ENGINE_POSTGRES_PASSWORD: ${JOB_ENGINE_POSTGRES_PASSWORD:-postgres}
+      JOB_ENGINE_DOCUMENT_IMPORT_ROOT: /app/tmp/imports
+      JOB_ENGINE_JOB_ALLOWED_HOSTS: ${JOB_ENGINE_JOB_ALLOWED_HOSTS:-}
+    volumes:
+      - ./tmp/imports:/app/tmp/imports:ro
+      - ./tmp/generated-pdfs:/app/tmp/generated-pdfs
+
+volumes:
+  postgres-data:
