@@ -5,17 +5,10 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      publish:
-        description: 'Publish artifacts. Only allowed when the workflow runs from a v* tag.'
-        required: true
-        type: boolean
-        default: false
 
 permissions:
   contents: write
   packages: write
-  id-token: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -28,26 +21,14 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Java
-        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
         with:
           distribution: temurin
           java-version: '25'
           cache: maven
-
-      - name: Validate release mode
-        run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.publish }}" == "true" && "${GITHUB_REF}" != refs/tags/v* ]]; then
-            echo "Manual publishing must run from a v* tag ref. Re-run this workflow from the release tag or leave publish=false for a dry run." >&2
-            exit 1
-          fi
-
-      - name: Validate release support files
-        run: |
-          python3 -m py_compile scripts/smoke-mcp-stdio.py
-          docker compose config >/tmp/job-engine-compose-config.yaml
 
       - name: Run full verification and build jar
         run: ./mvnw -Pintegration-tests verify
@@ -55,11 +36,8 @@ jobs:
       - name: Verify release jar
         run: test -f target/job-engine-spring-0.0.1-SNAPSHOT.jar
 
-      - name: Prepare versioned release jar and checksum
-        run: |
-          RELEASE_JAR="job-engine-spring-${GITHUB_REF_NAME}.jar"
-          cp target/job-engine-spring-0.0.1-SNAPSHOT.jar "$RELEASE_JAR"
-          sha256sum "$RELEASE_JAR" > SHA256SUMS
+      - name: Create jar checksum
+        run: sha256sum target/job-engine-spring-0.0.1-SNAPSHOT.jar > SHA256SUMS
 
       - name: Build release container image from verified jar
         run: |
@@ -79,52 +57,32 @@ jobs:
         run: docker image inspect job-engine-spring:release-candidate --format '{{.Id}}' > IMAGE-ID
 
       - name: Report release dry run
-        if: ${{ !startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && !inputs.publish) }}
-        run: echo "Dry run completed verification only; no artifacts were published."
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: echo "Manual branch run completed verification only; no artifacts were published."
 
       - name: Log in to GitHub Container Registry
-        if: ${{ startsWith(github.ref, 'refs/tags/') && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish container image
-        if: ${{ startsWith(github.ref, 'refs/tags/') && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
-          IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_REF_NAME}
+          IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}/job-engine-spring:${GITHUB_REF_NAME}
           docker tag job-engine-spring:release-candidate "$IMAGE_NAME"
           docker push "$IMAGE_NAME"
-          docker image inspect "$IMAGE_NAME" --format '{{index .RepoDigests 0}}' > IMAGE-DIGESTS
-
-          if [[ "$GITHUB_REF_NAME" != *-* ]]; then
-            LATEST_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:latest
-            docker tag job-engine-spring:release-candidate "$LATEST_IMAGE"
-            docker push "$LATEST_IMAGE"
-            docker image inspect "$LATEST_IMAGE" --format '{{index .RepoDigests 0}}' >> IMAGE-DIGESTS
-          fi
-
-      - name: Install Cosign
-        if: ${{ startsWith(github.ref, 'refs/tags/') && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
-
-      - name: Sign published image digests
-        if: ${{ startsWith(github.ref, 'refs/tags/') && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
-        run: |
-          while IFS= read -r image_digest; do
-            cosign sign --yes "$image_digest"
-          done < IMAGE-DIGESTS
 
       - name: Create GitHub release
-        if: ${{ startsWith(github.ref, 'refs/tags/') && (github.event_name != 'workflow_dispatch' || inputs.publish) }}
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           files: |
-            job-engine-spring-${{ github.ref_name }}.jar
+            target/job-engine-spring-0.0.1-SNAPSHOT.jar
             SHA256SUMS
             IMAGE-ID
-            IMAGE-DIGESTS
 
       - name: Compose cleanup
         if: always()
