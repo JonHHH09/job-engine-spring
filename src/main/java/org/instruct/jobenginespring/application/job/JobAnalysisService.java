@@ -1,7 +1,6 @@
 package org.instruct.jobenginespring.application.job;
 
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
@@ -34,7 +33,6 @@ import java.util.Objects;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class JobAnalysisService {
 
     private static final String SOURCE_TYPE_LINK = "link";
@@ -58,6 +56,19 @@ public class JobAnalysisService {
     @NonNull
     private final JobService jobService;
     private Clock clock = Clock.systemUTC();
+
+    @Autowired
+    public JobAnalysisService(
+            JobAnalysisRunRepository analysisRunRepository,
+            JobLinkContentFetcher linkContentFetcher,
+            JobPostingAnalysisPort analysisPort,
+            JobService jobService
+    ) {
+        this.analysisRunRepository = Objects.requireNonNull(analysisRunRepository, "analysisRunRepository must not be null");
+        this.linkContentFetcher = Objects.requireNonNull(linkContentFetcher, "linkContentFetcher must not be null");
+        this.analysisPort = Objects.requireNonNull(analysisPort, "analysisPort must not be null");
+        this.jobService = Objects.requireNonNull(jobService, "jobService must not be null");
+    }
 
     JobAnalysisService(
             JobAnalysisRunRepository analysisRunRepository,

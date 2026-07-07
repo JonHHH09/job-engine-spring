@@ -237,14 +237,14 @@ class ProfilePdfIngestionServiceTests {
         ProfilePdfSource source = new ProfilePdfSource(SOURCE_ID, PROFILE_ID, EXTRACTION_ID, "resume_pdf", NOW);
         sourceRepository.save(source);
 
-        assertEquals(source, service.getProfilePdfSource(PROFILE_ID, null));
+        assertEquals(source, service.getProfilePdfSource(PROFILE_ID));
     }
 
     @Test
     void reportsMissingProfilePdfSourceSafely() {
         ApplicationException exception = assertThrows(
                 ApplicationException.class,
-                () -> service.getProfilePdfSource(PROFILE_ID, null)
+                () -> service.getProfilePdfSource(PROFILE_ID)
         );
 
         assertEquals("not_found", exception.errorCode().code());

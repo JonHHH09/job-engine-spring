@@ -185,6 +185,33 @@ class HttpJobLinkContentFetcherTests {
     }
 
     @Test
+    void constructorTreatsNullAndBlankAllowedHostsAsEmptyConfig() {
+        assertEquals(Set.of(), allowedHostsIn(new HttpJobLinkContentFetcher((String) null)));
+        assertEquals(Set.of(), allowedHostsIn(new HttpJobLinkContentFetcher("   ")));
+    }
+
+    @Test
+    void constructorParsesAllowedHostsByTrimmingLowercasingAndFilteringBlankEntries() {
+        HttpJobLinkContentFetcher fetcher = new HttpJobLinkContentFetcher(
+                " EXAMPLE.COM, ,\t,Jobs.Example.COM,, 93.184.216.34 "
+        );
+
+        assertEquals(Set.of("example.com", "jobs.example.com", "93.184.216.34"), allowedHostsIn(fetcher));
+    }
+
+    @Test
+    void fetchStillRejectsParsedAllowedHostnameBeforeSend() {
+        HttpJobLinkContentFetcher fetcher = new HttpJobLinkContentFetcher("example.test");
+
+        ApplicationException exception = assertThrows(
+                ApplicationException.class,
+                () -> fetcher.fetch("http://example.test/job")
+        );
+
+        assertEquals("job link fetch requires an IP literal so address policy is connection-bound", exception.details().get("reason"));
+    }
+
+    @Test
     void fetchRejectsRedirectToPrivateTargetWithoutFollowingIt() {
         StaticHttpClient client = StaticHttpClient.response(
                 302,
@@ -196,6 +223,17 @@ class HttpJobLinkContentFetcherTests {
 
         assertEquals("host resolves to a private or otherwise unsafe address", exception.details().get("reason"));
         assertEquals(1, client.sendCount.get());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Set<String> allowedHostsIn(HttpJobLinkContentFetcher fetcher) {
+        try {
+            java.lang.reflect.Field field = HttpJobLinkContentFetcher.class.getDeclaredField("allowedHosts");
+            field.setAccessible(true);
+            return (Set<String>) field.get(fetcher);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("allowedHosts field should be readable in tests", exception);
+        }
     }
 
     private abstract static class BaseHttpClient extends HttpClient {

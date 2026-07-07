@@ -34,8 +34,6 @@ class ProfileMcpAdapterTests {
 
     private static final UUID PROFILE_ID = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private static final Instant NOW = Instant.parse("2026-07-02T15:30:00Z");
-    private static final String ACCESS_TOKEN = "test-token";
-
     private final ProfileService profileService = mock(ProfileService.class);
     private final ProfileMcpAdapter adapter = new ProfileMcpAdapter(profileService);
 
@@ -78,9 +76,9 @@ class ProfileMcpAdapterTests {
     @Test
     void listProfilesToolDelegatesToService() {
         UserProfile profile = sampleProfile();
-        when(profileService.listProfiles(ACCESS_TOKEN)).thenReturn(List.of(profile));
+        when(profileService.listProfiles()).thenReturn(List.of(profile));
 
-        CallToolResult result = adapter.listProfiles(ACCESS_TOKEN);
+        CallToolResult result = adapter.listProfiles();
 
         assertFalse(result.isError());
         ProfileMcpAdapter.ListProfilesResult listResult = assertInstanceOf(
@@ -88,31 +86,31 @@ class ProfileMcpAdapterTests {
                 result.structuredContent()
         );
         assertEquals(List.of(profile), listResult.profiles());
-        verify(profileService).listProfiles(ACCESS_TOKEN);
+        verify(profileService).listProfiles();
     }
 
     @Test
     void getProfileToolReturnsExistingAggregate() {
         ProfileAggregate aggregate = sampleAggregate();
-        when(profileService.getProfile(PROFILE_ID, ACCESS_TOKEN)).thenReturn(Optional.of(aggregate));
+        when(profileService.getProfile(PROFILE_ID)).thenReturn(Optional.of(aggregate));
 
-        CallToolResult result = adapter.getProfile(PROFILE_ID, ACCESS_TOKEN);
+        CallToolResult result = adapter.getProfile(PROFILE_ID);
 
         assertSuccessfulContent(aggregate, result);
-        verify(profileService).getProfile(PROFILE_ID, ACCESS_TOKEN);
+        verify(profileService).getProfile(PROFILE_ID);
     }
 
     @Test
     void getProfileToolReturnsSanitizedNotFoundErrorWhenMissing() {
-        when(profileService.getProfile(PROFILE_ID, ACCESS_TOKEN)).thenReturn(Optional.empty());
+        when(profileService.getProfile(PROFILE_ID)).thenReturn(Optional.empty());
 
-        CallToolResult result = adapter.getProfile(PROFILE_ID, ACCESS_TOKEN);
+        CallToolResult result = adapter.getProfile(PROFILE_ID);
 
         ApplicationErrorResponse response = assertErrorResponse(result);
         assertEquals("not_found", response.code());
         assertEquals("Profile not found: " + PROFILE_ID, response.message());
         assertEquals(Map.of("resource", "profile", "profileId", PROFILE_ID.toString()), response.details());
-        verify(profileService).getProfile(PROFILE_ID, ACCESS_TOKEN);
+        verify(profileService).getProfile(PROFILE_ID);
     }
 
     @Test
@@ -141,9 +139,9 @@ class ProfileMcpAdapterTests {
 
     @Test
     void deleteProfileToolReturnsDeletedResult() {
-        when(profileService.deleteProfile(PROFILE_ID, ACCESS_TOKEN)).thenReturn(true);
+        when(profileService.deleteProfile(PROFILE_ID)).thenReturn(true);
 
-        CallToolResult result = adapter.deleteProfile(PROFILE_ID, ACCESS_TOKEN);
+        CallToolResult result = adapter.deleteProfile(PROFILE_ID);
 
         assertFalse(result.isError());
         ProfileMcpAdapter.DeleteProfileResult deleteResult = assertInstanceOf(
@@ -152,7 +150,7 @@ class ProfileMcpAdapterTests {
         );
         assertEquals(PROFILE_ID, deleteResult.profileId());
         assertTrue(deleteResult.deleted());
-        verify(profileService).deleteProfile(PROFILE_ID, ACCESS_TOKEN);
+        verify(profileService).deleteProfile(PROFILE_ID);
     }
 
     @Test
@@ -176,9 +174,9 @@ class ProfileMcpAdapterTests {
 
     @Test
     void toolErrorsDoNotExposeUnexpectedExceptionMessages() {
-        when(profileService.listProfiles(ACCESS_TOKEN)).thenThrow(new RuntimeException("sensitive database detail"));
+        when(profileService.listProfiles()).thenThrow(new RuntimeException("sensitive database detail"));
 
-        CallToolResult result = adapter.listProfiles(ACCESS_TOKEN);
+        CallToolResult result = adapter.listProfiles();
 
         ApplicationErrorResponse response = assertErrorResponse(result);
         assertEquals("internal_error", response.code());

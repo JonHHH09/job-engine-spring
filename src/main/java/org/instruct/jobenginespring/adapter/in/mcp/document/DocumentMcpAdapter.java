@@ -53,10 +53,9 @@ public class DocumentMcpAdapter {
             description = "Get stored document metadata by UUID without returning binary content."
     )
     public CallToolResult getDocumentMetadata(
-            @McpToolParam(required = true, description = "Stored document UUID") UUID documentId,
-            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
+            @McpToolParam(required = true, description = "Stored document UUID") UUID documentId
     ) {
-        return call(() -> documentStorageService.getDocumentMetadata(documentId, accessToken));
+        return call(() -> documentStorageService.getDocumentMetadata(documentId));
     }
 
     @McpTool(

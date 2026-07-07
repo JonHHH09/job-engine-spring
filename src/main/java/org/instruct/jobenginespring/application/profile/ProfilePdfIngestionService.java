@@ -1,7 +1,6 @@
 package org.instruct.jobenginespring.application.profile;
 
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.ExtractStoredPdfTextRequest;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.StoredPdfTextExtractionResult;
@@ -25,7 +24,6 @@ import java.util.Objects;
 import java.util.UUID;
 
 @Service
-@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class ProfilePdfIngestionService {
 
     private static final String SOURCE_TYPE = "resume_pdf";
@@ -41,6 +39,21 @@ public class ProfilePdfIngestionService {
     @NonNull
     private final ProfilePdfSourceRepository profilePdfSourceRepository;
     private Clock clock = Clock.systemUTC();
+
+    @Autowired
+    public ProfilePdfIngestionService(
+            DocumentStorageService documentStorageService,
+            ProfileTextExtractor profileTextExtractor,
+            ProfileService profileService,
+            ProfileIdentityMatcher profileIdentityMatcher,
+            ProfilePdfSourceRepository profilePdfSourceRepository
+    ) {
+        this.documentStorageService = Objects.requireNonNull(documentStorageService, "documentStorageService must not be null");
+        this.profileTextExtractor = Objects.requireNonNull(profileTextExtractor, "profileTextExtractor must not be null");
+        this.profileService = Objects.requireNonNull(profileService, "profileService must not be null");
+        this.profileIdentityMatcher = Objects.requireNonNull(profileIdentityMatcher, "profileIdentityMatcher must not be null");
+        this.profilePdfSourceRepository = Objects.requireNonNull(profilePdfSourceRepository, "profilePdfSourceRepository must not be null");
+    }
 
     ProfilePdfIngestionService(
             DocumentStorageService documentStorageService,
@@ -58,9 +71,8 @@ public class ProfilePdfIngestionService {
     public ProfilePdfIngestionResult ingestProfileFromStoredPdf(IngestProfileFromStoredPdfRequest request) {
         IngestProfileFromStoredPdfRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
         UUID documentId = Objects.requireNonNull(safeRequest.documentId(), "documentId must not be null");
-        profileService.authorizeAccess(safeRequest.accessToken(), "ingest_profile_from_stored_pdf");
         StoredPdfTextExtractionResult storedExtraction = documentStorageService.extractStoredPdfText(
-                new ExtractStoredPdfTextRequest(documentId, safeRequest.maxCharacters(), false, true, safeRequest.accessToken())
+                new ExtractStoredPdfTextRequest(documentId, safeRequest.maxCharacters(), false, true)
         );
         UUID extractionId = Objects.requireNonNull(storedExtraction.extractionId(), "extractionId must not be null");
 
@@ -72,9 +84,8 @@ public class ProfilePdfIngestionService {
     }
 
     @Transactional(readOnly = true)
-    public ProfilePdfSource getProfilePdfSource(UUID profileId, String accessToken) {
+    public ProfilePdfSource getProfilePdfSource(UUID profileId) {
         UUID safeProfileId = Objects.requireNonNull(profileId, "profileId must not be null");
-        profileService.authorizeAccess(accessToken, "get_profile_pdf_source");
         return profilePdfSourceRepository.findByProfileId(safeProfileId)
                 .orElseThrow(() -> new ApplicationException(
                         ApplicationErrorCode.NOT_FOUND,
@@ -117,11 +128,11 @@ public class ProfilePdfIngestionService {
             if (identityMatch != null) {
                 return duplicateCandidateResult(identityMatch, storedExtraction);
             }
-            profileAggregate = profileService.createProfile(profileWriteRequest.withAccessToken(request.accessToken()));
+            profileAggregate = profileService.createProfile(profileWriteRequest);
             createdProfile = true;
             status = IngestionStatus.CREATED_PROFILE;
         } else if (overwriteExisting) {
-            profileAggregate = profileService.updateProfile(existingProfileId, profileWriteRequest.withAccessToken(request.accessToken()));
+            profileAggregate = profileService.updateProfile(existingProfileId, profileWriteRequest);
             createdProfile = false;
             status = IngestionStatus.UPDATED_PROFILE;
         } else {
@@ -194,17 +205,8 @@ public class ProfilePdfIngestionService {
             UUID documentId,
             UUID existingProfileId,
             Boolean overwriteExistingProfile,
-            Integer maxCharacters,
-            String accessToken
+            Integer maxCharacters
     ) {
-        public IngestProfileFromStoredPdfRequest(
-                UUID documentId,
-                UUID existingProfileId,
-                Boolean overwriteExistingProfile,
-                Integer maxCharacters
-        ) {
-            this(documentId, existingProfileId, overwriteExistingProfile, maxCharacters, null);
-        }
     }
 
     public record ProfilePdfIngestionResult(

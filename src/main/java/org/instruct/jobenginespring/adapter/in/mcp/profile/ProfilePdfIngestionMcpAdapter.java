@@ -35,10 +35,9 @@ public class ProfilePdfIngestionMcpAdapter {
             description = "Get the one-to-one PDF extraction source link for a profile."
     )
     public CallToolResult getProfilePdfSource(
-            @McpToolParam(required = true, description = "Profile UUID") UUID profileId,
-            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
+            @McpToolParam(required = true, description = "Profile UUID") UUID profileId
     ) {
-        return call(() -> profilePdfIngestionService.getProfilePdfSource(profileId, accessToken));
+        return call(() -> profilePdfIngestionService.getProfilePdfSource(profileId));
     }
 
     private CallToolResult call(Supplier<Object> operation) {

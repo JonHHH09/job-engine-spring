@@ -3,7 +3,6 @@ package org.instruct.jobenginespring.application.document;
 import org.instruct.jobenginespring.application.document.GeneratePdfResumeService.GeneratePdfResumeResult;
 import org.instruct.jobenginespring.application.document.ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand;
 import org.instruct.jobenginespring.application.document.ProfileResumePdfGenerationWorkflow.GeneratedProfileResumePdf;
-import org.instruct.jobenginespring.application.security.McpAccessPolicy;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,30 +19,25 @@ public class GenerateCaPdfResumeService {
     private static final String DEFAULT_OUTPUT_DIRECTORY = "tmp/generated-pdfs/canadian-resume";
 
     private final ProfileResumePdfGenerationWorkflow workflow;
-    private final McpAccessPolicy accessPolicy;
     private final Path outputDirectory;
 
     @Autowired
     public GenerateCaPdfResumeService(
             ProfileResumePdfGenerationWorkflow workflow,
-            McpAccessPolicy accessPolicy,
             @Value("${job-engine.pdf-generation.canadian-resume-output-dir:" + DEFAULT_OUTPUT_DIRECTORY + "}") String outputDirectory
     ) {
         this.workflow = java.util.Objects.requireNonNull(workflow, "workflow must not be null");
-        this.accessPolicy = java.util.Objects.requireNonNull(accessPolicy, "accessPolicy must not be null");
         this.outputDirectory = GeneratePdfResumeService.toPath(outputDirectory, DEFAULT_OUTPUT_DIRECTORY);
     }
 
     GenerateCaPdfResumeService(ProfileResumePdfGenerationWorkflow workflow, Path outputDirectory) {
         this.workflow = java.util.Objects.requireNonNull(workflow, "workflow must not be null");
-        this.accessPolicy = McpAccessPolicy.permitAllForTests();
         this.outputDirectory = java.util.Objects.requireNonNull(outputDirectory, "outputDirectory must not be null");
     }
 
     @Transactional
     public GeneratePdfResumeResult generateCanadianPdfResume(GenerateCaPdfResumeRequest request) {
         GenerateCaPdfResumeRequest safeRequest = java.util.Objects.requireNonNull(request, "request must not be null");
-        accessPolicy.authorize(safeRequest.accessToken(), "generate_ca_pdf_resume");
         UUID profileId = safeRequest.profileId();
         ProfileAggregate aggregate = workflow.requireProfile(profileId);
 
@@ -65,9 +59,6 @@ public class GenerateCaPdfResumeService {
         return "canadian-resume-" + profileId + ".pdf";
     }
 
-    public record GenerateCaPdfResumeRequest(UUID profileId, String accessToken) {
-        public GenerateCaPdfResumeRequest(UUID profileId) {
-            this(profileId, null);
-        }
+    public record GenerateCaPdfResumeRequest(UUID profileId) {
     }
 }

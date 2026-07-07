@@ -20,7 +20,7 @@ import java.util.UUID;
 
 /** Finds existing profiles that appear to represent the same person as an extracted profile draft. */
 @Service
-@RequiredArgsConstructor(onConstructor_ = @Autowired)
+@RequiredArgsConstructor
 public class ProfileIdentityMatcher {
 
     @NonNull

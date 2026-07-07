@@ -29,8 +29,7 @@ final class ProfileWriteCanonicalizer {
                 languages(request.languages()),
                 education(request.education()),
                 experiences(request.experiences()),
-                projects(request.projects()),
-                request.accessToken()
+                projects(request.projects())
         );
     }
 

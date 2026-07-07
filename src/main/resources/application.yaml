@@ -3,6 +3,7 @@ spring:
     name: job-engine-spring
   main:
     banner-mode: off
+    web-application-type: none
   ai:
     mcp:
       server:
@@ -32,3 +33,10 @@ spring:
 logging:
   level:
     root: OFF
+
+job-engine:
+  document:
+    import-root: ${JOB_ENGINE_DOCUMENT_IMPORT_ROOT:tmp/imports}
+  job:
+    link-fetcher:
+      allowed-hosts: ${JOB_ENGINE_JOB_ALLOWED_HOSTS:}

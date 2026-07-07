@@ -1,11 +1,9 @@
 package org.instruct.jobenginespring.application.profile;
 
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
-import org.instruct.jobenginespring.application.security.McpAccessPolicy;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -31,45 +29,35 @@ import java.util.UUID;
 
 /** Application use cases for manipulating profile-owned data. */
 @Service
-@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class ProfileService {
 
     @NonNull
     private final ProfileRepository profileRepository;
-    @NonNull
-    private final McpAccessPolicy accessPolicy;
     private Clock clock = Clock.systemUTC();
 
-    ProfileService(ProfileRepository profileRepository, Clock clock) {
-        this(profileRepository, McpAccessPolicy.permitAllForTests());
-        this.clock = Objects.requireNonNull(clock, "clock must not be null");
+    @Autowired
+    public ProfileService(ProfileRepository profileRepository) {
+        this.profileRepository = Objects.requireNonNull(profileRepository, "profileRepository must not be null");
     }
 
-    ProfileService(ProfileRepository profileRepository, McpAccessPolicy accessPolicy, Clock clock) {
-        this(profileRepository, accessPolicy);
+    ProfileService(ProfileRepository profileRepository, Clock clock) {
+        this(profileRepository);
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
     @Transactional(readOnly = true)
-    public List<UserProfile> listProfiles(String accessToken) {
-        accessPolicy.authorize(accessToken, "list_profiles");
+    public List<UserProfile> listProfiles() {
         return profileRepository.listProfiles();
     }
 
-    public void authorizeAccess(String accessToken, String operation) {
-        accessPolicy.authorize(accessToken, operation);
-    }
-
     @Transactional(readOnly = true)
-    public Optional<ProfileAggregate> getProfile(UUID profileId, String accessToken) {
+    public Optional<ProfileAggregate> getProfile(UUID profileId) {
         Objects.requireNonNull(profileId, "profileId must not be null");
-        accessPolicy.authorize(accessToken, "get_profile");
         return profileRepository.findProfileAggregate(profileId);
     }
 
     @Transactional
     public ProfileAggregate createProfile(ProfileWriteRequest request) {
-        accessPolicy.authorize(request == null ? null : request.accessToken(), "create_profile");
         ProfileWriteValidator.validate(request);
         ProfileWriteRequest safeRequest = ProfileWriteCanonicalizer.canonicalize(request);
         Instant now = clock.instant();
@@ -81,7 +69,6 @@ public class ProfileService {
     @Transactional
     public ProfileAggregate updateProfile(UUID profileId, ProfileWriteRequest request) {
         Objects.requireNonNull(profileId, "profileId must not be null");
-        accessPolicy.authorize(request == null ? null : request.accessToken(), "update_profile");
         ProfileWriteValidator.validate(request);
         ProfileWriteRequest safeRequest = ProfileWriteCanonicalizer.canonicalize(request);
         UserProfile existing = profileRepository.findProfileById(profileId)
@@ -91,9 +78,8 @@ public class ProfileService {
     }
 
     @Transactional
-    public boolean deleteProfile(UUID profileId, String accessToken) {
+    public boolean deleteProfile(UUID profileId) {
         Objects.requireNonNull(profileId, "profileId must not be null");
-        accessPolicy.authorize(accessToken, "delete_profile");
         return profileRepository.deleteProfile(profileId);
     }
 
@@ -258,39 +244,8 @@ public class ProfileService {
             List<LanguageWriteRequest> languages,
             List<EducationWriteRequest> education,
             List<ExperienceWriteRequest> experiences,
-            List<ProjectWriteRequest> projects,
-            String accessToken
+            List<ProjectWriteRequest> projects
     ) {
-        public ProfileWriteRequest(
-                String fullName,
-                String email,
-                String summary,
-                List<ContactWriteRequest> contacts,
-                List<LinkWriteRequest> links,
-                List<SkillWriteRequest> skills,
-                List<LanguageWriteRequest> languages,
-                List<EducationWriteRequest> education,
-                List<ExperienceWriteRequest> experiences,
-                List<ProjectWriteRequest> projects
-        ) {
-            this(fullName, email, summary, contacts, links, skills, languages, education, experiences, projects, null);
-        }
-
-        public ProfileWriteRequest withAccessToken(String accessToken) {
-            return new ProfileWriteRequest(
-                    fullName,
-                    email,
-                    summary,
-                    contacts,
-                    links,
-                    skills,
-                    languages,
-                    education,
-                    experiences,
-                    projects,
-                    accessToken
-            );
-        }
     }
 
     public record ContactWriteRequest(UUID id, String contactType, String contactValue, String label) {
