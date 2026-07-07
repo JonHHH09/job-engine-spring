@@ -14,12 +14,12 @@ public record ProfileSkill(
         Instant createdAt
 ) {
     public ProfileSkill {
-        id = ProfileRecordSupport.requireId(id, "id");
-        profileId = ProfileRecordSupport.requireId(profileId, "profileId");
-        skill = ProfileRecordSupport.requireText(skill, "skill");
+        ProfileRecordSupport.requireId(id, "id");
+        ProfileRecordSupport.requireId(profileId, "profileId");
+        ProfileRecordSupport.requireText(skill, "skill");
         normalizedSkill = normalizedSkill == null
                 ? ProfileRecordSupport.normalizeRequiredText(skill, "normalizedSkill")
                 : ProfileRecordSupport.normalizeRequiredText(normalizedSkill, "normalizedSkill");
-        createdAt = ProfileRecordSupport.requireInstant(createdAt, "createdAt");
+        ProfileRecordSupport.requireInstant(createdAt, "createdAt");
     }
 }

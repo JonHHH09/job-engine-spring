@@ -14,12 +14,12 @@ public record ProfileResumeDocument(
         Instant updatedAt
 ) {
     public ProfileResumeDocument {
-        id = ProfileRecordSupport.requireId(id, "id");
-        profileId = ProfileRecordSupport.requireId(profileId, "profileId");
-        documentId = ProfileRecordSupport.requireId(documentId, "documentId");
-        filePath = ProfileRecordSupport.requireText(filePath, "filePath");
+        ProfileRecordSupport.requireId(id, "id");
+        ProfileRecordSupport.requireId(profileId, "profileId");
+        ProfileRecordSupport.requireId(documentId, "documentId");
+        ProfileRecordSupport.requireText(filePath, "filePath");
         resumeType = ProfileRecordSupport.normalizeRequiredText(resumeType, "resumeType");
-        createdAt = ProfileRecordSupport.requireInstant(createdAt, "createdAt");
-        updatedAt = ProfileRecordSupport.requireInstant(updatedAt, "updatedAt");
+        ProfileRecordSupport.requireInstant(createdAt, "createdAt");
+        ProfileRecordSupport.requireInstant(updatedAt, "updatedAt");
     }
 }

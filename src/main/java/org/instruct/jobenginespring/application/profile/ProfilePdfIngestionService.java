@@ -226,7 +226,7 @@ public class ProfilePdfIngestionService {
             String recommendedAction
     ) {
         public ProfilePdfIngestionResult {
-            status = Objects.requireNonNull(status, "status must not be null");
+            Objects.requireNonNull(status, "status must not be null");
             matchedOn = matchedOn == null ? List.of() : List.copyOf(matchedOn);
         }
     }

@@ -16,7 +16,7 @@ public record ProfileAggregate(
         List<ProjectTechnology> projectTechnologies
 ) {
     public ProfileAggregate {
-        profile = Objects.requireNonNull(profile, "profile must not be null");
+        Objects.requireNonNull(profile, "profile must not be null");
         contacts = ProfileRecordSupport.immutableCopy(contacts);
         links = ProfileRecordSupport.immutableCopy(links);
         skills = ProfileRecordSupport.immutableCopy(skills);

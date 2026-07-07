@@ -18,8 +18,8 @@ public record Education(
         Instant createdAt
 ) {
     public Education {
-        id = ProfileRecordSupport.requireId(id, "id");
-        profileId = ProfileRecordSupport.requireId(profileId, "profileId");
-        createdAt = ProfileRecordSupport.requireInstant(createdAt, "createdAt");
+        ProfileRecordSupport.requireId(id, "id");
+        ProfileRecordSupport.requireId(profileId, "profileId");
+        ProfileRecordSupport.requireInstant(createdAt, "createdAt");
     }
 }

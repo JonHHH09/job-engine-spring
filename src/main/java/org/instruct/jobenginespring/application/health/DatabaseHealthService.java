@@ -154,9 +154,9 @@ public final class DatabaseHealthService {
             DatabaseHealthMetadata metadata
     ) {
         public DatabaseHealthReport {
-            status = Objects.requireNonNull(status, "status must not be null");
-            errorCategory = Objects.requireNonNull(errorCategory, "errorCategory must not be null");
-            metadata = Objects.requireNonNull(metadata, "metadata must not be null");
+            Objects.requireNonNull(status, "status must not be null");
+            Objects.requireNonNull(errorCategory, "errorCategory must not be null");
+            Objects.requireNonNull(metadata, "metadata must not be null");
         }
     }
 
@@ -167,7 +167,7 @@ public final class DatabaseHealthService {
             int failedChecks
     ) {
         public DatabaseHealthMetadata {
-            checkedAt = Objects.requireNonNull(checkedAt, "checkedAt must not be null");
+            Objects.requireNonNull(checkedAt, "checkedAt must not be null");
             if (totalChecks < 0 || successfulChecks < 0 || failedChecks < 0) {
                 throw new IllegalArgumentException("health check counts must not be negative");
             }

@@ -14,11 +14,11 @@ public record ProfileLink(
         Instant updatedAt
 ) {
     public ProfileLink {
-        id = ProfileRecordSupport.requireId(id, "id");
-        profileId = ProfileRecordSupport.requireId(profileId, "profileId");
+        ProfileRecordSupport.requireId(id, "id");
+        ProfileRecordSupport.requireId(profileId, "profileId");
         linkType = ProfileRecordSupport.normalizeRequiredText(linkType, "linkType");
-        url = ProfileRecordSupport.requireText(url, "url");
-        createdAt = ProfileRecordSupport.requireInstant(createdAt, "createdAt");
-        updatedAt = ProfileRecordSupport.requireInstant(updatedAt, "updatedAt");
+        ProfileRecordSupport.requireText(url, "url");
+        ProfileRecordSupport.requireInstant(createdAt, "createdAt");
+        ProfileRecordSupport.requireInstant(updatedAt, "updatedAt");
     }
 }
