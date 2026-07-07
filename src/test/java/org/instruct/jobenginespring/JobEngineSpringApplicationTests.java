@@ -2,6 +2,9 @@ package org.instruct.jobenginespring;
 
 import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
+import org.instruct.jobenginespring.application.job.port.JobAnalysisRunRepository;
+import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
+import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileResumeDocumentRepository;
@@ -38,7 +41,10 @@ import java.util.UUID;
                 + "org.springframework.ai.model.postgresml.autoconfigure.PostgresMlEmbeddingAutoConfiguration",
         "job-engine.health.postgres.enabled=false",
         "job-engine.profile.postgres.enabled=false",
-        "job-engine.document.postgres.enabled=false"
+        "job-engine.document.postgres.enabled=false",
+        "job-engine.job.postgres.enabled=false",
+        "job-engine.job-analysis.postgres.enabled=false",
+        "job-engine.job.link-fetcher.enabled=false"
 })
 class JobEngineSpringApplicationTests {
 
@@ -57,6 +63,21 @@ class JobEngineSpringApplicationTests {
         @Bean
         DocumentStorageService documentStorageService() {
             return org.mockito.Mockito.mock(DocumentStorageService.class);
+        }
+
+        @Bean
+        JobRepository jobRepository() {
+            return org.mockito.Mockito.mock(JobRepository.class);
+        }
+
+        @Bean
+        JobAnalysisRunRepository jobAnalysisRunRepository() {
+            return org.mockito.Mockito.mock(JobAnalysisRunRepository.class);
+        }
+
+        @Bean
+        JobLinkContentFetcher jobLinkContentFetcher() {
+            return org.mockito.Mockito.mock(JobLinkContentFetcher.class);
         }
 
         @Bean

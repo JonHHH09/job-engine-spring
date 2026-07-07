@@ -24,6 +24,7 @@ spring:
     schemas:
       - profile
       - document
+      - job_schema
   threads:
     virtual:
       enabled: true

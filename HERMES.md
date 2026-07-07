@@ -42,7 +42,7 @@ job-engine-spring/
 `-- src/test/java/org/instruct/jobenginespring/JobEngineSpringApplicationTests.java
 ```
 
-The project has the generated Spring Boot application class plus normalized profile and document domain slices, a protocol-neutral application error model, application-boundary repository ports, profile CRUD use cases with application-layer write validation, PDF text extraction and stored-document application services, thin STDIO MCP health/profile/document adapters, JDBC-backed PostgreSQL health/profile/document outbound adapters, a sanitized database health application service, and Flyway migrations for the `profile` and `document` schemas. Do not assume controllers or job-domain schemas exist until they are verified in source.
+The project has the generated Spring Boot application class plus normalized profile, document, and job domain slices, a protocol-neutral application error model, application-boundary repository ports, profile CRUD use cases with application-layer write validation, PDF text extraction and stored-document application services, job insertion/search use cases, thin STDIO MCP health/profile/document/job adapters, JDBC-backed PostgreSQL health/profile/document/job outbound adapters, a sanitized database health application service, and Flyway migrations for the `profile`, `document`, and `job_schema` schemas. Do not assume controllers exist until they are verified in source.
 
 ## Intended Architecture
 
@@ -79,8 +79,13 @@ Initial MCP tool surface should be small and verifiable:
 15. `generate_canadian_pdf_resume`
 16. `list_jobs`
 17. `search_jobs`
-18. `get_match_report`
-19. `run_pipeline_dry_run` only after the storage/CLI boundary is explicit
+18. `get_job`
+19. `add_job_from_text`
+20. `add_job_from_link`
+21. `analyze_job_link`
+22. `add_job_from_analysis`
+23. `get_match_report`
+24. `run_pipeline_dry_run` only after the storage/CLI boundary is explicit
 
 ## Dependency Baseline
 
@@ -240,10 +245,11 @@ Mandatory:
 
 ## Current Known Gaps
 
-As of the health/profile/document MCP slice:
+As of the health/profile/document/job MCP slice:
 
 - Profile MCP CRUD/search tools, application-layer profile write validation/canonicalization, deterministic profile search, and a PostgreSQL JDBC adapter exist for normalized profile data.
 - PDF text extraction exists as a stateless MCP tool backed by Spring AI's PDF document reader; stored-document MCP tools can persist document bytes, return metadata, extract stored PDFs, optionally persist bounded extraction text, and generate/store one current resume PDF document link per profile/resume type for master and Canadian variants. Generated PDFs use white pages, compact single-column spacing, chrome header/footer bars with white right-aligned page numbers only, indented bullets, thin chrome-colored section separators, and page-boundary guards that keep section headings with following content and resume entry headings with their date/first-detail lines; Canadian resumes additionally use an inline contact/link header and a concise Canadian section ordering that currently omits projects and keeps education visible.
+- Job insertion now uses Flyway-managed `job_schema` tables: `jobs` for canonical job fields and fingerprints, `job_skills` for normalized required skills, `job_text_ingestions` for pasted-text source hashes, `job_link_ingestions` for normalized URL provenance, and `job_analysis_runs` for persisted structured Hermes URL-analysis responses. `JobMcpAdapter` exposes `list_jobs`, `search_jobs`, `get_job`, `add_job_from_text`, `add_job_from_link`, `analyze_job_link`, and `add_job_from_analysis`; `JobService` owns normalized job validation, conservative field extraction, idempotency checks, deterministic search scoring, and blocked/security-check fetch rejection so URL-only false data such as Indeed/Cloudflare JavaScript verification pages cannot create normalized jobs, while `JobAnalysisService` stores Hermes analysis responses first and only creates/reuses jobs by reading the stored analysis row.
 - Health is exposed as a sanitized MCP tool backed by `DatabaseHealthService` and `PostgresDatabaseHealthPort`.
 - A minimal README documents the current MCP tool surface, configuration rules, validation contract, and verification commands.
 - The default app startup requires a PostgreSQL role matching the configured `JOB_ENGINE_POSTGRES_USER` placeholder. Local verification succeeded with endpoint readiness and a valid local role, but the default `postgres` role may not exist on every machine.

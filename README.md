@@ -22,6 +22,13 @@ The current verified MCP surface is intentionally small:
 - `generate_canadian_pdf_resume` — generates a Canadian-format resume PDF from the same normalized profile, stores it as a document, and links it uniquely to that profile as the `canadian_resume` variant.
 - `ingest_profile_from_stored_pdf` — populates the normalized profile schema from a stored PDF extraction and links the profile to that extraction.
 - `get_profile_pdf_source` — returns the one-to-one PDF extraction source link for a profile.
+- `list_jobs` — lists stored job postings without returning source ingestion raw text.
+- `search_jobs` — searches stored jobs by title, company, location, description, experience requirement, seniority, employment type, and required skills.
+- `get_job` — returns a stored job aggregate by UUID, including normalized skills and insertion provenance.
+- `add_job_from_text` — inserts a job from pasted text plus optional structured fields; source text is hashed for idempotency and is not stored raw in the method-specific table.
+- `add_job_from_link` — inserts a job from a URL by fetching page content and combining extracted page text with optional structured fields. If the page fetch is blocked, returns HTTP 4xx/5xx, or resolves to bot/security-check content such as Indeed/Cloudflare JavaScript verification, the tool rejects the URL-only insertion instead of creating a false job; paste the real job description or provide a usable description to proceed.
+- `analyze_job_link` — fetches a job URL, calls the configured Hermes analysis provider, persists the structured Hermes response in `job_schema.job_analysis_runs`, and returns an analysis-run report without creating a job.
+- `add_job_from_analysis` — creates or reuses a normalized job by reading a previously stored Hermes analysis run from `job_schema.job_analysis_runs`.
 
 The application is MCP-first. Do not add REST controllers unless REST compatibility is explicitly required.
 
@@ -124,6 +131,20 @@ Currently validated examples include:
 
 Database constraints still protect persistence integrity, but expected request problems should fail before PostgreSQL constraint errors.
 
+## Job insertion contract
+
+Job storage uses the Flyway-managed `job_schema` schema. Canonical job fields live in `job_schema.jobs`, required/normalized skills live in `job_schema.job_skills`, and method-specific provenance is separated by insertion path:
+
+- `job_schema.job_text_ingestions` for pasted-text insertion metadata, keyed by a SHA-256 hash of canonical source text.
+- `job_schema.job_link_ingestions` for URL insertion metadata, keyed by normalized URL and storing fetch status/title provenance.
+- `job_schema.job_analysis_runs` for URL-analysis provenance: bounded structured input, persisted structured Hermes response, validation status/errors, response hashes, and the normalized job ID once an analysis is accepted.
+
+`add_job_from_text` and `add_job_from_link` are idempotent. They first check method-specific uniqueness (`input_text_hash` or `normalized_url`) and then the canonical job fingerprint over title/company/location/description. Duplicate submissions return `reused_existing_job`; new submissions return `created_job`. The application layer derives a conservative title, required skills, and experience requirement from the supplied/fetched text when explicit fields are absent, but callers can override the structured fields when better data is available.
+
+The staged Hermes URL flow is split intentionally. `analyze_job_link` validates/normalizes a URL, fetches bounded page content, calls the configured `JobPostingAnalysisPort`, stores the structured Hermes response in `job_schema.job_analysis_runs`, and returns an analysis-run report without writing a normalized job. `add_job_from_analysis` then loads that stored analysis row, validates/canonicalizes the persisted response in Java, rejects weak URL-only or JavaScript-shell analyses, and only then creates or reuses a normalized job. Until a live Hermes CLI adapter is configured, the default analysis provider records a safe failed analysis instead of pretending enrichment succeeded.
+
+Job search is deterministic and ATS/matching-ready: it tokenizes the query, ranks title/company/location/description/experience/employment/seniority/skills by weighted evidence, and returns matched field names with a score. The score is internal search metadata, not applicant-facing resume content.
+
 ## Verification
 
 Run focused unit tests while working on profile or document behavior:
@@ -132,6 +153,7 @@ Run focused unit tests while working on profile or document behavior:
 ./mvnw -q -Dtest=ProfileWriteValidatorTests,ProfileWriteCanonicalizerTests,ProfileServiceTests,ProfileMcpAdapterTests test
 ./mvnw -q -Dtest=PdfTextExtractionServiceTests,DocumentStorageServiceTests,PdfGenerationServiceTests,GeneratePdfResumeServiceTests,DocumentMcpAdapterTests,DocumentPdfGenerateResumeMcpTests test
 ./mvnw -q -Dtest=ProfilePdfIngestionServiceTests,ProfilePdfIngestionMcpAdapterTests test
+./mvnw -q -Dtest=JobServiceTests,JobAnalysisServiceTests,JobMcpAdapterTests,HttpJobLinkContentFetcherTests test
 ```
 
 Run the unit test suite before claiming non-database completion:
