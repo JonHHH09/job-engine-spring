@@ -23,7 +23,7 @@ public final class ApplicationExceptionMapper {
         if (throwable instanceof DataIntegrityViolationException) {
             return new ApplicationErrorResponse(
                     ApplicationErrorCode.VALIDATION_ERROR.code(),
-                    "Profile data violates a persistence constraint",
+                    "Request data violates a persistence constraint",
                     Map.of()
             );
         }

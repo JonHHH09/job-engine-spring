@@ -18,6 +18,7 @@ public final class ProfileSchema {
     public static final Table EXPERIENCES = new Table("experiences");
     public static final Table PROJECTS = new Table("projects");
     public static final Table PROJECT_TECHNOLOGIES = new Table("project_technologies");
+    public static final Table PROFILE_RESUME_DOCUMENTS = new Table("profile_resume_documents");
 
     private ProfileSchema() {
     }

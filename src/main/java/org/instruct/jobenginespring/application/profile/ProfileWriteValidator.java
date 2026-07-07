@@ -100,27 +100,47 @@ final class ProfileWriteValidator {
     }
 
     private static void validateEducation(List<EducationWriteRequest> education) {
+        Set<String> seenEducationKeys = new HashSet<>();
         for (int index = 0; index < nullSafe(education).size(); index++) {
             EducationWriteRequest item = nullSafe(education).get(index);
             requireItem(item, "education", index);
             requireDateRange(item.startDate(), item.endDate(), field("education", index, "endDate"));
+            requireUnique(seenEducationKeys, key(
+                    optionalNormalized(item.institution()),
+                    optionalNormalized(item.degree()),
+                    optionalNormalized(item.field()),
+                    String.valueOf(item.startDate()),
+                    String.valueOf(item.endDate())
+            ), field("education", index, "institution"), "duplicates another education entry in this request");
         }
     }
 
     private static void validateExperiences(List<ExperienceWriteRequest> experiences) {
+        Set<String> seenExperienceKeys = new HashSet<>();
         for (int index = 0; index < nullSafe(experiences).size(); index++) {
             ExperienceWriteRequest item = nullSafe(experiences).get(index);
             requireItem(item, "experiences", index);
             requireNonNegative(item.displayOrder(), field("experiences", index, "displayOrder"));
             requireDateRange(item.startDate(), item.endDate(), field("experiences", index, "endDate"));
+            requireUnique(seenExperienceKeys, key(
+                    optionalNormalized(item.company()),
+                    optionalNormalized(item.title()),
+                    String.valueOf(item.startDate()),
+                    String.valueOf(item.endDate())
+            ), field("experiences", index, "company"), "duplicates another experience entry in this request");
         }
     }
 
     private static void validateProjects(List<ProjectWriteRequest> projects) {
+        Set<String> seenProjectKeys = new HashSet<>();
         for (int index = 0; index < nullSafe(projects).size(); index++) {
             ProjectWriteRequest project = nullSafe(projects).get(index);
             requireItem(project, "projects", index);
             requireNonNegative(project.displayOrder(), field("projects", index, "displayOrder"));
+            requireUnique(seenProjectKeys, key(
+                    optionalNormalized(project.name()),
+                    optionalTrimmed(project.url())
+            ), field("projects", index, "name"), "duplicates another project entry in this request");
             validateTechnologies(project.technologies(), index);
         }
     }
@@ -178,6 +198,18 @@ final class ProfileWriteValidator {
 
     private static String field(String collection, int index, String field) {
         return collection + "[" + index + "]." + field;
+    }
+
+    private static String key(String... parts) {
+        return String.join("\u0000", parts);
+    }
+
+    private static String optionalNormalized(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String optionalTrimmed(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private static <T> List<T> nullSafe(List<T> values) {

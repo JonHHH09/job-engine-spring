@@ -47,6 +47,7 @@ class ProfileServiceTests {
     private final FakeProfileRepository repository = new FakeProfileRepository();
     private final ProfileService service = new ProfileService(repository, Clock.fixed(NOW, ZoneOffset.UTC));
 
+
     @Test
     void createProfilePersistsNormalizedAggregate() {
         ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
@@ -74,6 +75,7 @@ class ProfileServiceTests {
         assertEquals("backend", created.skills().getFirst().category());
         assertEquals(List.of(created.profile()), service.listProfiles());
     }
+
 
     @Test
     void createProfileMapsEverySupportedChildCollection() {

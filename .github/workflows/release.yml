@@ -1,0 +1,89 @@
+name: Release MCP Container
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish release artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Run full verification and build jar
+        run: ./mvnw -Pintegration-tests verify
+
+      - name: Verify release jar
+        run: test -f target/job-engine-spring-0.0.1-SNAPSHOT.jar
+
+      - name: Create jar checksum
+        run: sha256sum target/job-engine-spring-0.0.1-SNAPSHOT.jar > SHA256SUMS
+
+      - name: Build release container image from verified jar
+        run: |
+          JAR_SHA256="$(cut -d ' ' -f1 SHA256SUMS)"
+          docker build \
+            -f Dockerfile.release \
+            --build-arg VERSION="${GITHUB_REF_NAME}" \
+            --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --build-arg JAR_SHA256="$JAR_SHA256" \
+            -t job-engine-spring:release-candidate \
+            .
+
+      - name: Smoke-test release image
+        run: MCP_IMAGE=job-engine-spring:release-candidate MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh
+
+      - name: Record image ID
+        run: docker image inspect job-engine-spring:release-candidate --format '{{.Id}}' > IMAGE-ID
+
+      - name: Report release dry run
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: echo "Manual branch run completed verification only; no artifacts were published."
+
+      - name: Log in to GitHub Container Registry
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish container image
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}/job-engine-spring:${GITHUB_REF_NAME}
+          docker tag job-engine-spring:release-candidate "$IMAGE_NAME"
+          docker push "$IMAGE_NAME"
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: |
+            target/job-engine-spring-0.0.1-SNAPSHOT.jar
+            SHA256SUMS
+            IMAGE-ID
+
+      - name: Compose cleanup
+        if: always()
+        run: docker compose down -v --remove-orphans

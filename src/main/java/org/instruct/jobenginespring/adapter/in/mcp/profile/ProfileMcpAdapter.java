@@ -5,10 +5,12 @@ import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.error.ApplicationExceptionMapper;
 import org.instruct.jobenginespring.application.profile.ProfileService;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
+import org.instruct.jobenginespring.domain.profile.UserProfile;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -24,7 +26,7 @@ public class ProfileMcpAdapter {
             description = "List available profile identities without returning raw resume text or private credentials."
     )
     public CallToolResult listProfiles() {
-        return call(profileService::listProfiles);
+        return call(() -> new ListProfilesResult(profileService.listProfiles()));
     }
 
     @McpTool(
@@ -86,5 +88,8 @@ public class ProfileMcpAdapter {
     }
 
     public record DeleteProfileResult(UUID profileId, boolean deleted) {
+    }
+
+    public record ListProfilesResult(List<UserProfile> profiles) {
     }
 }

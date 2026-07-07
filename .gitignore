@@ -18,6 +18,8 @@ target/
 *.iws
 *.iml
 *.ipr
+__pycache__/
+*.py[cod]
 
 ### NetBeans ###
 /nbproject/private/
@@ -31,4 +33,14 @@ build/
 
 ### VS Code ###
 .vscode/
+/.hermes/plans/
+/.hermes/
 /plans/
+/tmp/generated-pdfs/*
+!/tmp/generated-pdfs/.gitkeep
+!/tmp/generated-pdfs/master-resume/
+/tmp/generated-pdfs/master-resume/*
+!/tmp/generated-pdfs/master-resume/.gitkeep
+!/tmp/generated-pdfs/canadian-resume/
+/tmp/generated-pdfs/canadian-resume/*
+!/tmp/generated-pdfs/canadian-resume/.gitkeep

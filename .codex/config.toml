@@ -1,0 +1,17 @@
+[mcp_servers.job-engine-spring]
+command = "bash"
+args = ["-lc", "cd \"$(git rev-parse --show-toplevel)\" && exec ./scripts/run-local-mcp-stdio.sh"]
+startup_timeout_sec = 30
+tool_timeout_sec = 30
+enabled = true
+required = false
+
+env_vars = [
+  "JOB_ENGINE_MCP_ACCESS_TOKEN",
+  "JOB_ENGINE_POSTGRES_URL",
+  "JOB_ENGINE_POSTGRES_USER",
+  "JOB_ENGINE_POSTGRES_PASSWORD"
+]
+
+[mcp_servers.job-engine-spring.env]
+RUN_TESTS = "false"

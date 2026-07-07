@@ -34,7 +34,6 @@ class ProfileMcpAdapterTests {
 
     private static final UUID PROFILE_ID = UUID.fromString("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
     private static final Instant NOW = Instant.parse("2026-07-02T15:30:00Z");
-
     private final ProfileService profileService = mock(ProfileService.class);
     private final ProfileMcpAdapter adapter = new ProfileMcpAdapter(profileService);
 
@@ -81,7 +80,12 @@ class ProfileMcpAdapterTests {
 
         CallToolResult result = adapter.listProfiles();
 
-        assertSuccessfulContent(List.of(profile), result);
+        assertFalse(result.isError());
+        ProfileMcpAdapter.ListProfilesResult listResult = assertInstanceOf(
+                ProfileMcpAdapter.ListProfilesResult.class,
+                result.structuredContent()
+        );
+        assertEquals(List.of(profile), listResult.profiles());
         verify(profileService).listProfiles();
     }
 

@@ -100,7 +100,7 @@ class ApplicationExceptionMapperTests {
         ApplicationErrorResponse response = mapper.toErrorResponse(new DataIntegrityViolationException("sensitive constraint detail"));
 
         assertEquals("validation_error", response.code());
-        assertEquals("Profile data violates a persistence constraint", response.message());
+        assertEquals("Request data violates a persistence constraint", response.message());
         assertEquals(Map.of(), response.details());
     }
 

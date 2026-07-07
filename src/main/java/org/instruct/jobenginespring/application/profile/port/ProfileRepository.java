@@ -10,6 +10,8 @@ import org.instruct.jobenginespring.domain.profile.ProfileProject;
 import org.instruct.jobenginespring.domain.profile.ProfileSkill;
 import org.instruct.jobenginespring.domain.profile.ProjectTechnology;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
+import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
+import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
 
 import java.util.List;
 import java.util.Optional;
@@ -46,6 +48,10 @@ public interface ProfileRepository {
     ProfileAggregate saveProfileAggregate(ProfileAggregate aggregate);
 
     boolean deleteProfile(UUID profileId);
+
+    default List<ProfileIdentityCandidate> findIdentityCandidates(ProfileIdentitySearch search) {
+        return List.of();
+    }
 
     default Optional<ProfileAggregate> findProfileAggregate(UUID profileId) {
         return findProfileById(profileId)

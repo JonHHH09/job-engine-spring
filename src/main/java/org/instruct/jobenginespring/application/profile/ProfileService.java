@@ -1,7 +1,6 @@
 package org.instruct.jobenginespring.application.profile;
 
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
@@ -30,12 +29,16 @@ import java.util.UUID;
 
 /** Application use cases for manipulating profile-owned data. */
 @Service
-@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class ProfileService {
 
     @NonNull
     private final ProfileRepository profileRepository;
     private Clock clock = Clock.systemUTC();
+
+    @Autowired
+    public ProfileService(ProfileRepository profileRepository) {
+        this.profileRepository = Objects.requireNonNull(profileRepository, "profileRepository must not be null");
+    }
 
     ProfileService(ProfileRepository profileRepository, Clock clock) {
         this(profileRepository);
