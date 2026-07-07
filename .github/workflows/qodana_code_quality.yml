@@ -38,8 +38,8 @@ jobs:
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
         with:
-          # When pr-mode is set to true, Qodana analyzes only the files that have been changed
-          pr-mode: ${{ github.event_name == 'pull_request' }}
+          # Full PR scans avoid Qodana SARIF upload failures when a merge request has no analyzable changed JVM files.
+          pr-mode: false
           use-caches: true
           post-pr-comment: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
           use-annotations: true
