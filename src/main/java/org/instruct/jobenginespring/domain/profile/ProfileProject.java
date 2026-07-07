@@ -16,10 +16,10 @@ public record ProfileProject(
         Instant createdAt
 ) {
     public ProfileProject {
-        id = ProfileRecordSupport.requireId(id, "id");
-        profileId = ProfileRecordSupport.requireId(profileId, "profileId");
+        ProfileRecordSupport.requireId(id, "id");
+        ProfileRecordSupport.requireId(profileId, "profileId");
         technologies = ProfileRecordSupport.immutableCopy(technologies);
-        createdAt = ProfileRecordSupport.requireInstant(createdAt, "createdAt");
+        ProfileRecordSupport.requireInstant(createdAt, "createdAt");
     }
 
     public ProfileProject(

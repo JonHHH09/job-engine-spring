@@ -14,11 +14,11 @@ public record ProfileContact(
         Instant updatedAt
 ) {
     public ProfileContact {
-        id = ProfileRecordSupport.requireId(id, "id");
-        profileId = ProfileRecordSupport.requireId(profileId, "profileId");
+        ProfileRecordSupport.requireId(id, "id");
+        ProfileRecordSupport.requireId(profileId, "profileId");
         contactType = ProfileRecordSupport.normalizeRequiredText(contactType, "contactType");
-        contactValue = ProfileRecordSupport.requireText(contactValue, "contactValue");
-        createdAt = ProfileRecordSupport.requireInstant(createdAt, "createdAt");
-        updatedAt = ProfileRecordSupport.requireInstant(updatedAt, "updatedAt");
+        ProfileRecordSupport.requireText(contactValue, "contactValue");
+        ProfileRecordSupport.requireInstant(createdAt, "createdAt");
+        ProfileRecordSupport.requireInstant(updatedAt, "updatedAt");
     }
 }
