@@ -4,11 +4,10 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import org.instruct.jobenginespring.application.error.ApplicationExceptionMapper;
 import org.instruct.jobenginespring.application.job.JobAnalysisService;
 import org.instruct.jobenginespring.application.job.JobService;
-import org.instruct.jobenginespring.application.security.McpAccessPolicy;
 import org.instruct.jobenginespring.domain.job.JobPosting;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -22,31 +21,20 @@ public class JobMcpAdapter {
 
     private final JobService jobService;
     private final JobAnalysisService jobAnalysisService;
-    private final McpAccessPolicy accessPolicy;
     private final ApplicationExceptionMapper exceptionMapper = new ApplicationExceptionMapper();
 
     @Autowired
-    public JobMcpAdapter(JobService jobService, JobAnalysisService jobAnalysisService, McpAccessPolicy accessPolicy) {
+    public JobMcpAdapter(JobService jobService, JobAnalysisService jobAnalysisService) {
         this.jobService = Objects.requireNonNull(jobService, "jobService must not be null");
         this.jobAnalysisService = Objects.requireNonNull(jobAnalysisService, "jobAnalysisService must not be null");
-        this.accessPolicy = Objects.requireNonNull(accessPolicy, "accessPolicy must not be null");
-    }
-
-    JobMcpAdapter(JobService jobService, JobAnalysisService jobAnalysisService) {
-        this(jobService, jobAnalysisService, McpAccessPolicy.permitAllForTests());
     }
 
     @McpTool(
             name = "list_jobs",
             description = "List stored job postings without returning source ingestion raw text."
     )
-    public CallToolResult listJobs(
-            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
-    ) {
-        return call(() -> {
-            accessPolicy.authorize(accessToken, "list_jobs");
-            return new ListJobsResult(jobService.listJobs());
-        });
+    public CallToolResult listJobs() {
+        return call(() -> new ListJobsResult(jobService.listJobs()));
     }
 
     @McpTool(
@@ -54,13 +42,9 @@ public class JobMcpAdapter {
             description = "Get a stored job aggregate by job UUID, including normalized skills and insertion provenance."
     )
     public CallToolResult getJob(
-            @McpToolParam(required = true, description = "Job UUID") UUID jobId,
-            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
+            @McpToolParam(required = true, description = "Job UUID") UUID jobId
     ) {
-        return call(() -> {
-            accessPolicy.authorize(accessToken, "get_job");
-            return jobService.getJob(jobId).orElseThrow(() -> new JobService.JobNotFoundException(jobId));
-        });
+        return call(() -> jobService.getJob(jobId).orElseThrow(() -> new JobService.JobNotFoundException(jobId)));
     }
 
     @McpTool(
@@ -71,10 +55,28 @@ public class JobMcpAdapter {
             @McpToolParam(required = true, description = "Job search query and optional result limit")
             JobSearchRequest request
     ) {
-        return call(() -> {
-            accessPolicy.authorize(request == null ? null : request.accessToken(), "search_jobs");
-            return jobService.searchJobs(request == null ? null : request.toServiceRequest());
-        });
+        return call(() -> jobService.searchJobs(request == null ? null : request.toServiceRequest()));
+    }
+
+    @McpTool(
+            name = "update_job",
+            description = "Partially update a stored job. Omitted fields preserve existing values; provided skills replace existing skills."
+    )
+    public CallToolResult updateJob(
+            @McpToolParam(required = true, description = "Job partial update request")
+            UpdateJobRequest request
+    ) {
+        return call(() -> jobService.updateJob(request == null ? null : request.toServiceRequest()));
+    }
+
+    @McpTool(
+            name = "delete_job",
+            description = "Hard delete a stored job by UUID."
+    )
+    public CallToolResult deleteJob(
+            @McpToolParam(required = true, description = "Job UUID") UUID jobId
+    ) {
+        return call(() -> jobService.deleteJob(jobId));
     }
 
     @McpTool(
@@ -85,10 +87,7 @@ public class JobMcpAdapter {
             @McpToolParam(required = true, description = "Job text plus optional normalized fields")
             AddJobFromTextRequest request
     ) {
-        return call(() -> {
-            accessPolicy.authorize(request == null ? null : request.accessToken(), "add_job_from_text");
-            return jobService.addJobFromText(request == null ? null : request.toServiceRequest());
-        });
+        return call(() -> jobService.addJobFromText(request == null ? null : request.toServiceRequest()));
     }
 
     @McpTool(
@@ -99,10 +98,7 @@ public class JobMcpAdapter {
             @McpToolParam(required = true, description = "Job URL plus optional normalized fields")
             AddJobFromLinkRequest request
     ) {
-        return call(() -> {
-            accessPolicy.authorize(request == null ? null : request.accessToken(), "add_job_from_link");
-            return jobService.addJobFromLink(request == null ? null : request.toServiceRequest());
-        });
+        return call(() -> jobService.addJobFromLink(request == null ? null : request.toServiceRequest()));
     }
 
     @McpTool(
@@ -113,10 +109,7 @@ public class JobMcpAdapter {
             @McpToolParam(required = true, description = "Job URL analysis request")
             AnalyzeJobLinkRequest request
     ) {
-        return call(() -> {
-            accessPolicy.authorize(request == null ? null : request.accessToken(), "analyze_job_link");
-            return jobAnalysisService.analyzeJobLink(request == null ? null : request.toServiceRequest());
-        });
+        return call(() -> jobAnalysisService.analyzeJobLink(request == null ? null : request.toServiceRequest()));
     }
 
     @McpTool(
@@ -127,10 +120,7 @@ public class JobMcpAdapter {
             @McpToolParam(required = true, description = "Stored job analysis run identifier")
             AddJobFromAnalysisRequest request
     ) {
-        return call(() -> {
-            accessPolicy.authorize(request == null ? null : request.accessToken(), "add_job_from_analysis");
-            return jobAnalysisService.addJobFromAnalysis(request == null ? null : request.toServiceRequest());
-        });
+        return call(() -> jobAnalysisService.addJobFromAnalysis(request == null ? null : request.toServiceRequest()));
     }
 
     private CallToolResult call(Supplier<Object> operation) {
@@ -155,15 +145,29 @@ public class JobMcpAdapter {
 
     public record JobSearchRequest(
             @McpToolParam(required = true, description = "Search query text") String query,
-            @McpToolParam(required = false, description = "Maximum number of results, 1-100") Integer limit,
-            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
+            @McpToolParam(required = false, description = "Maximum number of results, 1-100") Integer limit
     ) {
-        public JobSearchRequest(String query, Integer limit) {
-            this(query, limit, null);
-        }
-
         JobService.JobSearchRequest toServiceRequest() {
             return new JobService.JobSearchRequest(query, limit);
+        }
+    }
+
+    public record UpdateJobRequest(
+            @McpToolParam(required = true, description = "Job UUID") UUID jobId,
+            @McpToolParam(required = false, description = "Source label") String sourceLabel,
+            @McpToolParam(required = false, description = "Normalized job title") String title,
+            @McpToolParam(required = false, description = "Company name") String company,
+            @McpToolParam(required = false, description = "Job location") String location,
+            @McpToolParam(required = false, description = "Job description") String description,
+            @McpToolParam(required = false, description = "Required skills. When provided, replaces existing skills.") List<String> skills,
+            @McpToolParam(required = false, description = "Experience requirement") String experienceRequirement,
+            @McpToolParam(required = false, description = "Employment type") String employmentType,
+            @McpToolParam(required = false, description = "Seniority") String seniority,
+            @McpToolParam(required = false, description = "Posting timestamp") Instant postedAt
+    ) {
+        JobService.UpdateJobRequest toServiceRequest() {
+            return new JobService.UpdateJobRequest(jobId, sourceLabel, title, company, location, description, skills,
+                    experienceRequirement, employmentType, seniority, postedAt);
         }
     }
 
@@ -178,25 +182,8 @@ public class JobMcpAdapter {
             @McpToolParam(required = false, description = "Experience requirement") String experienceRequirement,
             @McpToolParam(required = false, description = "Employment type") String employmentType,
             @McpToolParam(required = false, description = "Seniority") String seniority,
-            @McpToolParam(required = false, description = "Posting timestamp") Instant postedAt,
-            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
+            @McpToolParam(required = false, description = "Posting timestamp") Instant postedAt
     ) {
-        public AddJobFromTextRequest(
-                String text,
-                String sourceLabel,
-                String title,
-                String company,
-                String location,
-                String description,
-                List<String> skills,
-                String experienceRequirement,
-                String employmentType,
-                String seniority,
-                Instant postedAt
-        ) {
-            this(text, sourceLabel, title, company, location, description, skills, experienceRequirement, employmentType, seniority, postedAt, null);
-        }
-
         JobService.AddJobFromTextRequest toServiceRequest() {
             return new JobService.AddJobFromTextRequest(text, sourceLabel, title, company, location, description, skills,
                     experienceRequirement, employmentType, seniority, postedAt);
@@ -214,25 +201,8 @@ public class JobMcpAdapter {
             @McpToolParam(required = false, description = "Experience requirement") String experienceRequirement,
             @McpToolParam(required = false, description = "Employment type") String employmentType,
             @McpToolParam(required = false, description = "Seniority") String seniority,
-            @McpToolParam(required = false, description = "Posting timestamp") Instant postedAt,
-            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
+            @McpToolParam(required = false, description = "Posting timestamp") Instant postedAt
     ) {
-        public AddJobFromLinkRequest(
-                String url,
-                String sourceLabel,
-                String title,
-                String company,
-                String location,
-                String description,
-                List<String> skills,
-                String experienceRequirement,
-                String employmentType,
-                String seniority,
-                Instant postedAt
-        ) {
-            this(url, sourceLabel, title, company, location, description, skills, experienceRequirement, employmentType, seniority, postedAt, null);
-        }
-
         JobService.AddJobFromLinkRequest toServiceRequest() {
             return new JobService.AddJobFromLinkRequest(url, sourceLabel, title, company, location, description, skills,
                     experienceRequirement, employmentType, seniority, postedAt);
@@ -240,26 +210,16 @@ public class JobMcpAdapter {
     }
 
     public record AnalyzeJobLinkRequest(
-            @McpToolParam(required = true, description = "Job URL to fetch and analyze") String url,
-            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
+            @McpToolParam(required = true, description = "Job URL to fetch and analyze") String url
     ) {
-        public AnalyzeJobLinkRequest(String url) {
-            this(url, null);
-        }
-
         JobAnalysisService.AnalyzeJobLinkRequest toServiceRequest() {
             return new JobAnalysisService.AnalyzeJobLinkRequest(url);
         }
     }
 
     public record AddJobFromAnalysisRequest(
-            @McpToolParam(required = true, description = "Stored job analysis run UUID") UUID analysisRunId,
-            @McpToolParam(required = true, description = "Configured MCP access token") String accessToken
+            @McpToolParam(required = true, description = "Stored job analysis run UUID") UUID analysisRunId
     ) {
-        public AddJobFromAnalysisRequest(UUID analysisRunId) {
-            this(analysisRunId, null);
-        }
-
         JobAnalysisService.AddJobFromAnalysisRequest toServiceRequest() {
             return new JobAnalysisService.AddJobFromAnalysisRequest(analysisRunId);
         }

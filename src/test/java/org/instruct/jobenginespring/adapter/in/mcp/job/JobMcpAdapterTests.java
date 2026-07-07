@@ -9,9 +9,10 @@ import org.instruct.jobenginespring.application.job.JobAnalysisService.AddJobFro
 import org.instruct.jobenginespring.application.job.JobAnalysisService.AnalyzeJobLinkResult;
 import org.instruct.jobenginespring.application.job.JobService;
 import org.instruct.jobenginespring.application.job.JobService.AddJobResult;
-import org.instruct.jobenginespring.application.security.McpAccessPolicy;
+import org.instruct.jobenginespring.application.job.JobService.DeleteJobResult;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobPosting;
+import org.instruct.jobenginespring.domain.job.JobSkill;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
@@ -38,8 +39,6 @@ class JobMcpAdapterTests {
 
     private static final UUID JOB_ID = UUID.fromString("aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa");
     private static final Instant NOW = Instant.parse("2026-07-06T20:45:00Z");
-    private static final String ACCESS_TOKEN = "test-token";
-
     private final JobService jobService = mock(JobService.class);
     private final JobAnalysisService jobAnalysisService = mock(JobAnalysisService.class);
     private final JobMcpAdapter adapter = new JobMcpAdapter(jobService, jobAnalysisService);
@@ -56,6 +55,8 @@ class JobMcpAdapterTests {
                 "list_jobs",
                 "get_job",
                 "search_jobs",
+                "update_job",
+                "delete_job",
                 "add_job_from_text",
                 "add_job_from_link",
                 "analyze_job_link",
@@ -68,7 +69,7 @@ class JobMcpAdapterTests {
         JobPosting posting = samplePosting();
         when(jobService.listJobs()).thenReturn(List.of(posting));
 
-        CallToolResult result = adapter.listJobs(ACCESS_TOKEN);
+        CallToolResult result = adapter.listJobs();
 
         assertFalse(result.isError());
         JobMcpAdapter.ListJobsResult content = assertInstanceOf(JobMcpAdapter.ListJobsResult.class, result.structuredContent());
@@ -82,7 +83,7 @@ class JobMcpAdapterTests {
         JobAggregate aggregate = sampleAggregate();
         when(jobService.getJob(JOB_ID)).thenReturn(Optional.of(aggregate));
 
-        CallToolResult found = adapter.getJob(JOB_ID, ACCESS_TOKEN);
+        CallToolResult found = adapter.getJob(JOB_ID);
 
         assertFalse(found.isError());
         assertEquals(aggregate, found.structuredContent());
@@ -91,7 +92,7 @@ class JobMcpAdapterTests {
         UUID missingId = UUID.fromString("bbbbbbbb-1111-1111-1111-bbbbbbbbbbbb");
         when(jobService.getJob(missingId)).thenReturn(Optional.empty());
 
-        ApplicationErrorResponse response = assertErrorResponse(adapter.getJob(missingId, ACCESS_TOKEN));
+        ApplicationErrorResponse response = assertErrorResponse(adapter.getJob(missingId));
 
         assertEquals("not_found", response.code());
         assertEquals("Job not found: " + missingId, response.message());
@@ -118,6 +119,64 @@ class JobMcpAdapterTests {
         verify(jobService).addJobFromText(serviceTextRequest);
         verify(jobService).addJobFromLink(serviceLinkRequest);
         verify(jobService).searchJobs(serviceSearchRequest);
+    }
+
+    @Test
+    void updateAndDeleteToolsDelegateToService() {
+        JobMcpAdapter.UpdateJobRequest updateRequest = new JobMcpAdapter.UpdateJobRequest(
+                JOB_ID,
+                "manual paste",
+                "Senior Java Developer",
+                "Example Corp",
+                "Montreal",
+                "Build backend services",
+                List.of("Java", "Spring Boot"),
+                "5+ years",
+                "Full-time",
+                "Senior",
+                NOW
+        );
+        JobService.UpdateJobRequest serviceUpdateRequest = updateRequest.toServiceRequest();
+        JobAggregate updated = new JobAggregate(samplePosting(), List.of(sampleSkill()), null, null);
+        DeleteJobResult deleteResult = new DeleteJobResult(JOB_ID, true);
+        when(jobService.updateJob(serviceUpdateRequest)).thenReturn(updated);
+        when(jobService.deleteJob(JOB_ID)).thenReturn(deleteResult);
+
+        assertEquals(updated, adapter.updateJob(updateRequest).structuredContent());
+        assertEquals(deleteResult, adapter.deleteJob(JOB_ID).structuredContent());
+        verify(jobService).updateJob(serviceUpdateRequest);
+        verify(jobService).deleteJob(JOB_ID);
+    }
+
+    @Test
+    void updateJobRequestMapsFieldsToServiceRequest() {
+        JobMcpAdapter.UpdateJobRequest updateRequest = new JobMcpAdapter.UpdateJobRequest(
+                JOB_ID,
+                "manual paste",
+                "Senior Java Developer",
+                "Example Corp",
+                "Montreal",
+                "Build backend services",
+                List.of("Java", "Spring Boot"),
+                "5+ years",
+                "Full-time",
+                "Senior",
+                NOW
+        );
+
+        assertEquals(new JobService.UpdateJobRequest(
+                JOB_ID,
+                "manual paste",
+                "Senior Java Developer",
+                "Example Corp",
+                "Montreal",
+                "Build backend services",
+                List.of("Java", "Spring Boot"),
+                "5+ years",
+                "Full-time",
+                "Senior",
+                NOW
+        ), updateRequest.toServiceRequest());
     }
 
     @Test
@@ -177,6 +236,9 @@ class JobMcpAdapterTests {
         assertFieldRequired(JobMcpAdapter.AddJobFromLinkRequest.class, "skills", false);
         assertFieldRequired(JobMcpAdapter.JobSearchRequest.class, "query", true);
         assertFieldRequired(JobMcpAdapter.JobSearchRequest.class, "limit", false);
+        assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "jobId", true);
+        assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "title", false);
+        assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "skills", false);
         assertFieldRequired(JobMcpAdapter.AnalyzeJobLinkRequest.class, "url", true);
         assertFieldRequired(JobMcpAdapter.AddJobFromAnalysisRequest.class, "analysisRunId", true);
     }
@@ -185,7 +247,7 @@ class JobMcpAdapterTests {
     void unexpectedErrorsDoNotExposeExceptionMessages() {
         when(jobService.listJobs()).thenThrow(new RuntimeException("sensitive backend detail"));
 
-        ApplicationErrorResponse response = assertErrorResponse(adapter.listJobs(ACCESS_TOKEN));
+        ApplicationErrorResponse response = assertErrorResponse(adapter.listJobs());
 
         assertEquals("internal_error", response.code());
         assertEquals("Unexpected application error", response.message());
@@ -197,35 +259,9 @@ class JobMcpAdapterTests {
         assertSafeError(adapter.searchJobs(null));
         assertSafeError(adapter.addJobFromText(null));
         assertSafeError(adapter.addJobFromLink(null));
+        assertSafeError(adapter.updateJob(null));
         assertSafeError(adapter.analyzeJobLink(null));
         assertSafeError(adapter.addJobFromAnalysis(null));
-    }
-
-    @Test
-    void rejectsJobToolsWithoutValidAccessToken() {
-        JobMcpAdapter securedAdapter = new JobMcpAdapter(
-                jobService,
-                jobAnalysisService,
-                McpAccessPolicy.configured("secret")
-        );
-        JobMcpAdapter.AddJobFromTextRequest request = new JobMcpAdapter.AddJobFromTextRequest(
-                "Java Developer",
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                "wrong"
-        );
-
-        assertEquals("authorization_error", assertErrorResponse(securedAdapter.listJobs(null)).code());
-        assertEquals("authorization_error", assertErrorResponse(securedAdapter.getJob(JOB_ID, "wrong")).code());
-        assertEquals("authorization_error", assertErrorResponse(securedAdapter.addJobFromText(request)).code());
     }
 
     private static void assertSafeError(CallToolResult result) {
@@ -274,6 +310,18 @@ class JobMcpAdapterTests {
                 null,
                 "fingerprint",
                 NOW,
+                NOW
+        );
+    }
+
+    private static JobSkill sampleSkill() {
+        return new JobSkill(
+                UUID.fromString("dddddddd-1111-1111-1111-dddddddddddd"),
+                JOB_ID,
+                "Java",
+                "java",
+                true,
+                0,
                 NOW
         );
     }

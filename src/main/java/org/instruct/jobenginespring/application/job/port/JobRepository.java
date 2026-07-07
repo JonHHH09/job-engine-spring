@@ -20,4 +20,8 @@ public interface JobRepository {
     Optional<JobAggregate> findByInputTextHash(String inputTextHash);
 
     JobAggregate saveJobAggregate(JobAggregate aggregate);
+
+    JobAggregate updateJobAggregate(JobAggregate aggregate);
+
+    boolean deleteJob(UUID jobId);
 }

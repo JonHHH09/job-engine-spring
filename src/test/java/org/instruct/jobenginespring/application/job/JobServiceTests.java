@@ -4,7 +4,9 @@ import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.JobService.AddJobFromLinkRequest;
 import org.instruct.jobenginespring.application.job.JobService.AddJobFromTextRequest;
 import org.instruct.jobenginespring.application.job.JobService.AddJobResult;
+import org.instruct.jobenginespring.application.job.JobService.DeleteJobResult;
 import org.instruct.jobenginespring.application.job.JobService.JobSearchRequest;
+import org.instruct.jobenginespring.application.job.JobService.UpdateJobRequest;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
@@ -14,6 +16,7 @@ import org.instruct.jobenginespring.domain.job.JobSkill;
 import org.instruct.jobenginespring.domain.job.JobTextIngestion;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.time.Clock;
 import java.time.Instant;
@@ -28,6 +31,7 @@ import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -404,6 +408,240 @@ class JobServiceTests {
     }
 
     @Test
+    void updateJobPreservesOmittedFieldsAndReplacesProvidedSkills() {
+        AddJobResult created = service.addJobFromText(new AddJobFromTextRequest(
+                "Backend Developer",
+                "manual paste",
+                "Backend Developer",
+                "Example Corp",
+                "Remote",
+                "Build backend services",
+                List.of("Java", "Spring Boot"),
+                "3+ years",
+                "Full-time",
+                "Mid",
+                NOW.minusSeconds(60)
+        ));
+        UUID jobId = created.job().job().id();
+
+        JobAggregate updated = service.updateJob(new UpdateJobRequest(
+                jobId,
+                null,
+                "Senior Backend Developer",
+                null,
+                null,
+                "Build platform services",
+                List.of("Kubernetes", "Java", "kubernetes"),
+                null,
+                null,
+                null,
+                null
+        ));
+
+        assertEquals(jobId, updated.job().id());
+        assertEquals("manual paste", updated.job().sourceLabel());
+        assertEquals("Senior Backend Developer", updated.job().title());
+        assertEquals("Example Corp", updated.job().company());
+        assertEquals("Remote", updated.job().location());
+        assertEquals("Build platform services", updated.job().description());
+        assertEquals("3+ years", updated.job().experienceRequirement());
+        assertEquals("Full-time", updated.job().employmentType());
+        assertEquals("Mid", updated.job().seniority());
+        assertEquals(NOW.minusSeconds(60), updated.job().postedAt());
+        assertEquals(NOW, updated.job().updatedAt());
+        assertEquals(List.of("kubernetes", "java"), updated.skills().stream()
+                .map(JobSkill::normalizedSkill)
+                .toList());
+        assertEquals(updated, repository.findJobAggregate(jobId).orElseThrow());
+    }
+
+    @Test
+    void updateJobPreservesOmittedSkillsAndClearsNullableFields() {
+        AddJobResult created = service.addJobFromText(new AddJobFromTextRequest(
+                "Backend Developer",
+                "manual paste",
+                "Backend Developer",
+                "Example Corp",
+                "Remote",
+                "Build backend services",
+                List.of("Java", "Spring Boot"),
+                "3+ years",
+                "Full-time",
+                "Mid",
+                NOW.minusSeconds(60)
+        ));
+        UUID jobId = created.job().job().id();
+
+        JobAggregate updated = service.updateJob(new UpdateJobRequest(
+                jobId,
+                " updated source ",
+                null,
+                " ",
+                " Toronto ",
+                null,
+                null,
+                " ",
+                " Contract ",
+                " ",
+                NOW.plusSeconds(30)
+        ));
+
+        assertEquals("updated source", updated.job().sourceLabel());
+        assertEquals("Backend Developer", updated.job().title());
+        assertEquals(null, updated.job().company());
+        assertEquals("Toronto", updated.job().location());
+        assertEquals("Build backend services", updated.job().description());
+        assertEquals(null, updated.job().experienceRequirement());
+        assertEquals("Contract", updated.job().employmentType());
+        assertEquals(null, updated.job().seniority());
+        assertEquals(NOW.plusSeconds(30), updated.job().postedAt());
+        assertEquals(List.of("java", "spring boot"), updated.skills().stream()
+                .map(JobSkill::normalizedSkill)
+                .toList());
+    }
+
+    @Test
+    void updateJobAllowsUnchangedCanonicalFingerprint() {
+        AddJobResult created = service.addJobFromText(new AddJobFromTextRequest(
+                "Backend Developer",
+                "manual paste",
+                "Backend Developer",
+                "Example Corp",
+                "Remote",
+                "Build backend services",
+                List.of("Java"),
+                null,
+                null,
+                null,
+                null
+        ));
+        UUID jobId = created.job().job().id();
+        String fingerprint = created.job().job().canonicalFingerprint();
+
+        JobAggregate updated = service.updateJob(new UpdateJobRequest(
+                jobId,
+                "refined source",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        assertEquals("refined source", updated.job().sourceLabel());
+        assertEquals(fingerprint, updated.job().canonicalFingerprint());
+    }
+
+    @Test
+    void updateJobRejectsInvalidRequestsAndMissingJobs() {
+        assertInvalidUpdateRequest(null, "request", "must not be null");
+        assertInvalidUpdateRequest(new UpdateJobRequest(null, null, null, null, null, null, null, null, null, null, null), "jobId", "must not be null");
+        assertInvalidUpdateRequest(new UpdateJobRequest(UUID.randomUUID(), null, " ", null, null, null, null, null, null, null, null), "title", "must not be blank");
+        assertInvalidUpdateRequest(new UpdateJobRequest(UUID.randomUUID(), null, null, null, null, " ", null, null, null, null, null), "description", "must not be blank");
+
+        UUID missingId = UUID.fromString("99999999-1111-1111-1111-999999999999");
+        ApplicationException missing = assertThrows(ApplicationException.class, () -> service.updateJob(new UpdateJobRequest(
+                missingId,
+                null,
+                "Senior Backend Developer",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        )));
+
+        assertEquals("not_found", missing.errorCode().code());
+        assertEquals(Map.of("resource", "job", "jobId", missingId.toString()), missing.details());
+    }
+
+    @Test
+    void updateJobRejectsDuplicateCanonicalFingerprintBeforePersistence() {
+        AddJobResult first = service.addJobFromText(new AddJobFromTextRequest(
+                "Backend Developer",
+                "manual paste",
+                "Backend Developer",
+                "Example Corp",
+                "Remote",
+                "Build backend services",
+                List.of("Java"),
+                null,
+                null,
+                null,
+                null
+        ));
+        AddJobResult second = service.addJobFromText(new AddJobFromTextRequest(
+                "Platform Developer",
+                "manual paste",
+                "Platform Developer",
+                "Other Corp",
+                "Toronto",
+                "Build platform tooling",
+                List.of("Kubernetes"),
+                null,
+                null,
+                null,
+                null
+        ));
+        UUID secondId = second.job().job().id();
+
+        ApplicationException duplicate = assertThrows(ApplicationException.class, () -> service.updateJob(new UpdateJobRequest(
+                secondId,
+                null,
+                first.job().job().title(),
+                first.job().job().company(),
+                first.job().job().location(),
+                first.job().job().description(),
+                null,
+                null,
+                null,
+                null,
+                null
+        )));
+
+        assertEquals("validation_error", duplicate.errorCode().code());
+        assertEquals(Map.of(
+                "field", "canonicalFingerprint",
+                "reason", "duplicates existing job " + first.job().job().id()
+        ), duplicate.details());
+        assertEquals(second.job(), repository.findJobAggregate(secondId).orElseThrow());
+    }
+
+    @Test
+    void deleteJobRemovesExistingJobAndReportsMissingJob() {
+        AddJobResult created = service.addJobFromText(new AddJobFromTextRequest(
+                "Backend Developer",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+        UUID jobId = created.job().job().id();
+
+        DeleteJobResult result = service.deleteJob(jobId);
+
+        assertEquals(new DeleteJobResult(jobId, true), result);
+        assertEquals(Optional.empty(), service.getJob(jobId));
+        assertFalse(repository.deleteJob(jobId));
+        ApplicationException missing = assertThrows(ApplicationException.class, () -> service.deleteJob(jobId));
+        assertEquals("not_found", missing.errorCode().code());
+        assertEquals(Map.of("resource", "job", "jobId", jobId.toString()), missing.details());
+    }
+
+    @Test
     void rejectsInvalidRequestsBeforePersistence() {
         assertInvalidTextRequest(null, "request", "must not be null");
         assertInvalidTextRequest(new AddJobFromTextRequest(null, null, null, null, null, null, null, null, null, null, null), "text", "must not be blank");
@@ -506,6 +744,7 @@ class JobServiceTests {
         assertEquals("https://example.test/jobs/123", result.job().linkIngestion().normalizedUrl());
     }
 
+
     @Test
     void domainJobRecordsRejectInvalidRequiredFields() {
         assertThrows(IllegalArgumentException.class, () -> new JobPosting(
@@ -559,6 +798,7 @@ class JobServiceTests {
         Method firstPresent = JobService.class.getDeclaredMethod("firstPresent", String[].class);
         Method normalizedKey = JobService.class.getDeclaredMethod("normalizedKey", String.class);
         Method tokens = JobService.class.getDeclaredMethod("tokens", String.class);
+        Method patchRequired = JobService.class.getDeclaredMethod("patchRequired", String.class, String.class, String.class);
         extractSkills.setAccessible(true);
         extractExperience.setAccessible(true);
         mergeSkills.setAccessible(true);
@@ -569,6 +809,7 @@ class JobServiceTests {
         firstPresent.setAccessible(true);
         normalizedKey.setAccessible(true);
         tokens.setAccessible(true);
+        patchRequired.setAccessible(true);
 
         assertEquals(List.of(), extractSkills.invoke(null, " "));
         assertEquals(List.of(), extractSkills.invoke(null, new Object[]{null}));
@@ -607,6 +848,13 @@ class JobServiceTests {
         assertEquals(List.of(), tokens.invoke(null, " "));
         assertEquals(List.of("java"), tokens.invoke(null, " java "));
         assertEquals(List.of("java", "spring"), tokens.invoke(null, "---java---spring---"));
+        assertEquals("Current title", patchRequired.invoke(null, "Current title", null, "title"));
+        InvocationTargetException blankPatch = assertThrows(
+                InvocationTargetException.class,
+                () -> patchRequired.invoke(null, "Current title", " ", "title")
+        );
+        ApplicationException blankPatchCause = (ApplicationException) blankPatch.getCause();
+        assertEquals(Map.of("field", "title", "reason", "must not be blank"), blankPatchCause.details());
         AddJobResult derivedTitle = service.addJobFromText(new AddJobFromTextRequest(
                 "X".repeat(161) + "\nShort title",
                 null,
@@ -625,6 +873,13 @@ class JobServiceTests {
 
     private void assertInvalidTextRequest(AddJobFromTextRequest request, String field, String reason) {
         ApplicationException exception = assertThrows(ApplicationException.class, () -> service.addJobFromText(request));
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals("Invalid job request", exception.safeMessage());
+        assertEquals(Map.of("field", field, "reason", reason), exception.details());
+    }
+
+    private void assertInvalidUpdateRequest(UpdateJobRequest request, String field, String reason) {
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateJob(request));
         assertEquals("validation_error", exception.errorCode().code());
         assertEquals("Invalid job request", exception.safeMessage());
         assertEquals(Map.of("field", field, "reason", reason), exception.details());
@@ -687,6 +942,17 @@ class JobServiceTests {
             }
             aggregates.put(aggregate.job().id(), aggregate);
             return aggregate;
+        }
+
+        @Override
+        public JobAggregate updateJobAggregate(JobAggregate aggregate) {
+            aggregates.put(aggregate.job().id(), aggregate);
+            return aggregate;
+        }
+
+        @Override
+        public boolean deleteJob(UUID jobId) {
+            return aggregates.remove(jobId) != null;
         }
     }
 }

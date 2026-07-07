@@ -1,7 +1,6 @@
 package org.instruct.jobenginespring.application.job;
 
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
@@ -39,7 +38,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
-@RequiredArgsConstructor(onConstructor_ = @Autowired)
 public class JobService {
 
     private static final String SOURCE_METHOD_LINK = "link";
@@ -55,6 +53,12 @@ public class JobService {
     @NonNull
     private final JobLinkContentFetcher linkContentFetcher;
     private Clock clock = Clock.systemUTC();
+
+    @Autowired
+    public JobService(JobRepository jobRepository, JobLinkContentFetcher linkContentFetcher) {
+        this.jobRepository = Objects.requireNonNull(jobRepository, "jobRepository must not be null");
+        this.linkContentFetcher = Objects.requireNonNull(linkContentFetcher, "linkContentFetcher must not be null");
+    }
 
     JobService(JobRepository jobRepository, JobLinkContentFetcher linkContentFetcher, Clock clock) {
         this(jobRepository, linkContentFetcher);
@@ -88,6 +92,48 @@ public class JobService {
                 .limit(safeRequest.limit())
                 .toList();
         return new JobSearchResult(safeRequest.query().strip(), queryTokens, matches.size(), matches);
+    }
+
+    @Transactional
+    public JobAggregate updateJob(UpdateJobRequest request) {
+        UpdateJobRequest safeRequest = validateUpdate(request);
+        JobAggregate existing = jobRepository.findJobAggregate(safeRequest.jobId())
+                .orElseThrow(() -> new JobNotFoundException(safeRequest.jobId()));
+        JobPosting current = existing.job();
+        String title = patchRequired(current.title(), safeRequest.title(), "title");
+        String company = patchNullable(current.company(), safeRequest.company());
+        String location = patchNullable(current.location(), safeRequest.location());
+        String description = patchRequired(current.description(), safeRequest.description(), "description");
+        Instant now = clock.instant();
+        String canonicalFingerprint = fingerprint(title, company, location, description);
+        rejectDuplicateUpdateFingerprint(current.id(), canonicalFingerprint);
+        JobPosting updated = new JobPosting(
+                current.id(),
+                current.sourceMethod(),
+                patchNullable(current.sourceLabel(), safeRequest.sourceLabel()),
+                title,
+                company,
+                location,
+                description,
+                patchNullable(current.experienceRequirement(), safeRequest.experienceRequirement()),
+                patchNullable(current.employmentType(), safeRequest.employmentType()),
+                patchNullable(current.seniority(), safeRequest.seniority()),
+                safeRequest.postedAt() == null ? current.postedAt() : safeRequest.postedAt(),
+                canonicalFingerprint,
+                current.createdAt(),
+                now
+        );
+        List<JobSkill> updatedSkills = safeRequest.skills() == null ? existing.skills() : skills(current.id(), safeRequest.skills(), now);
+        return jobRepository.updateJobAggregate(new JobAggregate(updated, updatedSkills, existing.linkIngestion(), existing.textIngestion()));
+    }
+
+    @Transactional
+    public DeleteJobResult deleteJob(UUID jobId) {
+        Objects.requireNonNull(jobId, "jobId must not be null");
+        if (!jobRepository.deleteJob(jobId)) {
+            throw new JobNotFoundException(jobId);
+        }
+        return new DeleteJobResult(jobId, true);
     }
 
     @Transactional
@@ -231,6 +277,14 @@ public class JobService {
         return new AddJobResult(status, saved);
     }
 
+    private void rejectDuplicateUpdateFingerprint(UUID currentJobId, String canonicalFingerprint) {
+        jobRepository.findByCanonicalFingerprint(canonicalFingerprint)
+                .filter(existing -> !existing.job().id().equals(currentJobId))
+                .ifPresent(existing -> {
+                    throw validation("canonicalFingerprint", "duplicates existing job " + existing.job().id());
+                });
+    }
+
     private static AddJobFromTextRequest validateTextRequest(AddJobFromTextRequest request) {
         if (request == null) {
             throw validation("request", "must not be null");
@@ -320,6 +374,22 @@ public class JobService {
             throw validation("limit", "must be between 1 and " + MAX_SEARCH_LIMIT);
         }
         return new JobSearchRequest(request.query().strip(), limit);
+    }
+
+    private static UpdateJobRequest validateUpdate(UpdateJobRequest request) {
+        if (request == null) {
+            throw validation("request", "must not be null");
+        }
+        if (request.jobId() == null) {
+            throw validation("jobId", "must not be null");
+        }
+        if (request.title() != null && request.title().isBlank()) {
+            throw validation("title", "must not be blank");
+        }
+        if (request.description() != null && request.description().isBlank()) {
+            throw validation("description", "must not be blank");
+        }
+        return request;
     }
 
     private static List<JobSkill> skills(UUID jobId, List<String> rawSkills, Instant createdAt) {
@@ -425,11 +495,15 @@ public class JobService {
     }
 
     private static String fingerprint(DraftJob draft) {
+        return fingerprint(draft.title(), draft.company(), draft.location(), draft.description());
+    }
+
+    private static String fingerprint(String title, String company, String location, String description) {
         return sha256(String.join("\n",
-                normalizedKey(draft.title()),
-                normalizedKey(draft.company()),
-                normalizedKey(draft.location()),
-                canonicalWhitespace(draft.description())
+                normalizedKey(title),
+                normalizedKey(company),
+                normalizedKey(location),
+                canonicalWhitespace(description)
         ));
     }
 
@@ -469,6 +543,21 @@ public class JobService {
             }
         }
         return null;
+    }
+
+    private static String patchNullable(String current, String patch) {
+        return patch == null ? current : cleanToNull(patch);
+    }
+
+    private static String patchRequired(String current, String patch, String fieldName) {
+        if (patch == null) {
+            return current;
+        }
+        String cleaned = cleanToNull(patch);
+        if (cleaned == null) {
+            throw validation(fieldName, "must not be blank");
+        }
+        return cleaned;
     }
 
     private static String canonicalWhitespace(String value) {
@@ -569,6 +658,24 @@ public class JobService {
     }
 
     public record JobSearchRequest(String query, Integer limit) {
+    }
+
+    public record UpdateJobRequest(
+            UUID jobId,
+            String sourceLabel,
+            String title,
+            String company,
+            String location,
+            String description,
+            List<String> skills,
+            String experienceRequirement,
+            String employmentType,
+            String seniority,
+            Instant postedAt
+    ) {
+    }
+
+    public record DeleteJobResult(UUID jobId, boolean deleted) {
     }
 
     public record JobSearchResult(String query, List<String> queryTokens, int totalMatches, List<JobSearchMatch> jobs) {

@@ -38,12 +38,12 @@ public class PostgresJobRepository implements JobRepository {
     @Override
     public List<JobPosting> listJobs() {
         return jdbc.sql("""
-                SELECT id, source_method, source_label, title, company, location, description,
-                       experience_requirement, employment_type, seniority, posted_at,
-                       canonical_fingerprint, created_at, updated_at
-                FROM job_schema.jobs
-                ORDER BY posted_at DESC NULLS LAST, created_at DESC, title, id
-                """)
+                        SELECT id, source_method, source_label, title, company, location, description,
+                               experience_requirement, employment_type, seniority, posted_at,
+                               canonical_fingerprint, created_at, updated_at
+                        FROM job_schema.jobs
+                        ORDER BY posted_at DESC NULLS LAST, created_at DESC, title, id
+                        """)
                 .query(this::mapJob)
                 .list();
     }
@@ -141,10 +141,62 @@ public class PostgresJobRepository implements JobRepository {
         return findJobAggregate(job.id()).orElseThrow();
     }
 
+    @Override
+    public JobAggregate updateJobAggregate(JobAggregate aggregate) {
+        JobPosting job = aggregate.job();
+        int updatedJobs = jdbc.sql("""
+                        UPDATE job_schema.jobs
+                        SET source_label = :sourceLabel,
+                            title = :title,
+                            company = :company,
+                            location = :location,
+                            description = :description,
+                            experience_requirement = :experienceRequirement,
+                            employment_type = :employmentType,
+                            seniority = :seniority,
+                            posted_at = :postedAt,
+                            canonical_fingerprint = :canonicalFingerprint,
+                            updated_at = :updatedAt
+                        WHERE id = :id
+                        """)
+                .param("id", job.id())
+                .param("sourceLabel", job.sourceLabel())
+                .param("title", job.title())
+                .param("company", job.company())
+                .param("location", job.location())
+                .param("description", job.description())
+                .param("experienceRequirement", job.experienceRequirement())
+                .param("employmentType", job.employmentType())
+                .param("seniority", job.seniority())
+                .param("postedAt", timestamp(job.postedAt()))
+                .param("canonicalFingerprint", job.canonicalFingerprint())
+                .param("updatedAt", Timestamp.from(job.updatedAt()))
+                .update();
+        if (updatedJobs == 0) {
+            throw new IllegalStateException("Job disappeared during update: " + job.id());
+        }
+        replaceSkills(job.id(), aggregate.skills());
+        return findJobAggregate(job.id()).orElseThrow();
+    }
+
+    @Override
+    public boolean deleteJob(UUID jobId) {
+        return jdbc.sql("DELETE FROM job_schema.jobs WHERE id = :jobId")
+                .param("jobId", jobId)
+                .update() > 0;
+    }
+
     private void deleteInsertedJob(UUID jobId) {
         jdbc.sql("DELETE FROM job_schema.jobs WHERE id = :jobId")
                 .param("jobId", jobId)
                 .update();
+    }
+
+    private void replaceSkills(UUID jobId, List<JobSkill> skills) {
+        jdbc.sql("DELETE FROM job_schema.job_skills WHERE job_id = :jobId")
+                .param("jobId", jobId)
+                .update();
+        batchInsertSkills(skills);
     }
 
     private Optional<JobPosting> findJobById(UUID jobId) {

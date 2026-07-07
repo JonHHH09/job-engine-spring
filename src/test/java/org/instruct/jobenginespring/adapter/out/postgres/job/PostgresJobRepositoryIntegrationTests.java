@@ -25,6 +25,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
@@ -285,6 +287,94 @@ class PostgresJobRepositoryIntegrationTests {
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM job_schema.jobs", Integer.class));
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_link_ingestions", Integer.class));
         assertTrue(repository.findByNormalizedSourceUrl("https://example.test/jobs/1").isPresent());
+    }
+
+    @Test
+    void updatesJobAggregateAndReplacesPersistedSkills() {
+        repository.saveJobAggregate(textAggregate("fingerprint-before-update", "hash-before-update"));
+        JobPosting updatedPosting = new JobPosting(
+                JOB_ID,
+                "text",
+                "Updated Source",
+                "Senior Java Developer",
+                "Updated Corp",
+                "Montreal",
+                "Build platform services",
+                "5+ years",
+                "Contract",
+                "Senior",
+                NOW.plusSeconds(30),
+                "fingerprint-after-update",
+                NOW,
+                NOW.plusSeconds(60)
+        );
+        JobAggregate updated = repository.updateJobAggregate(new JobAggregate(
+                updatedPosting,
+                List.of(
+                        new JobSkill(UUID.fromString("bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee"), JOB_ID, "Kubernetes", "kubernetes", true, 0, NOW.plusSeconds(60)),
+                        new JobSkill(UUID.fromString("cccccccc-bbbb-cccc-dddd-eeeeeeeeeeee"), JOB_ID, "Java", "java", true, 1, NOW.plusSeconds(60))
+                ),
+                null,
+                new JobTextIngestion(
+                        UUID.fromString("66666666-2222-3333-4444-555555555555"),
+                        JOB_ID,
+                        "manual paste",
+                        "hash-before-update",
+                        NOW
+                )
+        ));
+
+        JobAggregate found = repository.findJobAggregate(JOB_ID).orElseThrow();
+
+        assertEquals("Senior Java Developer", updated.job().title());
+        assertEquals("Updated Source", found.job().sourceLabel());
+        assertEquals("Updated Corp", found.job().company());
+        assertEquals("Montreal", found.job().location());
+        assertEquals("Build platform services", found.job().description());
+        assertEquals("5+ years", found.job().experienceRequirement());
+        assertEquals("Contract", found.job().employmentType());
+        assertEquals("Senior", found.job().seniority());
+        assertEquals(NOW.plusSeconds(30), found.job().postedAt());
+        assertEquals(NOW.plusSeconds(60), found.job().updatedAt());
+        assertEquals(List.of("kubernetes", "java"), found.skills().stream().map(JobSkill::normalizedSkill).toList());
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_skills WHERE job_id = ?", Integer.class, JOB_ID));
+    }
+
+    @Test
+    void updateJobAggregateFailsWhenJobRowIsMissing() {
+        UUID missingJobId = UUID.fromString("44444444-2222-3333-4444-555555555555");
+        JobAggregate missingAggregate = new JobAggregate(
+                posting(missingJobId, "text", "fingerprint-missing-update"),
+                List.of(),
+                null,
+                null
+        );
+
+        IllegalStateException exception = assertThrows(
+                IllegalStateException.class,
+                () -> repository.updateJobAggregate(missingAggregate)
+        );
+
+        assertEquals("Job disappeared during update: " + missingJobId, exception.getMessage());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_skills", Integer.class));
+    }
+
+    @Test
+    void deletesJobAggregateAndReturnsFalseWhenMissing() {
+        repository.saveJobAggregate(linkAggregate(
+                JOB_ID,
+                UUID.fromString("12121212-1212-1212-1212-121212121212"),
+                "fingerprint-delete",
+                "https://example.test/jobs/delete"
+        ));
+
+        assertTrue(repository.deleteJob(JOB_ID));
+
+        assertEquals(Optional.empty(), repository.findJobAggregate(JOB_ID));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM job_schema.jobs", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_skills", Integer.class));
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_link_ingestions", Integer.class));
+        assertFalse(repository.deleteJob(JOB_ID));
     }
 
     private static JobAggregate textAggregate(String fingerprint, String textHash) {
