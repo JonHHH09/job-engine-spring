@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 RUN_TESTS="${RUN_TESTS:-true}"
+RUN_MCP_TEST="${RUN_MCP_TEST:-true}"
 MCP_SERVER_NAME="${MCP_SERVER_NAME:-job-engine-spring}"
 JAR_PATH="target/job-engine-spring-0.0.1-SNAPSHOT.jar"
 
@@ -16,7 +17,9 @@ fi
 
 test -f "$JAR_PATH"
 
-if command -v hermes >/dev/null 2>&1; then
+if [[ "$RUN_MCP_TEST" != "true" ]]; then
+  printf 'Skipped MCP connection test for %s.\n' "$MCP_SERVER_NAME" >&2
+elif command -v hermes >/dev/null 2>&1; then
   hermes mcp test "$MCP_SERVER_NAME"
 else
   printf 'Hermes CLI not found on PATH; built %s but skipped MCP connection test.\n' "$JAR_PATH" >&2
