@@ -65,11 +65,13 @@ jobs:
           SOURCE_JAR="target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar"
           RELEASE_JAR="job-engine-spring-${{ steps.release.outputs.release_tag }}.jar"
 
-          test -f "$SOURCE_JAR"
-          cp "$SOURCE_JAR" "$RELEASE_JAR"
+      - name: Prepare versioned release jar
+        run: |
+          test -f target/job-engine-spring-0.0.1-SNAPSHOT.jar
+          cp target/job-engine-spring-0.0.1-SNAPSHOT.jar "job-engine-spring-${GITHUB_REF_NAME}.jar"
 
       - name: Create jar checksum
-        run: sha256sum "job-engine-spring-${{ steps.release.outputs.release_tag }}.jar" > SHA256SUMS
+        run: sha256sum "job-engine-spring-${GITHUB_REF_NAME}.jar" > SHA256SUMS
 
       - name: Build release container image from verified jar
         run: |
@@ -107,12 +109,12 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
           IMAGE_REPOSITORY=ghcr.io/${GITHUB_REPOSITORY,,}
-          IMAGE_NAME="${IMAGE_REPOSITORY}:${RELEASE_TAG}"
+          IMAGE_NAME="${IMAGE_REPOSITORY}:${GITHUB_REF_NAME}"
 
           docker tag job-engine-spring:release-candidate "$IMAGE_NAME"
           docker push "$IMAGE_NAME"
 
-          if [[ "$RELEASE_TAG" != *-* ]]; then
+          if [[ "${GITHUB_REF_NAME}" != *-* ]]; then
             docker tag job-engine-spring:release-candidate "${IMAGE_REPOSITORY}:latest"
             docker push "${IMAGE_REPOSITORY}:latest"
           fi
@@ -126,7 +128,7 @@ jobs:
           name: ${{ steps.release.outputs.release_tag }}
           generate_release_notes: true
           files: |
-            job-engine-spring-${{ steps.release.outputs.release_tag }}.jar
+            job-engine-spring-${{ github.ref_name }}.jar
             SHA256SUMS
             IMAGE-ID
             IMAGE-DIGESTS
