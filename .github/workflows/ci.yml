@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    branches:
+      - development
   push:
     branches:
       - development
@@ -16,9 +18,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate-pipeline:
+    name: Validate pipeline definitions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Check workflow syntax
+        uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 # 1.7.7
+
+      - name: Check shell scripts
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
+        with:
+          scandir: scripts
+
+      - name: Check Python smoke helper syntax
+        run: python3 -m py_compile scripts/smoke-mcp-stdio.py
+
+      - name: Validate Docker Compose configuration
+        run: docker compose config >/tmp/job-engine-compose-config.yaml
+
+      - name: Check whitespace
+        run: git diff --check
+
   unit:
     name: Unit tests
     runs-on: ubuntu-latest
+    if: github.event_name != 'push' || github.ref != 'refs/heads/master'
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -34,9 +62,6 @@ jobs:
       - name: Run unit tests
         run: ./mvnw test
 
-      - name: Check whitespace
-        run: git diff --check
-
       - name: Upload unit reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -50,7 +75,10 @@ jobs:
   integration:
     name: Integration and coverage gate
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/development'
+    needs:
+      - validate-pipeline
+      - unit
     timeout-minutes: 35
     steps:
       - name: Checkout
@@ -83,7 +111,10 @@ jobs:
   container-mcp-smoke:
     name: Container MCP STDIO smoke
     runs-on: ubuntu-latest
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/development'
+    needs:
+      - validate-pipeline
+      - unit
     timeout-minutes: 25
     steps:
       - name: Checkout
@@ -96,8 +127,39 @@ jobs:
         run: docker build -t job-engine-spring:ci .
 
       - name: Smoke-test MCP over container STDIO
-        run: MCP_IMAGE=job-engine-spring:ci MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh
+        run: MCP_IMAGE=job-engine-spring:ci MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
 
       - name: Compose cleanup
         if: always()
-        run: docker compose down -v --remove-orphans
+        run: docker compose down --remove-orphans
+
+  master-promotion:
+    name: Master promotion guard
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs:
+      - validate-pipeline
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Verify master matches development
+        shell: bash
+        run: |
+          git fetch --no-tags origin development
+          git merge-base --is-ancestor origin/development "$GITHUB_SHA"
+
+          development_tree="$(git rev-parse 'origin/development^{tree}')"
+          master_tree="$(git rev-parse "${GITHUB_SHA}^{tree}")"
+
+          if [[ "$master_tree" != "$development_tree" ]]; then
+            echo "::error::Master contains changes that are not identical to origin/development."
+            echo "Plain master pushes are promotion-only and must not introduce master-only changes."
+            git diff --stat origin/development "$GITHUB_SHA"
+            exit 1
+          fi
+
+          echo "Master promotion matches origin/development exactly. Heavy CI remains on development and release tags."

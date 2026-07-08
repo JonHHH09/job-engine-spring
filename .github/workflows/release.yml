@@ -103,7 +103,7 @@ jobs:
             .
 
       - name: Smoke-test release image
-        run: MCP_IMAGE=job-engine-spring:release-candidate MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh
+        run: MCP_IMAGE=job-engine-spring:release-candidate MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
 
       - name: Record image ID
         run: docker image inspect job-engine-spring:release-candidate --format '{{.Id}}' > IMAGE-ID
@@ -153,4 +153,4 @@ jobs:
 
       - name: Compose cleanup
         if: always()
-        run: docker compose down -v --remove-orphans
+        run: docker compose down --remove-orphans
