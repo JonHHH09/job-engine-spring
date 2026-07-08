@@ -222,4 +222,4 @@ To publish a release explicitly, run the release helper with the desired version
 ./scripts/release.sh v0.1.0
 ```
 
-The helper requires a clean working tree, fast-forwards local `master` from `origin/master`, refuses existing local or remote tags, creates an annotated `vMAJOR.MINOR.PATCH` tag, and pushes only that tag. The tag push triggers `.github/workflows/release.yml`, which performs verification before publishing the GitHub Release and GHCR image.
+The helper requires a clean working tree, fetches `origin/master`, refuses existing local or remote tags, creates an annotated `vMAJOR.MINOR.PATCH[-PRERELEASE]` tag that points exactly at `origin/master`, and pushes only that tag. The tag push triggers `.github/workflows/release.yml`, which performs verification before publishing the GitHub Release and GHCR image.

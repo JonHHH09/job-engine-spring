@@ -26,7 +26,7 @@ if [[ -z "$release_tag" ]]; then
   exit 64
 fi
 
-if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+if [[ ! "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z-]*(\.[0-9A-Za-z][0-9A-Za-z-]*)*)?$ ]]; then
   echo "Release tag must use vMAJOR.MINOR.PATCH format, optionally with a prerelease suffix." >&2
   exit 64
 fi
@@ -40,14 +40,6 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 65
 fi
 
-original_branch="$(git branch --show-current || true)"
-restore_original_branch() {
-  if [[ -n "$original_branch" && "$(git branch --show-current || true)" != "$original_branch" ]]; then
-    git switch "$original_branch" >/dev/null
-  fi
-}
-trap restore_original_branch EXIT
-
 if git rev-parse -q --verify "refs/tags/$release_tag" >/dev/null; then
   echo "Local tag already exists: $release_tag" >&2
   exit 66
@@ -58,17 +50,15 @@ if git ls-remote --exit-code --tags origin "refs/tags/$release_tag" >/dev/null 2
   exit 66
 fi
 
-git fetch origin --prune
-git switch master
-git pull --ff-only origin master
+git fetch origin master --prune
 
 if [[ -n "$(git status --porcelain)" ]]; then
-  echo "Working tree changed unexpectedly after updating master." >&2
+  echo "Working tree changed unexpectedly after fetching origin/master." >&2
   git status --short
   exit 65
 fi
 
-release_sha="$(git rev-parse HEAD)"
+release_sha="$(git rev-parse origin/master)"
 git tag -a "$release_tag" -m "Release $release_tag" "$release_sha"
 git push origin "$release_tag"
 
