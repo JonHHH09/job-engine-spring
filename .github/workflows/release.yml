@@ -39,9 +39,13 @@ jobs:
         id: release
         shell: bash
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" && "${{ github.event.pull_request.merged }}" == "true" && "${{ github.event.pull_request.base.ref }}" == "master" ]]; then
-            RELEASE_VERSION="0.0.${GITHUB_RUN_NUMBER}"
-            RELEASE_TAG="v${RELEASE_VERSION}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+              echo "Release tags must use vMAJOR.MINOR.PATCH format, optionally with a prerelease suffix." >&2
+              exit 1
+            fi
+            RELEASE_VERSION="${RELEASE_TAG#v}"
             PUBLISH_RELEASE=true
           else
             RELEASE_TAG="dry-run-${GITHUB_RUN_ID}"
@@ -59,6 +63,12 @@ jobs:
 
       - name: Run full verification and build jar
         run: ./mvnw -Drevision="${{ steps.release.outputs.release_version }}" -Pintegration-tests verify
+
+      - name: Prepare versioned release jar
+        shell: bash
+        run: |
+          SOURCE_JAR="target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar"
+          RELEASE_JAR="job-engine-spring-${{ steps.release.outputs.release_tag }}.jar"
 
       - name: Prepare versioned release jar
         shell: bash
@@ -123,8 +133,6 @@ jobs:
         if: ${{ steps.release.outputs.publish_release == 'true' }}
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
-          tag_name: ${{ steps.release.outputs.release_tag }}
-          target_commitish: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
           name: ${{ steps.release.outputs.release_tag }}
           generate_release_notes: true
           files: |
