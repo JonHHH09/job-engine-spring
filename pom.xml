@@ -32,6 +32,8 @@
         <jacoco.version>0.8.13</jacoco.version>
         <spring-ai.version>2.0.0</spring-ai.version>
         <testcontainers.version>2.0.5</testcontainers.version>
+        <surefireArgLine/>
+        <failsafeArgLine/>
     </properties>
     <dependencies>
         <dependency>
@@ -206,6 +208,10 @@
                         <goals>
                             <goal>prepare-agent</goal>
                         </goals>
+                        <configuration>
+                            <destFile>${project.build.directory}/jacoco-ut.exec</destFile>
+                            <propertyName>surefireArgLine</propertyName>
+                        </configuration>
                     </execution>
                     <execution>
                         <id>report</id>
@@ -213,6 +219,9 @@
                         <goals>
                             <goal>report</goal>
                         </goals>
+                        <configuration>
+                            <dataFile>${project.build.directory}/jacoco-ut.exec</dataFile>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
@@ -220,7 +229,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>@{argLine} -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</argLine>
+                    <argLine>@{surefireArgLine} -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</argLine>
                     <excludes>
                         <exclude>**/*IntegrationTests.java</exclude>
                     </excludes>
@@ -246,7 +255,7 @@
                             </execution>
                         </executions>
                         <configuration>
-                            <argLine>@{argLine} -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</argLine>
+                            <argLine>@{failsafeArgLine} -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar</argLine>
                             <includes>
                                 <include>**/*IntegrationTests.java</include>
                             </includes>
@@ -263,11 +272,44 @@
                         </configuration>
                         <executions>
                             <execution>
+                                <id>prepare-agent-integration</id>
+                                <phase>pre-integration-test</phase>
+                                <goals>
+                                    <goal>prepare-agent</goal>
+                                </goals>
+                                <configuration>
+                                    <destFile>${project.build.directory}/jacoco-it.exec</destFile>
+                                    <propertyName>failsafeArgLine</propertyName>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>merge-coverage</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>merge</goal>
+                                </goals>
+                                <configuration>
+                                    <fileSets>
+                                        <fileSet>
+                                            <directory>${project.build.directory}</directory>
+                                            <includes>
+                                                <include>jacoco-ut.exec</include>
+                                                <include>jacoco-it.exec</include>
+                                            </includes>
+                                        </fileSet>
+                                    </fileSets>
+                                    <destFile>${project.build.directory}/jacoco.exec</destFile>
+                                </configuration>
+                            </execution>
+                            <execution>
                                 <id>integration-report</id>
                                 <phase>verify</phase>
                                 <goals>
                                     <goal>report</goal>
                                 </goals>
+                                <configuration>
+                                    <dataFile>${project.build.directory}/jacoco.exec</dataFile>
+                                </configuration>
                             </execution>
                             <execution>
                                 <id>check</id>
@@ -276,6 +318,7 @@
                                     <goal>check</goal>
                                 </goals>
                                 <configuration>
+                                    <dataFile>${project.build.directory}/jacoco.exec</dataFile>
                                     <rules>
                                         <rule>
                                             <element>BUNDLE</element>
