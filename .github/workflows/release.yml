@@ -1,9 +1,11 @@
 name: Release MCP Container
 
 on:
-  push:
-    tags:
-      - 'v*'
+  pull_request:
+    branches:
+      - master
+    types:
+      - closed
   workflow_dispatch:
 
 permissions:
@@ -17,11 +19,14 @@ concurrency:
 jobs:
   release:
     name: Build and publish release artifacts
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
 
       - name: Set up Java
         uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
@@ -34,13 +39,9 @@ jobs:
         id: release
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            RELEASE_TAG="${GITHUB_REF_NAME}"
-            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-              echo "Release tags must use vMAJOR.MINOR.PATCH format, optionally with a prerelease suffix." >&2
-              exit 1
-            fi
-            RELEASE_VERSION="${RELEASE_TAG#v}"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" && "${{ github.event.pull_request.merged }}" == "true" && "${{ github.event.pull_request.base.ref }}" == "master" ]]; then
+            RELEASE_VERSION="0.0.${GITHUB_RUN_NUMBER}"
+            RELEASE_TAG="v${RELEASE_VERSION}"
             PUBLISH_RELEASE=true
           else
             RELEASE_TAG="dry-run-${GITHUB_RUN_ID}"
@@ -64,14 +65,11 @@ jobs:
         run: |
           SOURCE_JAR="target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar"
           RELEASE_JAR="job-engine-spring-${{ steps.release.outputs.release_tag }}.jar"
-
-      - name: Prepare versioned release jar
-        run: |
-          test -f target/job-engine-spring-0.0.1-SNAPSHOT.jar
-          cp target/job-engine-spring-0.0.1-SNAPSHOT.jar "job-engine-spring-${GITHUB_REF_NAME}.jar"
+          test -f "$SOURCE_JAR"
+          cp "$SOURCE_JAR" "$RELEASE_JAR"
 
       - name: Create jar checksum
-        run: sha256sum "job-engine-spring-${GITHUB_REF_NAME}.jar" > SHA256SUMS
+        run: sha256sum "job-engine-spring-${{ steps.release.outputs.release_tag }}.jar" > SHA256SUMS
 
       - name: Build release container image from verified jar
         run: |
@@ -109,12 +107,12 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
           IMAGE_REPOSITORY=ghcr.io/${GITHUB_REPOSITORY,,}
-          IMAGE_NAME="${IMAGE_REPOSITORY}:${GITHUB_REF_NAME}"
+          IMAGE_NAME="${IMAGE_REPOSITORY}:${RELEASE_TAG}"
 
           docker tag job-engine-spring:release-candidate "$IMAGE_NAME"
           docker push "$IMAGE_NAME"
 
-          if [[ "${GITHUB_REF_NAME}" != *-* ]]; then
+          if [[ "$RELEASE_TAG" != *-* ]]; then
             docker tag job-engine-spring:release-candidate "${IMAGE_REPOSITORY}:latest"
             docker push "${IMAGE_REPOSITORY}:latest"
           fi
@@ -125,10 +123,12 @@ jobs:
         if: ${{ steps.release.outputs.publish_release == 'true' }}
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
+          tag_name: ${{ steps.release.outputs.release_tag }}
+          target_commitish: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
           name: ${{ steps.release.outputs.release_tag }}
           generate_release_notes: true
           files: |
-            job-engine-spring-${{ github.ref_name }}.jar
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.jar
             SHA256SUMS
             IMAGE-ID
             IMAGE-DIGESTS
