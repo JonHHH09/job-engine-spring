@@ -215,3 +215,11 @@ Run Docker-backed PostgreSQL integration tests and the JaCoCo coverage gate expl
 ```
 
 The GitHub Actions pipeline mirrors this split: fast unit tests run on pull requests and pushes, while trusted pushes to `development`/`master` plus manual CI runs also run the Docker-backed integration job (`./mvnw -Pintegration-tests verify`) and the container smoke job that verifies the real STDIO `tools/list` contract through `scripts/smoke-mcp-stdio.py`. Tag releases run full verification, copy the verified Maven jar to a versioned release artifact, build the release container image from that same jar through `Dockerfile.release`, publish `ghcr.io/<owner>/job-engine-spring:<tag>` and `:latest` for stable tags, record the published image digest, and upload the jar, checksum, image ID, and image digest as release artifacts; manual release workflow runs default to dry-run verification and do not publish unless run from a `v*` tag.
+
+To publish a release explicitly, run the release helper with the desired version tag:
+
+```bash
+./scripts/release.sh v0.1.0
+```
+
+The helper requires a clean working tree, fetches `origin/master`, refuses existing local or remote tags, creates an annotated `vMAJOR.MINOR.PATCH[-PRERELEASE]` tag that points exactly at `origin/master`, and pushes only that tag. The tag push triggers `.github/workflows/release.yml`, which performs verification before publishing the GitHub Release and GHCR image.
