@@ -8,9 +8,10 @@ name: Qodana
 on:
   workflow_dispatch:
   pull_request:
+    branches:
+      - development
   push:
     branches:
-      - master
       - development
 
 permissions:
