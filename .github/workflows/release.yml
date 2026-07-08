@@ -30,8 +30,40 @@ jobs:
           java-version: '25'
           cache: maven
 
+      - name: Resolve release version
+        id: release
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+              echo "Release tags must use vMAJOR.MINOR.PATCH format, optionally with a prerelease suffix." >&2
+              exit 1
+            fi
+            RELEASE_VERSION="${RELEASE_TAG#v}"
+            PUBLISH_RELEASE=true
+          else
+            RELEASE_TAG="dry-run-${GITHUB_RUN_ID}"
+            RELEASE_VERSION="0.0.1-SNAPSHOT"
+            PUBLISH_RELEASE=false
+          fi
+
+          {
+            echo "release_tag=$RELEASE_TAG"
+            echo "release_version=$RELEASE_VERSION"
+            echo "publish_release=$PUBLISH_RELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved release tag: $RELEASE_TAG"
+          echo "Resolved Maven version: $RELEASE_VERSION"
+
       - name: Run full verification and build jar
-        run: ./mvnw -Pintegration-tests verify
+        run: ./mvnw -Drevision="${{ steps.release.outputs.release_version }}" -Pintegration-tests verify
+
+      - name: Prepare versioned release jar
+        shell: bash
+        run: |
+          SOURCE_JAR="target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar"
+          RELEASE_JAR="job-engine-spring-${{ steps.release.outputs.release_tag }}.jar"
 
       - name: Prepare versioned release jar
         run: |
@@ -46,7 +78,8 @@ jobs:
           JAR_SHA256="$(cut -d ' ' -f1 SHA256SUMS)"
           docker build \
             -f Dockerfile.release \
-            --build-arg VERSION="${GITHUB_REF_NAME}" \
+            --build-arg JAR_FILE="target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar" \
+            --build-arg VERSION="${{ steps.release.outputs.release_version }}" \
             --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --build-arg JAR_SHA256="$JAR_SHA256" \
             -t job-engine-spring:release-candidate \
@@ -59,11 +92,11 @@ jobs:
         run: docker image inspect job-engine-spring:release-candidate --format '{{.Id}}' > IMAGE-ID
 
       - name: Report release dry run
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        run: echo "Manual branch run completed verification only; no artifacts were published."
+        if: ${{ steps.release.outputs.publish_release != 'true' }}
+        run: echo "Manual branch run completed verification only; no GitHub Release or GHCR package was published."
 
       - name: Log in to GitHub Container Registry
-        if: startsWith(github.ref, 'refs/tags/')
+        if: ${{ steps.release.outputs.publish_release == 'true' }}
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
@@ -71,7 +104,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish container image
-        if: startsWith(github.ref, 'refs/tags/')
+        if: ${{ steps.release.outputs.publish_release == 'true' }}
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
           IMAGE_REPOSITORY=ghcr.io/${GITHUB_REPOSITORY,,}
           IMAGE_NAME="${IMAGE_REPOSITORY}:${GITHUB_REF_NAME}"
@@ -87,9 +122,11 @@ jobs:
           docker image inspect "$IMAGE_NAME" --format '{{index .RepoDigests 0}}' > IMAGE-DIGESTS
 
       - name: Create GitHub release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: ${{ steps.release.outputs.publish_release == 'true' }}
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
+          name: ${{ steps.release.outputs.release_tag }}
+          generate_release_notes: true
           files: |
             job-engine-spring-${{ github.ref_name }}.jar
             SHA256SUMS
