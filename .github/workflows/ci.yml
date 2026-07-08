@@ -146,9 +146,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify master includes development
+      - name: Verify master matches development
         shell: bash
         run: |
           git fetch --no-tags origin development
           git merge-base --is-ancestor origin/development "$GITHUB_SHA"
-          echo "Master promotion contains the latest origin/development history. Heavy CI remains on development and release tags."
+
+          development_tree="$(git rev-parse 'origin/development^{tree}')"
+          master_tree="$(git rev-parse "${GITHUB_SHA}^{tree}")"
+
+          if [[ "$master_tree" != "$development_tree" ]]; then
+            echo "::error::Master contains changes that are not identical to origin/development."
+            echo "Plain master pushes are promotion-only and must not introduce master-only changes."
+            git diff --stat origin/development "$GITHUB_SHA"
+            exit 1
+          fi
+
+          echo "Master promotion matches origin/development exactly. Heavy CI remains on development and release tags."
