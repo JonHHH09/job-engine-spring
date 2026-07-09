@@ -21,7 +21,9 @@ remove_containers() {
   local container_ids
   container_ids="$(docker ps -aq "$@" 2>/dev/null || true)"
   if [[ -n "$container_ids" ]]; then
-    docker rm -f $container_ids >/dev/null 2>&1 || true
+    while IFS= read -r container_id; do
+      [[ -n "$container_id" ]] && docker rm -f "$container_id" >/dev/null 2>&1 || true
+    done <<< "$container_ids"
   fi
 }
 
