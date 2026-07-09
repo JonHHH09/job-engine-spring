@@ -65,8 +65,8 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
           git fetch --no-tags origin master
-          TAG_TARGET="$(git rev-parse "${RELEASE_TAG}^{commit}")"
-          MASTER_TIP="$(git rev-parse origin/master^{commit})"
+          TAG_TARGET="$(git rev-list -n 1 "$RELEASE_TAG")"
+          MASTER_TIP="$(git rev-parse origin/master)"
 
           if [[ "$TAG_TARGET" != "$MASTER_TIP" ]]; then
             echo "Release tag ${RELEASE_TAG} must point at the current origin/master tip." >&2
