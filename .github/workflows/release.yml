@@ -61,14 +61,23 @@ jobs:
           echo "Resolved release tag: $RELEASE_TAG"
           echo "Resolved Maven version: $RELEASE_VERSION"
 
-      - name: Enforce master-only release tag
+      - name: Enforce release tag targets current master
         if: ${{ steps.release.outputs.publish_release == 'true' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
-          AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          AUTH_HEADER="$(printf 'AUTHORIZATION: basic %s' "$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)")"
           git -c "http.https://github.com/.extraheader=$AUTH_HEADER" fetch --no-tags origin master
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          TAG_TARGET="$(git rev-list -n 1 "$RELEASE_TAG")"
+          MASTER_TIP="$(git rev-parse origin/master)"
+
+          if [[ "$TAG_TARGET" != "$MASTER_TIP" ]]; then
+            echo "Release tag ${RELEASE_TAG} must point at the current origin/master tip." >&2
+            echo "Tag target: ${TAG_TARGET}" >&2
+            echo "Master tip:  ${MASTER_TIP}" >&2
+            exit 1
+          fi
 
       - name: Run full verification and build jar
         run: ./mvnw clean -Drevision="${{ steps.release.outputs.release_version }}" -Pintegration-tests verify
