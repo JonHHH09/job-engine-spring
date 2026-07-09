@@ -6,8 +6,10 @@ cd "$ROOT_DIR"
 
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-job-engine-spring}"
 MCP_IMAGE="${MCP_IMAGE:-job-engine-spring:local}"
-MCP_CONTAINER_NAME="${MCP_CONTAINER_NAME:-job-engine-spring-mcp-stdio}"
+DEFAULT_MCP_CONTAINER_NAME="job-engine-spring-mcp-stdio"
+MCP_CONTAINER_NAME="${MCP_CONTAINER_NAME:-$DEFAULT_MCP_CONTAINER_NAME}"
 MCP_CONTAINER_LABEL="org.instruct.job-engine-spring.role=mcp-stdio"
+MCP_CONTAINER_INSTANCE_LABEL="org.instruct.job-engine-spring.mcp-container-name=$MCP_CONTAINER_NAME"
 MCP_CONTAINER_BUILD="${MCP_CONTAINER_BUILD:-missing}"
 POSTGRES_DB="${JOB_ENGINE_POSTGRES_DB:-job_engine}"
 POSTGRES_USER="${JOB_ENGINE_POSTGRES_USER:-postgres}"
@@ -29,10 +31,14 @@ remove_containers() {
 
 remove_stale_mcp_containers() {
   docker rm -f "$MCP_CONTAINER_NAME" >/dev/null 2>&1 || true
-  remove_containers --filter "label=$MCP_CONTAINER_LABEL"
-  remove_containers \
-    --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-    --filter "label=com.docker.compose.service=mcp"
+  remove_containers --filter "label=$MCP_CONTAINER_INSTANCE_LABEL"
+
+  if [[ "$MCP_CONTAINER_NAME" == "$DEFAULT_MCP_CONTAINER_NAME" ]]; then
+    remove_containers --filter "label=$MCP_CONTAINER_LABEL"
+    remove_containers \
+      --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+      --filter "label=com.docker.compose.service=mcp"
+  fi
 }
 
 mkdir -p "$DOCUMENT_IMPORT_ROOT" "$GENERATED_PDF_ROOT"
@@ -72,6 +78,7 @@ fi
 exec docker run --rm -i \
   --name "$MCP_CONTAINER_NAME" \
   --label "$MCP_CONTAINER_LABEL" \
+  --label "$MCP_CONTAINER_INSTANCE_LABEL" \
   --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
   --label "com.docker.compose.service=mcp" \
   --network "$NETWORK_NAME" \
