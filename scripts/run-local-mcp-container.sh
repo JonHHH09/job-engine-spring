@@ -19,12 +19,41 @@ GENERATED_PDF_ROOT="$ROOT_DIR/tmp/generated-pdfs"
 
 export COMPOSE_PROJECT_NAME MCP_IMAGE JOB_ENGINE_POSTGRES_DB="$POSTGRES_DB" JOB_ENGINE_POSTGRES_USER="$POSTGRES_USER" JOB_ENGINE_POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
 
+remove_container_id() {
+  local container_id="$1"
+  [[ -n "$container_id" ]] && docker rm -f "$container_id" >/dev/null 2>&1 || true
+}
+
 remove_containers() {
   local container_ids
   container_ids="$(docker ps -aq "$@" 2>/dev/null || true)"
   if [[ -n "$container_ids" ]]; then
     while IFS= read -r container_id; do
-      [[ -n "$container_id" ]] && docker rm -f "$container_id" >/dev/null 2>&1 || true
+      remove_container_id "$container_id"
+    done <<< "$container_ids"
+  fi
+}
+
+container_instance_label() {
+  local container_id="$1"
+  local label
+  label="$(docker inspect -f '{{ index .Config.Labels "org.instruct.job-engine-spring.mcp-container-name" }}' "$container_id" 2>/dev/null || true)"
+  if [[ "$label" == "<no value>" ]]; then
+    label=""
+  fi
+  printf '%s' "$label"
+}
+
+remove_containers_for_current_or_legacy_instance() {
+  local container_ids
+  container_ids="$(docker ps -aq "$@" 2>/dev/null || true)"
+  if [[ -n "$container_ids" ]]; then
+    while IFS= read -r container_id; do
+      local instance_label
+      instance_label="$(container_instance_label "$container_id")"
+      if [[ -z "$instance_label" || "$instance_label" == "$MCP_CONTAINER_NAME" ]]; then
+        remove_container_id "$container_id"
+      fi
     done <<< "$container_ids"
   fi
 }
@@ -34,8 +63,8 @@ remove_stale_mcp_containers() {
   remove_containers --filter "label=$MCP_CONTAINER_INSTANCE_LABEL"
 
   if [[ "$MCP_CONTAINER_NAME" == "$DEFAULT_MCP_CONTAINER_NAME" ]]; then
-    remove_containers --filter "label=$MCP_CONTAINER_LABEL"
-    remove_containers \
+    remove_containers_for_current_or_legacy_instance --filter "label=$MCP_CONTAINER_LABEL"
+    remove_containers_for_current_or_legacy_instance \
       --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
       --filter "label=com.docker.compose.service=mcp"
   fi
