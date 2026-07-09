@@ -7,24 +7,26 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build and publish release artifacts
+  verify:
+    name: Verify release artifacts
     if: ${{ github.event_name == 'push' || github.ref_name == 'master' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Java
         uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
@@ -59,11 +61,23 @@ jobs:
           echo "Resolved release tag: $RELEASE_TAG"
           echo "Resolved Maven version: $RELEASE_VERSION"
 
-      - name: Enforce master-only release tag
+      - name: Enforce release tag targets current master
         if: ${{ steps.release.outputs.publish_release == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
-          git fetch --no-tags origin master
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/master
+          AUTH_HEADER="$(printf 'AUTHORIZATION: basic %s' "$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)")"
+          git -c "http.https://github.com/.extraheader=$AUTH_HEADER" fetch --no-tags origin master
+          TAG_TARGET="$(git rev-list -n 1 "$RELEASE_TAG")"
+          MASTER_TIP="$(git rev-parse origin/master)"
+
+          if [[ "$TAG_TARGET" != "$MASTER_TIP" ]]; then
+            echo "Release tag ${RELEASE_TAG} must point at the current origin/master tip." >&2
+            echo "Tag target: ${TAG_TARGET}" >&2
+            echo "Master tip:  ${MASTER_TIP}" >&2
+            exit 1
+          fi
 
       - name: Run full verification and build jar
         run: ./mvnw clean -Drevision="${{ steps.release.outputs.release_version }}" -Pintegration-tests verify
@@ -108,12 +122,68 @@ jobs:
       - name: Record image ID
         run: docker image inspect job-engine-spring:release-candidate --format '{{.Id}}' > IMAGE-ID
 
-      - name: Report release dry run
-        if: ${{ steps.release.outputs.publish_release != 'true' }}
-        run: echo "Manual branch run completed verification only; no GitHub Release or GHCR package was published."
+      - name: Upload verified release artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verified-release-artifacts
+          path: |
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.jar
+            SHA256SUMS
+            IMAGE-ID
+          if-no-files-found: error
+
+      - name: Compose cleanup
+        if: always()
+        run: docker compose down --remove-orphans
+
+  publish:
+    name: Publish release artifacts
+    runs-on: ubuntu-latest
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Resolve release version
+        id: release
+        shell: bash
+        run: |
+          RELEASE_TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tags must use vMAJOR.MINOR.PATCH format, optionally with a prerelease suffix." >&2
+            exit 1
+          fi
+          RELEASE_VERSION="${RELEASE_TAG#v}"
+          {
+            echo "release_tag=$RELEASE_TAG"
+            echo "release_version=$RELEASE_VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download verified release artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: verified-release-artifacts
+
+      - name: Build release container image from verified jar
+        run: |
+          JAR_SHA256="$(cut -d ' ' -f1 SHA256SUMS)"
+          docker build \
+            -f Dockerfile.release \
+            --build-arg JAR_FILE="job-engine-spring-${{ steps.release.outputs.release_tag }}.jar" \
+            --build-arg VERSION="${{ steps.release.outputs.release_version }}" \
+            --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --build-arg JAR_SHA256="$JAR_SHA256" \
+            -t job-engine-spring:release-candidate \
+            .
 
       - name: Log in to GitHub Container Registry
-        if: ${{ steps.release.outputs.publish_release == 'true' }}
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
@@ -121,7 +191,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish container image
-        if: ${{ steps.release.outputs.publish_release == 'true' }}
         env:
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
@@ -139,7 +208,6 @@ jobs:
           docker image inspect "$IMAGE_NAME" --format '{{index .RepoDigests 0}}' > IMAGE-DIGESTS
 
       - name: Create GitHub release
-        if: ${{ steps.release.outputs.publish_release == 'true' }}
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           tag_name: ${{ steps.release.outputs.release_tag }}
@@ -151,6 +219,13 @@ jobs:
             IMAGE-ID
             IMAGE-DIGESTS
 
-      - name: Compose cleanup
-        if: always()
-        run: docker compose down --remove-orphans
+  dry-run-report:
+    name: Report release dry run
+    runs-on: ubuntu-latest
+    needs: verify
+    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    permissions:
+      contents: read
+    steps:
+      - name: Report release dry run
+        run: echo "Manual branch run completed verification only; no GitHub Release or GHCR package was published."
