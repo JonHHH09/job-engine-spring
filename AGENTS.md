@@ -19,7 +19,7 @@ business concepts, `application` holds use cases and orchestration, and
 - `./mvnw verify -Pintegration-tests` runs integration tests through Failsafe.
 - `./mvnw spring-boot:run` starts the application locally.
 - `docker compose build mcp` builds the local container image for the STDIO MCP server.
-- `./scripts/run-local-mcp-container.sh` runs the local MCP server in a Docker container over stdin/stdout, with PostgreSQL started by Compose and no published MCP port.
+- `./scripts/run-local-mcp-container.sh` runs the local MCP server in a Docker container over stdin/stdout, with PostgreSQL started by Compose and no published MCP port. It enforces one local MCP STDIO container per default project/name by removing stale matching containers before launch.
 - `python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh` verifies the containerized MCP `initialize` + `tools/list` STDIO contract.
 
 Surefire excludes `*IntegrationTests`; the integration profile enables Failsafe
@@ -72,4 +72,6 @@ settings instead of machine-local absolute paths.
 The containerized MCP runtime must remain local-only: do not publish the MCP
 container or PostgreSQL ports unless the architecture is intentionally changed.
 Keep Docker lifecycle output off stdout for MCP launch scripts because stdout is
-reserved for JSON-RPC messages.
+reserved for JSON-RPC messages. The Compose `mcp` service is profile-gated for
+manual debugging; default Compose startup should not launch MCP as a persistent
+service.

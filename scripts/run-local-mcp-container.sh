@@ -6,6 +6,8 @@ cd "$ROOT_DIR"
 
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-job-engine-spring}"
 MCP_IMAGE="${MCP_IMAGE:-job-engine-spring:local}"
+MCP_CONTAINER_NAME="${MCP_CONTAINER_NAME:-job-engine-spring-mcp-stdio}"
+MCP_CONTAINER_LABEL="org.instruct.job-engine-spring.role=mcp-stdio"
 MCP_CONTAINER_BUILD="${MCP_CONTAINER_BUILD:-missing}"
 POSTGRES_DB="${JOB_ENGINE_POSTGRES_DB:-job_engine}"
 POSTGRES_USER="${JOB_ENGINE_POSTGRES_USER:-postgres}"
@@ -14,6 +16,22 @@ DOCUMENT_IMPORT_ROOT="$ROOT_DIR/tmp/imports"
 GENERATED_PDF_ROOT="$ROOT_DIR/tmp/generated-pdfs"
 
 export COMPOSE_PROJECT_NAME MCP_IMAGE JOB_ENGINE_POSTGRES_DB="$POSTGRES_DB" JOB_ENGINE_POSTGRES_USER="$POSTGRES_USER" JOB_ENGINE_POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+
+remove_containers() {
+  local container_ids
+  container_ids="$(docker ps -aq "$@" 2>/dev/null || true)"
+  if [[ -n "$container_ids" ]]; then
+    docker rm -f $container_ids >/dev/null 2>&1 || true
+  fi
+}
+
+remove_stale_mcp_containers() {
+  docker rm -f "$MCP_CONTAINER_NAME" >/dev/null 2>&1 || true
+  remove_containers --filter "label=$MCP_CONTAINER_LABEL"
+  remove_containers \
+    --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+    --filter "label=com.docker.compose.service=mcp"
+}
 
 mkdir -p "$DOCUMENT_IMPORT_ROOT" "$GENERATED_PDF_ROOT"
 
@@ -35,6 +53,7 @@ case "$MCP_CONTAINER_BUILD" in
 esac
 
 docker compose up -d --wait postgres </dev/null >&2
+remove_stale_mcp_containers
 POSTGRES_HOST="$(docker compose exec -T postgres hostname -i </dev/null | awk '{print $1}')"
 if [[ -z "$POSTGRES_HOST" ]]; then
   printf 'Could not resolve PostgreSQL container IP.\n' >&2
@@ -49,6 +68,10 @@ if [[ -z "$NETWORK_NAME" ]]; then
 fi
 
 exec docker run --rm -i \
+  --name "$MCP_CONTAINER_NAME" \
+  --label "$MCP_CONTAINER_LABEL" \
+  --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+  --label "com.docker.compose.service=mcp" \
   --network "$NETWORK_NAME" \
   --env SPRING_DOCKER_COMPOSE_ENABLED=false \
   --env JOB_ENGINE_POSTGRES_URL="jdbc:postgresql://$POSTGRES_HOST:5432/$POSTGRES_DB" \

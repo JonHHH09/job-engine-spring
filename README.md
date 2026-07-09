@@ -93,7 +93,7 @@ Rebuilding the jar updates the file on disk only. Any already-running Hermes MCP
 
 ## Local containerized MCP deployment
 
-The local container deployment keeps the same STDIO MCP contract: the MCP server still has no published HTTP port, and the MCP client talks to the container through Docker stdin/stdout. `compose.yaml` starts a private PostgreSQL service with no host port binding, and `scripts/run-local-mcp-container.sh` starts the database, joins the MCP container to the Compose network, and then execs the MCP server container with clean stdout for JSON-RPC.
+The local container deployment keeps the same STDIO MCP contract: the MCP server still has no published HTTP port, and the MCP client talks to the container through Docker stdin/stdout. `compose.yaml` starts a private PostgreSQL service with no host port binding, and `scripts/run-local-mcp-container.sh` starts the database, removes any stale local MCP STDIO container for this project, joins the MCP container to the Compose network, and then execs the MCP server container with clean stdout for JSON-RPC.
 
 Build the local image when application code changes:
 
@@ -108,6 +108,8 @@ Run the containerized MCP server over STDIO:
 ```
 
 For Hermes, configure the MCP command to invoke the script above instead of `java -jar ...`. The script writes Docker lifecycle output to stderr and reserves stdout for the MCP JSON-RPC transport. Use `MCP_CONTAINER_BUILD=always ./scripts/run-local-mcp-container.sh` when you want the script to rebuild the image before launching, or keep the default image-missing-only behavior for faster MCP client startup.
+
+The script gives the MCP subprocess container a stable name, `job-engine-spring-mcp-stdio` by default, and removes older MCP containers with the same project/service labels before launching a new one. Override the name with `MCP_CONTAINER_NAME=...` only when you intentionally need an isolated local MCP instance. The Compose-managed `mcp` service is behind the `manual-mcp` profile, so plain `docker compose up -d` starts only the default services such as PostgreSQL; use `docker compose --profile manual-mcp up mcp` only for direct Compose debugging.
 
 Host-visible local file imports are mounted from `tmp/imports/` into the container as read-only files, and generated PDFs are mounted through `tmp/generated-pdfs/`. Do not publish the MCP container or database ports unless the local-only architecture is intentionally changed.
 
