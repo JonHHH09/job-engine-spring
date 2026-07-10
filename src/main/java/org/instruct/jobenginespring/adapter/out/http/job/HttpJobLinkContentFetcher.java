@@ -79,7 +79,6 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
         }
     }
 
-    @lombok.Generated
     private static void validateRedirectTargetIfPresent(URI sourceUri, HttpResponse<?> response) {
         int statusCode = response.statusCode();
         if (statusCode < 300 || statusCode > 399) {
@@ -92,13 +91,18 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
         throw validation("url", "job link redirects are not followed");
     }
 
-    @lombok.Generated
     private static void validateSafeHttpUrl(URI uri) {
-        if (!uri.isAbsolute() || uri.getHost() == null || uri.getRawUserInfo() != null) {
+        if (!uri.isAbsolute()) {
+            throw validation("url", "must be a valid absolute http(s) URL");
+        }
+        if (uri.getHost() == null) {
+            throw validation("url", "must be a valid absolute http(s) URL");
+        }
+        if (uri.getRawUserInfo() != null) {
             throw validation("url", "must be a valid absolute http(s) URL");
         }
         String scheme = uri.getScheme();
-        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+        if (!Set.of("http", "https").contains(scheme.toLowerCase(Locale.ROOT))) {
             throw validation("url", "must be a valid absolute http(s) URL");
         }
         String host = uri.getHost().toLowerCase(Locale.ROOT);
@@ -108,19 +112,9 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
         if (!isIpLiteral(host)) {
             throw validation("url", "job link fetch requires an IP literal so address policy is connection-bound");
         }
-        InetAddress[] addresses;
-        try {
-            addresses = InetAddress.getAllByName(host);
-        } catch (UnknownHostException exception) {
-            throw validation("url", "host could not be resolved");
-        }
-        if (addresses.length == 0) {
-            throw validation("url", "host could not be resolved");
-        }
-        for (InetAddress address : addresses) {
-            if (isUnsafeAddress(address)) {
-                throw unsafeHost();
-            }
+        InetAddress address = InetAddress.ofLiteral(host);
+        if (isUnsafeAddress(address)) {
+            throw unsafeHost();
         }
     }
 
@@ -140,7 +134,6 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
         }
     }
 
-    @lombok.Generated
     private static boolean isUnsafeAddress(InetAddress address) {
         return address.isAnyLocalAddress()
                 || address.isLoopbackAddress()
@@ -151,22 +144,14 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
                 || isCommonMetadataIpv4(address);
     }
 
-    @lombok.Generated
     private static boolean isCommonMetadataIpv4(InetAddress address) {
         if (!(address instanceof Inet4Address)) {
             return false;
         }
-        byte[] bytes = address.getAddress();
-        int first = Byte.toUnsignedInt(bytes[0]);
-        int second = Byte.toUnsignedInt(bytes[1]);
-        int third = Byte.toUnsignedInt(bytes[2]);
-        int fourth = Byte.toUnsignedInt(bytes[3]);
-        return first == 169 && second == 254 && third == 169 && fourth == 254
-                || first == 169 && second == 254 && third == 170 && fourth == 2
-                || first == 100 && second == 100 && third == 100 && fourth == 200;
+        return Set.of("169.254.169.254", "169.254.170.2", "100.100.100.200")
+                .contains(address.getHostAddress());
     }
 
-    @lombok.Generated
     private static boolean isUniqueLocalIpv6(InetAddress address) {
         if (!(address instanceof Inet6Address)) {
             return false;

@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.job;
 
+import org.apache.commons.codec.digest.DigestUtils;
 import lombok.NonNull;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
@@ -17,15 +18,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.text.Normalizer;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -329,7 +326,6 @@ public class JobService {
         return request;
     }
 
-    @lombok.Generated
     private static void validateFetchedJobContent(JobLinkFetchResult fetched) {
         if (fetched == null) {
             throw validation("fetchedContent", "job page fetch returned no content");
@@ -346,7 +342,6 @@ public class JobService {
         }
     }
 
-    @lombok.Generated
     private static boolean looksLikeBlockedOrSecurityCheck(String value) {
         String lower = value == null ? "" : value.toLowerCase(Locale.ROOT);
         return lower.contains("security check")
@@ -465,7 +460,6 @@ public class JobService {
                 .orElse("Untitled Job");
     }
 
-    @lombok.Generated
     private static List<String> mergeSkills(List<String> explicitSkills, List<String> extractedSkills) {
         LinkedHashSet<String> skills = new LinkedHashSet<>();
         nullSafe(explicitSkills).stream().flatMap(skill -> splitSkillList(skill).stream()).forEach(skill -> skills.add(clean(skill)));
@@ -474,7 +468,7 @@ public class JobService {
         List<String> unique = new ArrayList<>();
         for (String skill : skills) {
             String normalized = normalizedKey(skill);
-            if (!normalized.isBlank() && normalizedSeen.add(normalized)) {
+            if (normalizedSeen.add(normalized)) {
                 unique.add(skill);
             }
         }
@@ -509,7 +503,6 @@ public class JobService {
         ));
     }
 
-    @lombok.Generated
     private static String normalizeUrl(String rawUrl) {
         try {
             URI uri = new URI(clean(rawUrl));
@@ -518,7 +511,7 @@ public class JobService {
             if (scheme == null || host == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
                 throw validation("url", "must be an absolute http(s) URL");
             }
-            String path = uri.getRawPath() == null || uri.getRawPath().isBlank() ? "/" : uri.getRawPath();
+            String path = uri.getRawPath().isBlank() ? "/" : uri.getRawPath();
             if (path.length() > 1 && path.endsWith("/")) {
                 path = path.substring(0, path.length() - 1);
             }
@@ -594,14 +587,8 @@ public class JobService {
         return values == null ? List.of() : values;
     }
 
-    @lombok.Generated
     private static String sha256(String value) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new ApplicationException(ApplicationErrorCode.INTERNAL_ERROR, ApplicationErrorCode.INTERNAL_ERROR.defaultMessage(), Map.of(), exception);
-        }
+        return DigestUtils.sha256Hex(value);
     }
 
     private static ApplicationException validation(String field, String reason) {

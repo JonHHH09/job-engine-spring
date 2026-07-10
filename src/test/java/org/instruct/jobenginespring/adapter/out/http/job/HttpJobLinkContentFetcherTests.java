@@ -10,6 +10,7 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.Authenticator;
 import java.net.CookieHandler;
+import java.net.InetAddress;
 import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -196,6 +197,51 @@ class HttpJobLinkContentFetcherTests {
 
         assertEquals("host resolves to a private or otherwise unsafe address", exception.details().get("reason"));
         assertEquals(1, client.sendCount.get());
+    }
+
+    @Test
+    void redirectAndAddressPoliciesCoverEverySupportedEdge() throws Exception {
+        JobLinkFetchResult nonRedirect = new HttpJobLinkContentFetcher(
+                StaticHttpClient.response(404, "not found", Map.of())
+        ).fetch(SAFE_URL);
+        assertEquals(404, nonRedirect.httpStatus());
+
+        HttpJobLinkContentFetcher fetcher = new HttpJobLinkContentFetcher(
+                StaticHttpClient.response(302, "", Map.of())
+        );
+        ApplicationException missingLocation = assertThrows(ApplicationException.class, () -> fetcher.fetch(SAFE_URL));
+        assertEquals("job link redirects are not followed", missingLocation.details().get("reason"));
+
+        ApplicationException relativeLocation = assertThrows(ApplicationException.class, () ->
+                new HttpJobLinkContentFetcher(StaticHttpClient.response(307, "", Map.of("location", List.of("/other"))))
+                        .fetch(SAFE_URL));
+        assertEquals("job link redirects are not followed", relativeLocation.details().get("reason"));
+
+        for (String invalid : List.of(
+                "relative/job",
+                "ftp://93.184.216.34/job",
+                "http:///job",
+                "http://user@93.184.216.34/job",
+                "http://service.localhost/job",
+                "http://999.999.999.999/job"
+        )) {
+            assertThrows(ApplicationException.class, () -> new HttpJobLinkContentFetcher().fetch(invalid));
+        }
+
+        var metadataMethod = HttpJobLinkContentFetcher.class.getDeclaredMethod("isCommonMetadataIpv4", InetAddress.class);
+        metadataMethod.setAccessible(true);
+        for (String address : List.of("169.254.169.254", "169.254.170.2", "100.100.100.200")) {
+            assertEquals(true, metadataMethod.invoke(null, InetAddress.getByName(address)), address);
+        }
+        for (String address : List.of("192.0.2.1", "169.254.169.1", "100.100.100.1", "::1")) {
+            assertEquals(false, metadataMethod.invoke(null, InetAddress.getByName(address)), address);
+        }
+
+        var uniqueLocalMethod = HttpJobLinkContentFetcher.class.getDeclaredMethod("isUniqueLocalIpv6", InetAddress.class);
+        uniqueLocalMethod.setAccessible(true);
+        assertEquals(true, uniqueLocalMethod.invoke(null, InetAddress.getByName("fc00::1")));
+        assertEquals(false, uniqueLocalMethod.invoke(null, InetAddress.getByName("2001:db8::1")));
+        assertEquals(false, uniqueLocalMethod.invoke(null, InetAddress.getByName("192.0.2.1")));
     }
 
 
