@@ -160,9 +160,11 @@ jobs:
     name: Master promotion guard
     runs-on: ubuntu-latest
     if: >-
-      github.event_name == 'pull_request' &&
+      (github.event_name == 'pull_request' &&
       github.base_ref == 'master' &&
-      github.head_ref == 'development'
+      github.head_ref == 'development') ||
+      (github.event_name == 'push' &&
+      github.ref == 'refs/heads/master')
     needs:
       - validate-pipeline
     timeout-minutes: 10
