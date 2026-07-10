@@ -92,7 +92,10 @@ jobs:
   integration:
     name: Integration and coverage gate
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/development'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/development' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'master')
     needs:
       - validate-pipeline
       - unit
@@ -128,7 +131,10 @@ jobs:
   container-mcp-smoke:
     name: Container MCP STDIO smoke
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/development'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/development' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'master')
     needs:
       - validate-pipeline
       - unit
@@ -154,8 +160,9 @@ jobs:
     name: Master promotion guard
     runs-on: ubuntu-latest
     if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
-      (github.event_name == 'pull_request' && github.base_ref == 'master')
+      github.event_name == 'pull_request' &&
+      github.base_ref == 'master' &&
+      github.head_ref == 'development'
     needs:
       - validate-pipeline
     timeout-minutes: 10
