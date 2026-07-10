@@ -17,19 +17,11 @@ import java.util.Set;
 
 final class JobUrlPolicy {
 
-    private static final Set<String> SAFE_IDENTITY_PARAMETERS = Set.of(
-            "gh_jid",
-            "gh_src",
-            "jk",
-            "jobid",
-            "job_id",
-            "jid",
-            "posting_id",
-            "postingid",
-            "reqid",
-            "req_id",
-            "vacancyid"
+    private static final Map<String, Set<String>> ATS_IDENTITY_PARAMETERS = Map.of(
+            "greenhouse.io", Set.of("gh_jid"),
+            "indeed.com", Set.of("jk")
     );
+    private static final int MAX_IDENTITY_VALUE_LENGTH = 128;
 
     private JobUrlPolicy() {
     }
@@ -41,7 +33,7 @@ final class JobUrlPolicy {
 
     static String canonicalSourceUrl(String rawUrl) {
         URI uri = parse(rawUrl);
-        return normalize(uri, safeIdentityParameters(uri.getRawQuery()));
+        return normalize(uri, safeIdentityParameters(uri.getHost(), uri.getRawQuery()));
     }
 
     private static URI parse(String rawUrl) {
@@ -88,8 +80,12 @@ final class JobUrlPolicy {
         return normalized.toString();
     }
 
-    private static List<QueryParameter> safeIdentityParameters(String rawQuery) {
+    private static List<QueryParameter> safeIdentityParameters(String host, String rawQuery) {
         if (rawQuery == null || rawQuery.isBlank()) {
+            return List.of();
+        }
+        Set<String> allowedParameters = identityParametersForHost(host);
+        if (allowedParameters.isEmpty()) {
             return List.of();
         }
         List<QueryParameter> safe = new ArrayList<>();
@@ -100,16 +96,30 @@ final class JobUrlPolicy {
             String[] parts = pair.split("=", 2);
             String name = decode(parts[0]);
             String normalizedName = normalizeParameterName(name);
-            if (!SAFE_IDENTITY_PARAMETERS.contains(normalizedName)) {
+            if (!allowedParameters.contains(normalizedName)) {
                 continue;
             }
             String value = parts.length > 1 ? decode(parts[1]).strip() : "";
-            if (value.isEmpty()) {
+            if (!isSafeIdentityValue(value)) {
                 continue;
             }
             safe.add(new QueryParameter(normalizedName, value));
         }
         return List.copyOf(safe);
+    }
+
+    private static Set<String> identityParametersForHost(String host) {
+        String normalizedHost = normalizeParameterName(host);
+        return ATS_IDENTITY_PARAMETERS.entrySet().stream()
+                .filter(entry -> normalizedHost.equals(entry.getKey()) || normalizedHost.endsWith("." + entry.getKey()))
+                .map(Map.Entry::getValue)
+                .findFirst()
+                .orElse(Set.of());
+    }
+
+    private static boolean isSafeIdentityValue(String value) {
+        return value.length() <= MAX_IDENTITY_VALUE_LENGTH
+                && value.matches("[A-Za-z0-9][A-Za-z0-9._~-]*");
     }
 
     private static String normalizeParameterName(String value) {

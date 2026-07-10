@@ -7,6 +7,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.net.URI;
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -23,16 +24,34 @@ class JobUrlPolicyTests {
     }
 
     @Test
-    void canonicalSourceUrlKeepsOnlyExplicitIdentityParameters() {
+    void canonicalSourceUrlKeepsOnlyIdentityParametersForTheMatchingAtsHost() {
         assertEquals(
-                "https://example.test/jobs/view?gh_jid=gh-123&jk=job%20123",
+                "https://www.indeed.com/viewjob?jk=abc123def4567890",
                 JobUrlPolicy.canonicalSourceUrl(
-                        "https://Example.test/jobs/view/?utm_source=email&jk=job+123&empty=&gh_jid=gh-123&token=secret#details"
+                        "https://WWW.Indeed.com/viewjob/?utm_source=email&jk=abc123def4567890&gh_jid=gh-123&token=secret#details"
+                )
+        );
+        assertEquals(
+                "https://boards.greenhouse.io/example/jobs/123?gh_jid=456789",
+                JobUrlPolicy.canonicalSourceUrl(
+                        "https://boards.greenhouse.io/example/jobs/123?gh_src=tracking-source&gh_jid=456789&jk=not-indeed"
                 )
         );
         assertEquals(
                 "https://example.test/jobs/view",
-                JobUrlPolicy.canonicalSourceUrl("https://example.test/jobs/view?utm_source=email&token=secret")
+                JobUrlPolicy.canonicalSourceUrl("https://example.test/jobs/view?jk=abc123def4567890&gh_jid=456789")
+        );
+    }
+
+    @Test
+    void canonicalSourceUrlRejectsUnsafeIdentityValues() {
+        assertEquals(
+                "https://www.indeed.com/viewjob",
+                JobUrlPolicy.canonicalSourceUrl("https://www.indeed.com/viewjob?jk=job+123")
+        );
+        assertEquals(
+                "https://boards.greenhouse.io/example/jobs/123",
+                JobUrlPolicy.canonicalSourceUrl("https://boards.greenhouse.io/example/jobs/123?gh_jid=" + "a".repeat(129))
         );
     }
 
@@ -75,25 +94,35 @@ class JobUrlPolicyTests {
         constructor.setAccessible(true);
         constructor.newInstance();
 
-        Method safeIdentityParameters = JobUrlPolicy.class.getDeclaredMethod("safeIdentityParameters", String.class);
+        Method safeIdentityParameters = JobUrlPolicy.class.getDeclaredMethod("safeIdentityParameters", String.class, String.class);
+        Method identityParametersForHost = JobUrlPolicy.class.getDeclaredMethod("identityParametersForHost", String.class);
+        Method isSafeIdentityValue = JobUrlPolicy.class.getDeclaredMethod("isSafeIdentityValue", String.class);
         Method normalizeParameterName = JobUrlPolicy.class.getDeclaredMethod("normalizeParameterName", String.class);
         Method decode = JobUrlPolicy.class.getDeclaredMethod("decode", String.class);
         Method encode = JobUrlPolicy.class.getDeclaredMethod("encode", String.class);
         Method clean = JobUrlPolicy.class.getDeclaredMethod("clean", String.class);
         Method normalize = JobUrlPolicy.class.getDeclaredMethod("normalize", URI.class, List.class);
         safeIdentityParameters.setAccessible(true);
+        identityParametersForHost.setAccessible(true);
+        isSafeIdentityValue.setAccessible(true);
         normalizeParameterName.setAccessible(true);
         decode.setAccessible(true);
         encode.setAccessible(true);
         clean.setAccessible(true);
         normalize.setAccessible(true);
 
-        assertEquals(List.of(), safeIdentityParameters.invoke(null, new Object[]{null}));
-        assertEquals(List.of(), safeIdentityParameters.invoke(null, " "));
+        assertEquals(List.of(), safeIdentityParameters.invoke(null, "www.indeed.com", null));
+        assertEquals(List.of(), safeIdentityParameters.invoke(null, "www.indeed.com", " "));
         assertEquals(
-                List.of(queryParameter("gh_jid", "job-1")),
-                safeIdentityParameters.invoke(null, "&&jk&jk=&gh_jid=job-1")
+                List.of(queryParameter("jk", "job-1")),
+                safeIdentityParameters.invoke(null, "www.indeed.com", "&&jk&jk=&jk=job-1&gh_jid=ignored")
         );
+        assertEquals(Set.of("jk"), identityParametersForHost.invoke(null, "indeed.com"));
+        assertEquals(false, isSafeIdentityValue.invoke(null, ""));
+        assertEquals(false, isSafeIdentityValue.invoke(null, "a".repeat(129)));
+        assertEquals(false, isSafeIdentityValue.invoke(null, "-bad"));
+        assertEquals(false, isSafeIdentityValue.invoke(null, "a/b"));
+        assertEquals(true, isSafeIdentityValue.invoke(null, "a-b_c.d~e"));
         assertEquals("", normalizeParameterName.invoke(null, new Object[]{null}));
         assertEquals("", decode.invoke(null, new Object[]{null}));
         assertEquals("", encode.invoke(null, new Object[]{null}));

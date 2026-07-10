@@ -91,6 +91,7 @@ DECLARE
     without_fragment text;
     without_userinfo text;
     base_url text;
+    normalized_host text;
     raw_query text;
     safe_query text;
 BEGIN
@@ -102,6 +103,7 @@ BEGIN
     without_fragment := regexp_replace(trimmed, '#.*$', '');
     without_userinfo := regexp_replace(without_fragment, '^(https?://)[^/?#]*@', '\1', 'i');
     base_url := regexp_replace(without_userinfo, '\?.*$', '');
+    normalized_host := lower(substring(base_url from '^https?://([^/:?#]+)'));
     raw_query := substring(without_userinfo from '\?(.*)$');
 
     IF raw_query IS NULL OR raw_query = '' THEN
@@ -121,9 +123,13 @@ BEGIN
     ) decoded
     WHERE position('=' in pair) > 1
       AND decoded_value <> ''
-      AND lower(decoded_name) IN (
-          'gh_jid', 'gh_src', 'jk', 'jobid', 'job_id', 'jid',
-          'posting_id', 'postingid', 'reqid', 'req_id', 'vacancyid'
+      AND length(decoded_value) <= 128
+      AND decoded_value ~ '^[A-Za-z0-9][A-Za-z0-9._~-]*$'
+      AND (
+          ((normalized_host = 'indeed.com' OR normalized_host LIKE '%.indeed.com')
+              AND lower(decoded_name) = 'jk')
+          OR ((normalized_host = 'greenhouse.io' OR normalized_host LIKE '%.greenhouse.io')
+              AND lower(decoded_name) = 'gh_jid')
       );
 
     RETURN CASE WHEN safe_query IS NULL THEN base_url ELSE base_url || '?' || safe_query END;

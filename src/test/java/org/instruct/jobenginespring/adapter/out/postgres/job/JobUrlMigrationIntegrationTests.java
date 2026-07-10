@@ -28,8 +28,8 @@ class JobUrlMigrationIntegrationTests {
             JdbcTemplate jdbc = jdbc(postgres);
             UUID jobId = insertLinkJob(
                     jdbc,
-                    "https://user:password@example.test/jobs/view?jk=job+123&token=secret&utm_source=email#details",
-                    "https://user:password@example.test/jobs/view?token=secret&jk=job+123&utm_source=email#details",
+                    "https://user:password@www.indeed.com/viewjob?jk=abc123def4567890&token=secret&utm_source=email#details",
+                    "https://user:password@www.indeed.com/viewjob?token=secret&jk=abc123def4567890&utm_source=email#details",
                     "fingerprint-one"
             );
             UUID analysisId = UUID.randomUUID();
@@ -42,9 +42,9 @@ class JobUrlMigrationIntegrationTests {
                               'SUCCEEDED', 'VALID', '[]'::jsonb, ?, ?)
                     """,
                     analysisId,
-                    "https://example.test/jobs/view?jk=job+123&token=secret#details",
-                    "https://example.test/jobs/view?token=secret&jk=job+123&utm_source=email#details",
-                    "{\"originalUrl\":\"https://example.test/jobs/view?token=secret\",\"normalizedUrl\":\"https://example.test/jobs/view?token=secret&jk=job-123\"}",
+                    "https://boards.greenhouse.io/example/jobs/123?gh_jid=456789&gh_src=tracking-source&token=secret#details",
+                    "https://boards.greenhouse.io/example/jobs/123?token=secret&gh_src=tracking-source&gh_jid=456789#details",
+                    "{\"originalUrl\":\"https://boards.greenhouse.io/example/jobs/123?token=secret\",\"normalizedUrl\":\"https://boards.greenhouse.io/example/jobs/123?gh_src=tracking-source&gh_jid=456789\"}",
                     Timestamp.from(NOW),
                     Timestamp.from(NOW)
             );
@@ -56,8 +56,8 @@ class JobUrlMigrationIntegrationTests {
                     FROM job_schema.job_link_ingestions
                     WHERE job_id = ?
                     """, jobId);
-            assertEquals("https://example.test/jobs/view", link.get("url"));
-            assertEquals("https://example.test/jobs/view?jk=job%20123", link.get("normalized_url"));
+            assertEquals("https://www.indeed.com/viewjob", link.get("url"));
+            assertEquals("https://www.indeed.com/viewjob?jk=abc123def4567890", link.get("normalized_url"));
 
             Map<String, Object> analysis = jdbc.queryForMap("""
                     SELECT original_url, normalized_url,
@@ -66,8 +66,8 @@ class JobUrlMigrationIntegrationTests {
                     FROM job_schema.job_analysis_runs
                     WHERE id = ?
                     """, analysisId);
-            assertEquals("https://example.test/jobs/view", analysis.get("original_url"));
-            assertEquals("https://example.test/jobs/view?jk=job%20123", analysis.get("normalized_url"));
+            assertEquals("https://boards.greenhouse.io/example/jobs/123", analysis.get("original_url"));
+            assertEquals("https://boards.greenhouse.io/example/jobs/123?gh_jid=456789", analysis.get("normalized_url"));
             assertEquals(analysis.get("original_url"), analysis.get("input_original_url"));
             assertEquals(analysis.get("normalized_url"), analysis.get("input_normalized_url"));
             assertTrue(analysis.values().stream().noneMatch(value -> String.valueOf(value).contains("secret")));
