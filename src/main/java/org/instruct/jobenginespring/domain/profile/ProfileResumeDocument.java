@@ -3,7 +3,7 @@ package org.instruct.jobenginespring.domain.profile;
 import java.time.Instant;
 import java.util.UUID;
 
-/** Links a profile to its current generated master resume PDF document. */
+/** Links a profile and resume type to its current generated PDF document. */
 public record ProfileResumeDocument(
         UUID id,
         UUID profileId,

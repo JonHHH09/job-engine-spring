@@ -37,8 +37,7 @@ import java.util.UUID;
 @SpringBootTest(properties = {
         "spring.autoconfigure.exclude="
                 + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,"
-                + "org.springframework.ai.model.postgresml.autoconfigure.PostgresMlEmbeddingAutoConfiguration",
+                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration",
         "job-engine.health.postgres.enabled=false",
         "job-engine.profile.postgres.enabled=false",
         "job-engine.document.postgres.enabled=false",

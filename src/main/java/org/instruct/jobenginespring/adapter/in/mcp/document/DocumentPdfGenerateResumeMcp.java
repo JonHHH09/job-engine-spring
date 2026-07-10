@@ -20,7 +20,7 @@ public class DocumentPdfGenerateResumeMcp {
 
     @McpTool(
             name = "generate_pdf_resume",
-            description = "Generate a master resume PDF from profile schema data, store it as a document, and link it one-to-one to the profile."
+            description = "Generate a master resume PDF from profile schema data, store it as a document, and keep one current master-resume link for the profile."
     )
     public CallToolResult generatePdfResume(
             @McpToolParam(required = true, description = "Master resume PDF generation request")
