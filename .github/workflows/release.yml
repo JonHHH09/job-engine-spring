@@ -104,6 +104,24 @@ jobs:
       - name: Create jar checksum
         run: sha256sum "job-engine-spring-${{ steps.release.outputs.release_tag }}.jar" > SHA256SUMS
 
+      - name: Generate CycloneDX SBOM for verified jar
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          file: "target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar"
+          format: cyclonedx-json
+          output-file: "job-engine-spring-${{ steps.release.outputs.release_tag }}.cdx.json"
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate SPDX SBOM for verified jar
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          file: "target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar"
+          format: spdx-json
+          output-file: "job-engine-spring-${{ steps.release.outputs.release_tag }}.spdx.json"
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Build release container image from verified jar
         run: |
           JAR_SHA256="$(cut -d ' ' -f1 SHA256SUMS)"
@@ -133,6 +151,8 @@ jobs:
           path: |
             job-engine-spring-${{ steps.release.outputs.release_tag }}.jar
             SHA256SUMS
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.cdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.spdx.json
             IMAGE-ID
             release-candidate-image.tar.gz
           if-no-files-found: error
@@ -150,6 +170,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -196,7 +217,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+
+      - name: Check Cosign install
+        run: cosign version
+
       - name: Publish container image
+        id: publish_image
         env:
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
@@ -220,7 +248,77 @@ jobs:
             docker push "${IMAGE_REPOSITORY}:latest"
           fi
 
-          docker image inspect "$IMAGE_NAME" --format '{{index .RepoDigests 0}}' > IMAGE-DIGESTS
+          immutable_image_ref="$(docker image inspect "$IMAGE_NAME" --format '{{index .RepoDigests 0}}')"
+          echo "$immutable_image_ref" > IMAGE-DIGESTS
+          {
+            echo "image_repository=$IMAGE_REPOSITORY"
+            echo "image_name=$IMAGE_NAME"
+            echo "image_ref=$immutable_image_ref"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Sign immutable release image digest with Cosign
+        env:
+          COSIGN_YES: "true"
+          IMAGE_REF: ${{ steps.publish_image.outputs.image_ref }}
+        run: cosign sign "$IMAGE_REF"
+
+      - name: Create provenance predicate
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+          IMAGE_REF: ${{ steps.publish_image.outputs.image_ref }}
+        run: |
+          cat > provenance-predicate.json <<EOF
+          {
+            "buildDefinition": {
+              "buildType": "https://github.com/JonHHH09/job-engine-spring/.github/workflows/release.yml@refs/heads/master",
+              "externalParameters": {
+                "releaseTag": "${RELEASE_TAG}",
+                "releaseVersion": "${RELEASE_VERSION}",
+                "imageRef": "${IMAGE_REF}"
+              },
+              "internalParameters": {
+                "workflowRef": "${GITHUB_WORKFLOW_REF}",
+                "runId": "${GITHUB_RUN_ID}",
+                "runAttempt": "${GITHUB_RUN_ATTEMPT}"
+              },
+              "resolvedDependencies": [
+                {
+                  "uri": "git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${GITHUB_SHA}",
+                  "digest": {
+                    "gitCommit": "${GITHUB_SHA}"
+                  }
+                },
+                {
+                  "uri": "pkg:docker/eclipse-temurin@25-jre",
+                  "digest": {
+                    "sha256": "d0eb1b9018b3044da1b7346f39e945f71095749853d69a3aa16b8c99dad9bb45"
+                  }
+                },
+                {
+                  "uri": "pkg:maven/org.apache.maven/apache-maven@3.9.16",
+                  "digest": {
+                    "sha256": "5af3b743dd8b876b5c45da33b676251e5f1687712644abb4ee519ca56e1d89ce"
+                  }
+                }
+              ]
+            },
+            "runDetails": {
+              "builder": {
+                "id": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
+              },
+              "metadata": {
+                "invocationId": "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+              }
+            }
+          }
+          EOF
+
+      - name: Attest immutable release image digest provenance
+        env:
+          COSIGN_YES: "true"
+          IMAGE_REF: ${{ steps.publish_image.outputs.image_ref }}
+        run: cosign attest --type slsaprovenance --predicate provenance-predicate.json "$IMAGE_REF"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
@@ -231,6 +329,8 @@ jobs:
           files: |
             job-engine-spring-${{ steps.release.outputs.release_tag }}.jar
             SHA256SUMS
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.cdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.spdx.json
             IMAGE-ID
             IMAGE-DIGESTS
 
@@ -243,4 +343,13 @@ jobs:
       contents: read
     steps:
       - name: Report release dry run
-        run: echo "Manual branch run completed verification only; no GitHub Release or GHCR package was published."
+        run: |
+          {
+            echo "Manual branch run completed verification only; no GitHub Release or GHCR package was published."
+            echo "Dry-run artifacts include the versioned jar, SHA256SUMS, CycloneDX SBOM, SPDX SBOM, IMAGE-ID, and the smoke-tested image tarball."
+            echo "After downloading the artifacts, verify them locally with:"
+            echo "  sha256sum -c SHA256SUMS"
+            echo "  gzip -dc release-candidate-image.tar.gz | docker image load"
+            printf '%s\n' "  test \"\$(docker image inspect job-engine-spring:release-candidate --format '{{.Id}}')\" = \"\$(tr -d '\\r\\n' < IMAGE-ID)\""
+            echo "  MCP_IMAGE=job-engine-spring:release-candidate MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh"
+          } | tee -a "$GITHUB_STEP_SUMMARY"

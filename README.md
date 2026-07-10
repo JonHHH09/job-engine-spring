@@ -213,7 +213,9 @@ Run Docker-backed PostgreSQL integration tests and the JaCoCo coverage gate expl
 ./mvnw -Pintegration-tests verify
 ```
 
-The GitHub Actions pipeline runs fast validation and unit tests on pull requests to `development`. Feature/fix pull requests targeting `master` additionally run the Docker-backed integration/coverage gate, containerized MCP STDIO smoke, and Qodana. A `development` → `master` promotion PR is a special case whose candidate tree must match `origin/development` exactly. Trusted pushes to `development` and manual CI runs also retain the heavy integration and container smoke gates. Tag releases remain explicit: pushing a `v*` tag runs clean full verification (`./mvnw clean -Drevision=<version> -Pintegration-tests verify`), copies the verified Maven jar to a versioned release artifact, builds and smoke-tests the release container once, transfers that exact image to the publish job, verifies its registry config digest against the smoke-tested image ID, publishes `ghcr.io/<owner>/job-engine-spring:<tag>` and `:latest` for stable tags, and uploads the jar, checksum, image ID, image digest, and verification reports as release artifacts. Manual release workflow runs always perform dry-run verification and never publish without a `v*` tag.
+The GitHub Actions pipeline runs fast validation and unit tests on pull requests to `development`. Feature/fix pull requests targeting `master` additionally run the Docker-backed integration/coverage gate, containerized MCP STDIO smoke, and Qodana. A `development` → `master` promotion PR is a special case whose candidate tree must match `origin/development` exactly. Trusted pushes to `development` and manual CI runs also retain the heavy integration and container smoke gates. Tag releases remain explicit: pushing a `v*` tag runs clean full verification (`./mvnw clean -Drevision=<version> -Pintegration-tests verify`), copies the verified Maven jar to a versioned release artifact, generates CycloneDX and SPDX SBOMs for that verified jar, builds and smoke-tests the release container once, transfers that exact image to the publish job, verifies its registry config digest against the smoke-tested image ID, publishes `ghcr.io/<owner>/job-engine-spring:<tag>` and `:latest` for stable tags, signs the immutable GHCR digest with keyless Cosign, attaches a provenance attestation to that same immutable digest, and uploads the jar, checksum, SBOMs, image ID, image digest, and verification reports as release artifacts. Manual release workflow runs always perform dry-run verification and never publish without a `v*` tag.
+
+Container inputs are digest-pinned in `Dockerfile`, `Dockerfile.release`, and `compose.yaml`. `.github/dependabot.yml` tracks both GitHub Actions and Docker references weekly so pinned bases and pinned workflow actions can be refreshed intentionally instead of drifting silently.
 
 To publish a release explicitly, run the release helper with the desired version tag:
 
@@ -222,3 +224,14 @@ To publish a release explicitly, run the release helper with the desired version
 ```
 
 The helper requires a clean working tree, fetches `origin/master`, refuses existing local or remote tags, creates an annotated `vMAJOR.MINOR.PATCH[-PRERELEASE]` tag that points exactly at `origin/master`, and pushes only that tag. The tag push triggers `.github/workflows/release.yml`, which performs verification before publishing the GitHub Release and GHCR image.
+
+To exercise the release flow safely without publishing anything, run `.github/workflows/release.yml` manually from a branch or `development`. The workflow dispatch path still performs the clean Maven verification, verified-jar packaging, SBOM generation, release-image build, and release-image smoke test, but it skips GitHub Release creation, GHCR publication, Cosign signing, and provenance attestation. Download the dry-run artifacts and verify them locally with:
+
+```bash
+sha256sum -c SHA256SUMS
+gzip -dc release-candidate-image.tar.gz | docker image load
+test "$(docker image inspect job-engine-spring:release-candidate --format '{{.Id}}')" = "$(tr -d '\r\n' < IMAGE-ID)"
+MCP_IMAGE=job-engine-spring:release-candidate MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
+```
+
+The Maven Wrapper now records `distributionSha256Sum` for the pinned Apache Maven 3.9.16 distribution. When updating `.mvn/wrapper/maven-wrapper.properties`, download the exact replacement archive from Apache, verify its upstream checksum/signature, compute its SHA-256 locally, and update both `distributionUrl` and `distributionSha256Sum` together.

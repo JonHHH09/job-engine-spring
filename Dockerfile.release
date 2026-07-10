@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM eclipse-temurin:25-jre
+FROM eclipse-temurin:25-jre@sha256:d0eb1b9018b3044da1b7346f39e945f71095749853d69a3aa16b8c99dad9bb45
 
 ARG JAR_FILE=target/job-engine-spring-0.0.1-SNAPSHOT.jar
 ARG VERSION=0.0.1-SNAPSHOT
