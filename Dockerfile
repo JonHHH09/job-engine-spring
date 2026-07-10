@@ -3,6 +3,10 @@
 FROM eclipse-temurin:25-jdk@sha256:68868d04fa9cfd5f5c6abec0b5cef86d8de2bf9c62c37c7d3e4f0f80f5cfd7ff AS build
 WORKDIR /workspace
 
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends unzip \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY .mvn .mvn
 COPY mvnw pom.xml ./
 RUN ./mvnw --no-transfer-progress -DskipTests dependency:go-offline
