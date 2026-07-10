@@ -8,6 +8,7 @@ import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobPostingAnalysisPort;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobAnalysisRun;
+import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
 import org.junit.jupiter.api.Test;
 
@@ -140,7 +141,7 @@ class JobAnalysisServiceTests {
     void addJobFromAnalysisReadsStoredHermesResponseAndUpdatesRunWithJobId() {
         JobAnalysisRun analysisRun = storedValidRun(ANALYSIS_ID);
         analysisRepository.saved.put(ANALYSIS_ID, analysisRun);
-        JobAggregate aggregate = new JobAggregate(samplePosting(), List.of(), null, null);
+        JobAggregate aggregate = new JobAggregate(samplePosting(), List.of(), sampleLinkIngestion(), null);
         when(jobService.addJobFromAnalyzedLink(any(JobService.AddJobFromAnalyzedLinkRequest.class)))
                 .thenReturn(new JobService.AddJobResult("created_job", aggregate));
 
@@ -316,7 +317,7 @@ class JobAnalysisServiceTests {
                 "skills", List.of("Java", 42, " "),
                 "postedDate", "not-an-instant"
         )));
-        JobAggregate aggregate = new JobAggregate(samplePosting(), List.of(), null, null);
+        JobAggregate aggregate = new JobAggregate(samplePosting(), List.of(), sampleLinkIngestion(), null);
         when(jobService.addJobFromAnalyzedLink(any(JobService.AddJobFromAnalyzedLinkRequest.class)))
                 .thenReturn(new JobService.AddJobResult("created_job", aggregate));
 
@@ -581,6 +582,19 @@ class JobAnalysisServiceTests {
                 Instant.parse("2026-07-01T00:00:00Z"),
                 "fingerprint",
                 NOW,
+                NOW
+        );
+    }
+
+    private static JobLinkIngestion sampleLinkIngestion() {
+        return new JobLinkIngestion(
+                UUID.fromString("eeeeeeee-1111-1111-1111-eeeeeeeeeeee"),
+                JOB_ID,
+                "https://example.test/jobs/123",
+                "https://example.test/jobs/123",
+                NOW,
+                200,
+                "Fetched Platform Engineer",
                 NOW
         );
     }

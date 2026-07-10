@@ -50,6 +50,7 @@ class ProfileSearchServiceTests {
         assertEquals("spring ai developer montreal", result.query());
         assertEquals(List.of("spring", "ai", "developer", "montreal"), result.queryTokens());
         assertEquals(1, result.totalMatches());
+        assertEquals(1, result.returnedCount());
         assertEquals(PROFILE_ID, result.profiles().getFirst().profile().id());
         assertTrue(result.profiles().getFirst().score() > 0);
         assertEquals(List.of(
@@ -81,7 +82,8 @@ class ProfileSearchServiceTests {
         ProfileSearchResult limited = service.searchProfiles(new ProfileSearchRequest("java", 1));
         ProfileSearchResult all = service.searchProfiles(new ProfileSearchRequest("java", 10));
 
-        assertEquals(1, limited.totalMatches());
+        assertEquals(2, limited.totalMatches());
+        assertEquals(1, limited.returnedCount());
         assertEquals("Alpha Profile", limited.profiles().getFirst().profile().fullName());
         assertEquals(List.of("Alpha Profile", "Beta Profile"), all.profiles().stream()
                 .map(match -> match.profile().fullName())
@@ -131,7 +133,21 @@ class ProfileSearchServiceTests {
         assertEquals("kubernetes", result.query());
         assertEquals(List.of("kubernetes"), result.queryTokens());
         assertEquals(0, result.totalMatches());
+        assertEquals(0, result.returnedCount());
         assertEquals(List.of(), result.profiles());
+    }
+
+    @Test
+    void searchUsesBatchAggregateLoadingInsteadOfPerProfileLookups() {
+        repository.saveProfileAggregate(completeAggregate(PROFILE_ID, "Agentic Dev", "agentic@example.test"));
+        repository.saveProfileAggregate(minimalAggregate(OTHER_PROFILE_ID, "Backend Engineer", "backend@example.test"));
+        repository.listProfileAggregatesCalls = 0;
+        repository.findProfileAggregateCalls = 0;
+
+        service.searchProfiles(new ProfileSearchRequest("developer", 10));
+
+        assertEquals(1, repository.listProfileAggregatesCalls);
+        assertEquals(0, repository.findProfileAggregateCalls);
     }
 
     @Test
@@ -154,7 +170,7 @@ class ProfileSearchServiceTests {
         assertTrue((Boolean) invoke("containsTokenPrefix", new Class<?>[]{java.util.Set.class, String.class}, java.util.Set.of("postgresql"), "post"));
         assertTrue((Boolean) invoke("containsTokenPrefix", new Class<?>[]{java.util.Set.class, String.class}, java.util.Set.of("post"), "postgresql"));
 
-        ProfileSearchService.ProfileSearchResult nullCollectionsResult = new ProfileSearchService.ProfileSearchResult("q", null, 0, null);
+        ProfileSearchService.ProfileSearchResult nullCollectionsResult = new ProfileSearchService.ProfileSearchResult("q", null, 0, 0, null);
         assertEquals(List.of(), nullCollectionsResult.queryTokens());
         assertEquals(List.of(), nullCollectionsResult.profiles());
         ProfileSearchService.ProfileSearchMatch nullFieldsMatch = new ProfileSearchService.ProfileSearchMatch(
@@ -224,6 +240,8 @@ class ProfileSearchServiceTests {
 
     private static final class FakeProfileRepository implements ProfileRepository {
         private final Map<UUID, ProfileAggregate> aggregates = new LinkedHashMap<>();
+        private int listProfileAggregatesCalls;
+        private int findProfileAggregateCalls;
 
         @Override
         public List<UserProfile> listProfiles() {
@@ -233,6 +251,18 @@ class ProfileSearchServiceTests {
         @Override
         public Optional<UserProfile> findProfileById(UUID profileId) {
             return Optional.ofNullable(aggregates.get(profileId)).map(ProfileAggregate::profile);
+        }
+
+        @Override
+        public Optional<ProfileAggregate> findProfileAggregate(UUID profileId) {
+            findProfileAggregateCalls++;
+            return aggregate(profileId);
+        }
+
+        @Override
+        public List<ProfileAggregate> listProfileAggregates() {
+            listProfileAggregatesCalls++;
+            return List.copyOf(aggregates.values());
         }
 
         @Override

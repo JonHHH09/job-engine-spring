@@ -506,6 +506,11 @@ class GeneratePdfResumeServiceTests {
         }
 
         @Override
+        public List<ProfileAggregate> listProfileAggregates() {
+            return List.copyOf(aggregates.values());
+        }
+
+        @Override
         public List<ProfileContact> listContacts(UUID profileId) {
             return aggregate(profileId).map(ProfileAggregate::contacts).orElse(List.of());
         }

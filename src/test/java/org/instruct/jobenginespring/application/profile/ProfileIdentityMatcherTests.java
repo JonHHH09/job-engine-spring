@@ -118,6 +118,11 @@ class ProfileIdentityMatcherTests {
         }
 
         @Override
+        public List<org.instruct.jobenginespring.domain.profile.ProfileAggregate> listProfileAggregates() {
+            return List.of();
+        }
+
+        @Override
         public List<org.instruct.jobenginespring.domain.profile.ProfileContact> listContacts(UUID profileId) {
             return List.of();
         }

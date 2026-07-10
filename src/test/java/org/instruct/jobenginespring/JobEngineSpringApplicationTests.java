@@ -93,6 +93,11 @@ class JobEngineSpringApplicationTests {
                 }
 
                 @Override
+                public List<ProfileAggregate> listProfileAggregates() {
+                    return List.of();
+                }
+
+                @Override
                 public List<ProfileContact> listContacts(UUID profileId) {
                     return List.of();
                 }
