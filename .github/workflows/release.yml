@@ -105,7 +105,7 @@ jobs:
         run: sha256sum "job-engine-spring-${{ steps.release.outputs.release_tag }}.jar" > SHA256SUMS
 
       - name: Generate CycloneDX SBOM for verified jar
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           file: "target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar"
           format: cyclonedx-json
@@ -114,7 +114,7 @@ jobs:
           upload-release-assets: false
 
       - name: Generate SPDX SBOM for verified jar
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           file: "target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar"
           format: spdx-json
@@ -176,7 +176,7 @@ jobs:
           done
 
       - name: Generate CycloneDX SBOM for smoke-tested linux/amd64 image
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: job-engine-spring:release-candidate-amd64
           format: cyclonedx-json
@@ -185,7 +185,7 @@ jobs:
           upload-release-assets: false
 
       - name: Generate SPDX SBOM for smoke-tested linux/amd64 image
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: job-engine-spring:release-candidate-amd64
           format: spdx-json
@@ -194,7 +194,7 @@ jobs:
           upload-release-assets: false
 
       - name: Generate CycloneDX SBOM for smoke-tested linux/arm64 image
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: job-engine-spring:release-candidate-arm64
           format: cyclonedx-json
@@ -203,7 +203,7 @@ jobs:
           upload-release-assets: false
 
       - name: Generate SPDX SBOM for smoke-tested linux/arm64 image
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: job-engine-spring:release-candidate-arm64
           format: spdx-json
