@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
+import org.apache.commons.codec.digest.DigestUtils;
 import lombok.NonNull;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
@@ -17,11 +18,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -30,7 +28,7 @@ import java.util.UUID;
 public class DocumentStorageService {
 
     public static final String PDF_MEDIA_TYPE = "application/pdf";
-    private static final String PDF_EXTRACTOR = "spring-ai-page-pdf-document-reader";
+    private static final String PDF_EXTRACTOR = "spring-ai-page-pdf-document-reader:canonical-250000-v1";
     private static final byte[] PDF_MAGIC = new byte[]{'%', 'P', 'D', 'F', '-'};
 
     @NonNull
@@ -100,11 +98,7 @@ public class DocumentStorageService {
 
         if (safeRequest.persistExtraction() != null && safeRequest.persistExtraction()) {
             return documentRepository.findPdfExtractionByFileId(file.id())
-                    .map(existing -> new StoredPdfTextExtractionResult(
-                            file.metadata(),
-                            existing.id(),
-                            toExtractionResult(file.originalFileName(), existing)
-                    ))
+                    .map(existing -> persistedResult(file, existing, safeRequest))
                     .orElseGet(() -> extractAndPersist(file, safeRequest));
         }
 
@@ -133,25 +127,84 @@ public class DocumentStorageService {
     }
 
     private StoredPdfTextExtractionResult extractAndPersist(StoredDocumentFile file, ExtractStoredPdfTextRequest request) {
-        PdfTextExtractionResult extraction = pdfTextExtractionService.extractText(
+        PdfTextExtractionResult canonical = extractCanonical(file);
+        UUID extractionId = UUID.randomUUID();
+        PdfExtractionRecord saved = documentRepository.savePdfExtraction(toRecord(extractionId, file.id(), canonical));
+        return new StoredPdfTextExtractionResult(
+                file.metadata(),
+                saved.id(),
+                PdfTextExtractionService.applyRequestView(canonical, request.maxCharacters(), request.includePages())
+        );
+    }
+
+    private StoredPdfTextExtractionResult persistedResult(
+            StoredDocumentFile file,
+            PdfExtractionRecord existing,
+            ExtractStoredPdfTextRequest request
+    ) {
+        if (!PDF_EXTRACTOR.equals(existing.extractor())) {
+            PdfTextExtractionResult canonical = extractCanonical(file);
+            PdfExtractionRecord refreshed = documentRepository.updatePdfExtraction(
+                    toRecord(existing.id(), file.id(), canonical)
+            );
+            return new StoredPdfTextExtractionResult(
+                    file.metadata(),
+                    refreshed.id(),
+                    PdfTextExtractionService.applyRequestView(canonical, request.maxCharacters(), request.includePages())
+            );
+        }
+
+        return persistedResponse(
+                file,
+                existing.id(),
+                toExtractionResult(file.originalFileName(), existing),
+                request
+        );
+    }
+
+    private StoredPdfTextExtractionResult persistedResponse(
+            StoredDocumentFile file,
+            UUID extractionId,
+            PdfTextExtractionResult canonical,
+            ExtractStoredPdfTextRequest request
+    ) {
+        if (request.includePages() == null || request.includePages()) {
+            PdfTextExtractionResult response = pdfTextExtractionService.extractText(
+                    file.content(),
+                    file.originalFileName(),
+                    request.maxCharacters(),
+                    true
+            );
+            return new StoredPdfTextExtractionResult(file.metadata(), extractionId, response);
+        }
+
+        return new StoredPdfTextExtractionResult(
+                file.metadata(),
+                extractionId,
+                PdfTextExtractionService.applyRequestView(canonical, request.maxCharacters(), false)
+        );
+    }
+
+    private PdfTextExtractionResult extractCanonical(StoredDocumentFile file) {
+        return pdfTextExtractionService.extractText(
                 file.content(),
                 file.originalFileName(),
-                request.maxCharacters(),
-                request.includePages()
+                PdfTextExtractionService.MAX_CHARACTERS_LIMIT,
+                true
         );
-        UUID extractionId = UUID.randomUUID();
-        Instant now = clock.instant();
-        PdfExtractionRecord saved = documentRepository.savePdfExtraction(new PdfExtractionRecord(
+    }
+
+    private PdfExtractionRecord toRecord(UUID extractionId, UUID fileId, PdfTextExtractionResult extraction) {
+        return new PdfExtractionRecord(
                 extractionId,
-                file.id(),
+                fileId,
                 PDF_EXTRACTOR,
                 extraction.characterCount(),
                 extraction.pageCount(),
                 extraction.truncated(),
                 extraction.text(),
-                now
-        ));
-        return new StoredPdfTextExtractionResult(file.metadata(), saved.id(), extraction);
+                clock.instant()
+        );
     }
 
     private static PdfTextExtractionResult toExtractionResult(String fileName, PdfExtractionRecord extraction) {
@@ -195,7 +248,6 @@ public class DocumentStorageService {
         return mediaType.strip().toLowerCase();
     }
 
-    @lombok.Generated
     private static byte[] readContent(Path path) {
         try {
             return Files.readAllBytes(path);
@@ -224,19 +276,8 @@ public class DocumentStorageService {
         }
     }
 
-    @lombok.Generated
     private static String sha256(byte[] content) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(content));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new ApplicationException(
-                    ApplicationErrorCode.INTERNAL_ERROR,
-                    ApplicationErrorCode.INTERNAL_ERROR.defaultMessage(),
-                    Map.of(),
-                    exception
-            );
-        }
+        return DigestUtils.sha256Hex(content);
     }
 
     private static ApplicationException validation(String field, String reason) {

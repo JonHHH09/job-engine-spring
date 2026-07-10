@@ -11,6 +11,8 @@ public interface JobRepository {
 
     List<JobPosting> listJobs();
 
+    List<JobAggregate> listJobAggregates();
+
     Optional<JobAggregate> findJobAggregate(UUID jobId);
 
     Optional<JobAggregate> findByCanonicalFingerprint(String canonicalFingerprint);

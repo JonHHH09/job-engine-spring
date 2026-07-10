@@ -2,6 +2,7 @@ package org.instruct.jobenginespring;
 
 import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
+import org.instruct.jobenginespring.application.document.port.GeneratedResumeCleanupRepository;
 import org.instruct.jobenginespring.application.job.port.JobAnalysisRunRepository;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
@@ -37,8 +38,7 @@ import java.util.UUID;
 @SpringBootTest(properties = {
         "spring.autoconfigure.exclude="
                 + "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration,"
-                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration,"
-                + "org.springframework.ai.model.postgresml.autoconfigure.PostgresMlEmbeddingAutoConfiguration",
+                + "org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration",
         "job-engine.health.postgres.enabled=false",
         "job-engine.profile.postgres.enabled=false",
         "job-engine.document.postgres.enabled=false",
@@ -63,6 +63,11 @@ class JobEngineSpringApplicationTests {
         @Bean
         DocumentStorageService documentStorageService() {
             return org.mockito.Mockito.mock(DocumentStorageService.class);
+        }
+
+        @Bean
+        GeneratedResumeCleanupRepository generatedResumeCleanupRepository() {
+            return org.mockito.Mockito.mock(GeneratedResumeCleanupRepository.class);
         }
 
         @Bean
@@ -91,6 +96,11 @@ class JobEngineSpringApplicationTests {
                 @Override
                 public Optional<UserProfile> findProfileById(UUID profileId) {
                     return Optional.empty();
+                }
+
+                @Override
+                public List<ProfileAggregate> listProfileAggregates() {
+                    return List.of();
                 }
 
                 @Override
@@ -177,6 +187,16 @@ class JobEngineSpringApplicationTests {
                 public PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction) {
                     return extraction;
                 }
+
+                @Override
+                public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
+                    return extraction;
+                }
+
+                @Override
+                public boolean deleteFileIfUnreferenced(UUID fileId) {
+                    return false;
+                }
             };
         }
 
@@ -221,6 +241,16 @@ class JobEngineSpringApplicationTests {
                 @Override
                 public Optional<ProfileResumeDocument> findByDocumentId(UUID documentId) {
                     return Optional.empty();
+                }
+
+                @Override
+                public java.util.List<ProfileResumeDocument> lockAndFindAllByProfileId(UUID profileId) {
+                    return java.util.List.of();
+                }
+
+                @Override
+                public Replacement replace(ProfileResumeDocument resumeDocument) {
+                    return new Replacement(resumeDocument, Optional.empty());
                 }
             };
         }

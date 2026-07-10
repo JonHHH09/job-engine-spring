@@ -296,6 +296,26 @@ class PdfTextExtractionServiceTests {
     }
 
     @Test
+    void requestViewIncludesPagesByDefault() {
+        PdfTextExtractionResult canonical = new PdfTextExtractionResult(
+                "stored.pdf",
+                2,
+                14,
+                false,
+                "abcdef\n\nghijkl",
+                List.of(new ExtractedPdfPage(1, "abcdef"), new ExtractedPdfPage(2, "ghijkl"))
+        );
+
+        PdfTextExtractionResult defaultView = PdfTextExtractionService.applyRequestView(canonical, 5, null);
+        PdfTextExtractionResult explicitView = PdfTextExtractionService.applyRequestView(canonical, 5, true);
+
+        assertEquals("abcde", defaultView.text());
+        assertEquals(List.of(new ExtractedPdfPage(1, "abcde")), defaultView.pages());
+        assertTrue(defaultView.truncated());
+        assertEquals(defaultView, explicitView);
+    }
+
+    @Test
     void truncatesReturnedTextAndPages() throws IOException {
         Path pdf = createPdf("long-text.pdf", List.of("abcdef", "ghijkl"));
 

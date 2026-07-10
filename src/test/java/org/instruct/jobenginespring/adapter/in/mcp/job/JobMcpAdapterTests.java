@@ -11,6 +11,7 @@ import org.instruct.jobenginespring.application.job.JobService;
 import org.instruct.jobenginespring.application.job.JobService.AddJobResult;
 import org.instruct.jobenginespring.application.job.JobService.DeleteJobResult;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
+import org.instruct.jobenginespring.domain.job.JobTextIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
 import org.instruct.jobenginespring.domain.job.JobSkill;
 import org.junit.jupiter.api.Test;
@@ -108,7 +109,7 @@ class JobMcpAdapterTests {
         JobService.AddJobFromLinkRequest serviceLinkRequest = linkRequest.toServiceRequest();
         JobService.JobSearchRequest serviceSearchRequest = searchRequest.toServiceRequest();
         AddJobResult addResult = new AddJobResult("created_job", sampleAggregate());
-        JobService.JobSearchResult searchResult = new JobService.JobSearchResult("java", List.of("java"), 1, List.of());
+        JobService.JobSearchResult searchResult = new JobService.JobSearchResult("java", List.of("java"), 1, 0, List.of());
         when(jobService.addJobFromText(serviceTextRequest)).thenReturn(addResult);
         when(jobService.addJobFromLink(serviceLinkRequest)).thenReturn(addResult);
         when(jobService.searchJobs(serviceSearchRequest)).thenReturn(searchResult);
@@ -137,7 +138,7 @@ class JobMcpAdapterTests {
                 NOW
         );
         JobService.UpdateJobRequest serviceUpdateRequest = updateRequest.toServiceRequest();
-        JobAggregate updated = new JobAggregate(samplePosting(), List.of(sampleSkill()), null, null);
+        JobAggregate updated = new JobAggregate(samplePosting(), List.of(sampleSkill()), null, sampleTextIngestion());
         DeleteJobResult deleteResult = new DeleteJobResult(JOB_ID, true);
         when(jobService.updateJob(serviceUpdateRequest)).thenReturn(updated);
         when(jobService.deleteJob(JOB_ID)).thenReturn(deleteResult);
@@ -292,7 +293,7 @@ class JobMcpAdapterTests {
     }
 
     private static JobAggregate sampleAggregate() {
-        return new JobAggregate(samplePosting(), List.of(), null, null);
+        return new JobAggregate(samplePosting(), List.of(), null, sampleTextIngestion());
     }
 
     private static JobPosting samplePosting() {
@@ -310,6 +311,16 @@ class JobMcpAdapterTests {
                 null,
                 "fingerprint",
                 NOW,
+                NOW
+        );
+    }
+
+    private static JobTextIngestion sampleTextIngestion() {
+        return new JobTextIngestion(
+                UUID.fromString("dddddddd-1111-1111-1111-dddddddddddd"),
+                JOB_ID,
+                "manual",
+                "sample-hash",
                 NOW
         );
     }

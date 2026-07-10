@@ -45,6 +45,8 @@ public interface ProfileRepository {
 
     List<ProjectTechnology> listProjectTechnologies(UUID profileId);
 
+    List<ProfileAggregate> listProfileAggregates();
+
     ProfileAggregate saveProfileAggregate(ProfileAggregate aggregate);
 
     boolean deleteProfile(UUID profileId);

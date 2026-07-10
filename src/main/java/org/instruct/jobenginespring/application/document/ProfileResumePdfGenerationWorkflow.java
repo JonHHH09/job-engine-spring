@@ -16,9 +16,9 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -26,27 +26,27 @@ public class ProfileResumePdfGenerationWorkflow {
 
     private final ProfileRepository profileRepository;
     private final DocumentStorageService documentStorageService;
-    private final ProfileResumeDocumentRepository profileResumeDocumentRepository;
+    private final GeneratedResumeAssetService generatedResumeAssetService;
     private Clock clock = Clock.systemUTC();
 
     @Autowired
     public ProfileResumePdfGenerationWorkflow(
             ProfileRepository profileRepository,
             DocumentStorageService documentStorageService,
-            ProfileResumeDocumentRepository profileResumeDocumentRepository
+            GeneratedResumeAssetService generatedResumeAssetService
     ) {
         this.profileRepository = Objects.requireNonNull(profileRepository, "profileRepository must not be null");
         this.documentStorageService = Objects.requireNonNull(documentStorageService, "documentStorageService must not be null");
-        this.profileResumeDocumentRepository = Objects.requireNonNull(profileResumeDocumentRepository, "profileResumeDocumentRepository must not be null");
+        this.generatedResumeAssetService = Objects.requireNonNull(generatedResumeAssetService, "generatedResumeAssetService must not be null");
     }
 
     ProfileResumePdfGenerationWorkflow(
             ProfileRepository profileRepository,
             DocumentStorageService documentStorageService,
-            ProfileResumeDocumentRepository profileResumeDocumentRepository,
+            GeneratedResumeAssetService generatedResumeAssetService,
             Clock clock
     ) {
-        this(profileRepository, documentStorageService, profileResumeDocumentRepository);
+        this(profileRepository, documentStorageService, generatedResumeAssetService);
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
@@ -61,39 +61,56 @@ public class ProfileResumePdfGenerationWorkflow {
         UUID profileId = validateProfileId(safeCommand.profileId());
         String resumeType = validateResumeType(safeCommand.resumeType());
         Path outputDirectory = Objects.requireNonNull(safeCommand.outputDirectory(), "outputDirectory must not be null");
-        Optional<ProfileResumeDocument> existingLink = profileResumeDocumentRepository.findByProfileIdAndResumeType(profileId, resumeType);
 
         GeneratedPdfFileResult generatedFile = new PdfGenerationService(outputDirectory).generatePdfFile(new GeneratePdfFileRequest(
-                safeCommand.fileName(),
+                uniqueFileName(safeCommand.fileName()),
                 safeCommand.title(),
                 safeCommand.body()
         ));
-        StoredDocumentMetadata document = documentStorageService.storeGeneratedDocumentFile(
-                Path.of(generatedFile.path()),
-                DocumentStorageService.PDF_MEDIA_TYPE
-        );
-        Instant now = clock.instant();
-        ProfileResumeDocument savedLink = profileResumeDocumentRepository.save(new ProfileResumeDocument(
-                existingLink.map(ProfileResumeDocument::id).orElseGet(UUID::randomUUID),
-                profileId,
-                document.id(),
-                generatedFile.path(),
-                resumeType,
-                existingLink.map(ProfileResumeDocument::createdAt).orElse(now),
-                now
-        ));
+        generatedResumeAssetService.deleteGeneratedFileOnRollback(generatedFile.path());
+        try {
+            StoredDocumentMetadata document = documentStorageService.storeGeneratedDocumentFile(
+                    Path.of(generatedFile.path()),
+                    DocumentStorageService.PDF_MEDIA_TYPE
+            );
+            Instant now = clock.instant();
+            ProfileResumeDocumentRepository.Replacement replacement = generatedResumeAssetService.replace(new ProfileResumeDocument(
+                    UUID.randomUUID(),
+                    profileId,
+                    document.id(),
+                    generatedFile.path(),
+                    resumeType,
+                    now,
+                    now
+            ));
+            ProfileResumeDocument savedLink = replacement.saved();
 
-        return new GeneratedProfileResumePdf(
-                profileId,
-                savedLink.id(),
-                savedLink.documentId(),
-                savedLink.filePath(),
-                savedLink.resumeType(),
-                document,
-                generatedFile,
-                existingLink.isPresent(),
-                savedLink.updatedAt().toString()
-        );
+            return new GeneratedProfileResumePdf(
+                    profileId,
+                    savedLink.id(),
+                    savedLink.documentId(),
+                    savedLink.filePath(),
+                    savedLink.resumeType(),
+                    document,
+                    generatedFile,
+                    replacement.previous().isPresent(),
+                    savedLink.updatedAt().toString()
+            );
+        } catch (RuntimeException | Error failure) {
+            try {
+                generatedResumeAssetService.discardFailedGeneratedFile(generatedFile.path());
+            } catch (RuntimeException cleanupFailure) {
+                failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
+        }
+    }
+
+    private static String uniqueFileName(String requestedFileName) {
+        String fileName = requestedFileName == null ? "generated-resume.pdf" : requestedFileName;
+        int extensionIndex = fileName.toLowerCase(Locale.ROOT).lastIndexOf(".pdf");
+        String baseName = extensionIndex < 0 ? fileName : fileName.substring(0, extensionIndex);
+        return baseName + "-" + UUID.randomUUID() + ".pdf";
     }
 
     private static UUID validateProfileId(UUID profileId) {
@@ -107,7 +124,7 @@ public class ProfileResumePdfGenerationWorkflow {
         if (resumeType == null || resumeType.isBlank()) {
             throw validation("resumeType", "must not be blank");
         }
-        return resumeType.strip().toLowerCase(java.util.Locale.ROOT);
+        return resumeType.strip().toLowerCase(Locale.ROOT);
     }
 
     private static ApplicationException validation(String field, String reason) {

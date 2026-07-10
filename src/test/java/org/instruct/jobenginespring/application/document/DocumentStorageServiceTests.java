@@ -30,7 +30,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -137,7 +139,12 @@ class DocumentStorageServiceTests {
         PdfExtractionRecord savedExtraction = repository.lastExtraction();
         assertEquals(metadata.id(), savedExtraction.fileId());
         assertEquals("sample text", savedExtraction.extractedText());
-        verify(pdfTextExtractionService).extractText(any(byte[].class), any(), any(), any());
+        verify(pdfTextExtractionService).extractText(
+                any(byte[].class),
+                eq("stored.pdf"),
+                eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
+                eq(true)
+        );
     }
 
     @Test
@@ -158,6 +165,125 @@ class DocumentStorageServiceTests {
         assertEquals("text", second.extraction().text());
         assertEquals(1, repository.extractionCount());
         verify(pdfTextExtractionService).extractText(any(byte[].class), any(), any(), any());
+    }
+
+    @Test
+    void persistedExtractionUsesCanonicalLimitAndAppliesLargerRequestViews() throws IOException {
+        Path pdf = writePdfLikeFile("canonical.pdf", "placeholder");
+        StoredDocumentMetadata metadata = service.storeDocumentFile(new StoreDocumentFileRequest(pdf.toString(), null));
+        PdfTextExtractionResult canonical = new PdfTextExtractionResult(
+                "canonical.pdf",
+                1,
+                20,
+                false,
+                "0123456789abcdefghij",
+                List.of()
+        );
+        when(pdfTextExtractionService.extractText(
+                any(byte[].class),
+                eq("canonical.pdf"),
+                eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
+                eq(true)
+        )).thenReturn(canonical);
+
+        StoredPdfTextExtractionResult first = service.extractStoredPdfText(
+                new ExtractStoredPdfTextRequest(metadata.id(), 5, false, true)
+        );
+        StoredPdfTextExtractionResult second = service.extractStoredPdfText(
+                new ExtractStoredPdfTextRequest(metadata.id(), 15, false, true)
+        );
+
+        assertEquals("01234", first.extraction().text());
+        assertTrue(first.extraction().truncated());
+        assertEquals("0123456789abcde", second.extraction().text());
+        assertTrue(second.extraction().truncated());
+        assertEquals(20, repository.lastExtraction().characterCount());
+        assertEquals("0123456789abcdefghij", repository.lastExtraction().extractedText());
+        verify(pdfTextExtractionService, times(1)).extractText(any(byte[].class), any(), any(), any());
+    }
+
+    @Test
+    void cachedAndNewPersistedResponsesHonorIncludePages() throws IOException {
+        Path pdf = writePdfLikeFile("pages.pdf", "placeholder");
+        StoredDocumentMetadata metadata = service.storeDocumentFile(new StoreDocumentFileRequest(pdf.toString(), null));
+        PdfTextExtractionResult pageProjection = new PdfTextExtractionResult(
+                "pages.pdf",
+                2,
+                13,
+                false,
+                "first\n\nsecond",
+                List.of(
+                        new PdfTextExtractionService.ExtractedPdfPage(1, "first"),
+                        new PdfTextExtractionService.ExtractedPdfPage(2, "second")
+                )
+        );
+        when(pdfTextExtractionService.extractText(
+                any(byte[].class),
+                eq("pages.pdf"),
+                eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
+                eq(true)
+        )).thenReturn(pageProjection);
+        when(pdfTextExtractionService.extractText(any(byte[].class), eq("pages.pdf"), eq(13), eq(true)))
+                .thenReturn(pageProjection);
+
+        StoredPdfTextExtractionResult first = service.extractStoredPdfText(
+                new ExtractStoredPdfTextRequest(metadata.id(), 13, true, true)
+        );
+        StoredPdfTextExtractionResult cached = service.extractStoredPdfText(
+                new ExtractStoredPdfTextRequest(metadata.id(), 13, null, true)
+        );
+        StoredPdfTextExtractionResult explicitCached = service.extractStoredPdfText(
+                new ExtractStoredPdfTextRequest(metadata.id(), 13, true, true)
+        );
+
+        assertEquals(pageProjection, first.extraction());
+        assertEquals(first.extraction(), cached.extraction());
+        assertEquals(cached.extraction(), explicitCached.extraction());
+        assertEquals(first.extractionId(), cached.extractionId());
+        assertEquals(cached.extractionId(), explicitCached.extractionId());
+        verify(pdfTextExtractionService).extractText(
+                any(byte[].class),
+                eq("pages.pdf"),
+                eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
+                eq(true)
+        );
+        verify(pdfTextExtractionService, times(2))
+                .extractText(any(byte[].class), eq("pages.pdf"), eq(13), eq(true));
+    }
+
+    @Test
+    void refreshesLegacyPersistedExtractionWithoutChangingItsIdentity() throws IOException {
+        Path pdf = writePdfLikeFile("legacy.pdf", "placeholder");
+        StoredDocumentMetadata metadata = service.storeDocumentFile(new StoreDocumentFileRequest(pdf.toString(), null));
+        UUID extractionId = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        repository.savePdfExtraction(new PdfExtractionRecord(
+                extractionId,
+                metadata.id(),
+                "spring-ai-page-pdf-document-reader",
+                5,
+                1,
+                true,
+                "short",
+                NOW
+        ));
+        PdfTextExtractionResult canonical = new PdfTextExtractionResult(
+                "legacy.pdf", 1, 11, false, "longer text", List.of()
+        );
+        when(pdfTextExtractionService.extractText(
+                any(byte[].class),
+                eq("legacy.pdf"),
+                eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
+                eq(true)
+        )).thenReturn(canonical);
+
+        StoredPdfTextExtractionResult result = service.extractStoredPdfText(
+                new ExtractStoredPdfTextRequest(metadata.id(), 11, false, true)
+        );
+
+        assertEquals(extractionId, result.extractionId());
+        assertEquals("longer text", result.extraction().text());
+        assertEquals("spring-ai-page-pdf-document-reader:canonical-250000-v1", repository.lastExtraction().extractor());
+        assertEquals(1, repository.extractionCount());
     }
 
     @Test
@@ -326,6 +452,17 @@ class DocumentStorageServiceTests {
         public PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction) {
             extractions.add(extraction);
             return extraction;
+        }
+
+        @Override
+        public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
+            extractions.replaceAll(existing -> existing.id().equals(extraction.id()) ? extraction : existing);
+            return extraction;
+        }
+
+        @Override
+        public boolean deleteFileIfUnreferenced(UUID fileId) {
+            return files.remove(fileId) != null;
         }
 
         private int fileCount() {

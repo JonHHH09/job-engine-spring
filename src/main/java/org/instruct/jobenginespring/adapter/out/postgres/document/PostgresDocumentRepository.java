@@ -128,21 +128,82 @@ public class PostgresDocumentRepository implements DocumentRepository {
     @Override
     public PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction) {
         Objects.requireNonNull(extraction, "extraction must not be null");
+        MapSqlParameterSource parameters = extractionParameters(extraction);
+        return jdbc.sql("""
+                        INSERT INTO document.pdf_extractions (
+                            id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
+                        ) VALUES (
+                            :id, :fileId, :extractor, :characterCount, :pageCount, :truncated, :extractedText, :createdAt
+                        )
+                        ON CONFLICT (file_id) DO UPDATE SET file_id = EXCLUDED.file_id
+                        RETURNING id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
+                        """)
+                .params(parameters.getValues())
+                .query(EXTRACTION_MAPPER)
+                .single();
+    }
+
+    @Override
+    public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
+        Objects.requireNonNull(extraction, "extraction must not be null");
         namedJdbc.update("""
-                INSERT INTO document.pdf_extractions (
-                    id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
-                ) VALUES (
-                    :id, :fileId, :extractor, :characterCount, :pageCount, :truncated, :extractedText, :createdAt
-                )
+                UPDATE document.pdf_extractions
+                SET extractor = :extractor,
+                    character_count = :characterCount,
+                    page_count = :pageCount,
+                    truncated = :truncated,
+                    extracted_text = :extractedText,
+                    created_at = :createdAt
+                WHERE id = :id AND file_id = :fileId
                 """, extractionParameters(extraction));
+        return findExtractionById(extraction.id());
+    }
+
+    private PdfExtractionRecord findExtractionById(UUID extractionId) {
         return jdbc.sql("""
                         SELECT id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
                         FROM document.pdf_extractions
                         WHERE id = :id
                         """)
-                .param("id", extraction.id())
+                .param("id", extractionId)
                 .query(EXTRACTION_MAPPER)
                 .single();
+    }
+
+    @Override
+    public boolean deleteFileIfUnreferenced(UUID fileId) {
+        Optional<UUID> deletedBlobId = jdbc.sql("""
+                        DELETE FROM document.documents stored_document
+                        WHERE stored_document.id = :fileId
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM profile.profile_resume_documents resume_document
+                              WHERE resume_document.document_id = stored_document.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM document.pdf_extractions extraction
+                              JOIN profile.profile_pdf_sources source
+                                ON source.pdf_extraction_id = extraction.id
+                              WHERE extraction.file_id = stored_document.id
+                          )
+                        RETURNING stored_document.blob_id
+                        """)
+                .param("fileId", fileId)
+                .query(UUID.class)
+                .optional();
+        deletedBlobId.ifPresent(blobId -> jdbc.sql("""
+                        DELETE FROM document.blobs blob
+                        WHERE blob.id = :blobId
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM document.documents stored_document
+                              WHERE stored_document.blob_id = blob.id
+                          )
+                        """)
+                .param("blobId", blobId)
+                .update());
+        return deletedBlobId.isPresent();
     }
 
     private static MapSqlParameterSource fileParameters(StoredDocumentFile file) {

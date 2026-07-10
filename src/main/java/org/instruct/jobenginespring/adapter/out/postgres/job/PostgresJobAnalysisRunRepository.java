@@ -139,7 +139,6 @@ public class PostgresJobAnalysisRunRepository implements JobAnalysisRunRepositor
         );
     }
 
-    @lombok.Generated
     private Map<String, Object> readMap(String json) {
         try {
             return objectMapper.readValue(json, MAP_TYPE);
@@ -148,7 +147,6 @@ public class PostgresJobAnalysisRunRepository implements JobAnalysisRunRepositor
         }
     }
 
-    @lombok.Generated
     private Map<String, Object> readNullableMap(String json) {
         if (json == null) {
             return null;
@@ -156,7 +154,6 @@ public class PostgresJobAnalysisRunRepository implements JobAnalysisRunRepositor
         return readMap(json);
     }
 
-    @lombok.Generated
     private List<String> readStringList(String json) {
         try {
             return objectMapper.readValue(json, STRING_LIST_TYPE);
@@ -165,7 +162,6 @@ public class PostgresJobAnalysisRunRepository implements JobAnalysisRunRepositor
         }
     }
 
-    @lombok.Generated
     private String writeJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
@@ -174,7 +170,6 @@ public class PostgresJobAnalysisRunRepository implements JobAnalysisRunRepositor
         }
     }
 
-    @lombok.Generated
     private String writeNullableJson(Object value) {
         return value == null ? null : writeJson(value);
     }
@@ -183,7 +178,6 @@ public class PostgresJobAnalysisRunRepository implements JobAnalysisRunRepositor
         return resultSet.getTimestamp(column).toInstant();
     }
 
-    @lombok.Generated
     private static ApplicationException jsonFailure(Exception exception) {
         return new ApplicationException(ApplicationErrorCode.INTERNAL_ERROR, "Job analysis JSON serialization failed", Map.of(), exception);
     }

@@ -20,4 +20,12 @@ public interface DocumentRepository {
     Optional<PdfExtractionRecord> findPdfExtractionByFileId(UUID fileId);
 
     PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction);
+
+    PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction);
+
+    /**
+     * Deletes a document only when no profile source or generated-resume link references it.
+     * An underlying blob is removed only when the deleted document was its final reference.
+     */
+    boolean deleteFileIfUnreferenced(UUID fileId);
 }

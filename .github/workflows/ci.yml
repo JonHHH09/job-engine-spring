@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - development
+      - master
   push:
     branches:
       - development
@@ -25,6 +26,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
 
       - name: Check workflow syntax
         uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 # 1.7.7
@@ -34,14 +37,28 @@ jobs:
         with:
           scandir: scripts
 
-      - name: Check Python smoke helper syntax
-        run: python3 -m py_compile scripts/smoke-mcp-stdio.py
+      - name: Check and test Python smoke helper
+        run: |
+          python3 -m py_compile scripts/smoke-mcp-stdio.py scripts/test-smoke-mcp-stdio.py
+          python3 scripts/test-smoke-mcp-stdio.py
 
       - name: Validate Docker Compose configuration
         run: docker compose config >/tmp/job-engine-compose-config.yaml
 
       - name: Check whitespace
-        run: git diff --check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        shell: bash
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$PR_BASE_SHA" "$GITHUB_SHA"
+          elif [[ "$EVENT_NAME" == "push" && ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
+            git diff --check "$PUSH_BEFORE_SHA" "$GITHUB_SHA"
+          else
+            git show --check --format= "$GITHUB_SHA"
+          fi
 
   unit:
     name: Unit tests
@@ -75,7 +92,10 @@ jobs:
   integration:
     name: Integration and coverage gate
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/development'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/development' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'master')
     needs:
       - validate-pipeline
       - unit
@@ -111,7 +131,10 @@ jobs:
   container-mcp-smoke:
     name: Container MCP STDIO smoke
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/development'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/development' ||
+      (github.event_name == 'pull_request' && github.base_ref == 'master')
     needs:
       - validate-pipeline
       - unit
@@ -136,7 +159,12 @@ jobs:
   master-promotion:
     name: Master promotion guard
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: >-
+      (github.event_name == 'pull_request' &&
+      github.base_ref == 'master' &&
+      github.head_ref == 'development') ||
+      (github.event_name == 'push' &&
+      github.ref == 'refs/heads/master')
     needs:
       - validate-pipeline
     timeout-minutes: 10
@@ -162,4 +190,4 @@ jobs:
             exit 1
           fi
 
-          echo "Master promotion matches origin/development exactly. Heavy CI remains on development and release tags."
+          echo "Master promotion candidate matches origin/development exactly. Heavy CI remains on development and release tags."

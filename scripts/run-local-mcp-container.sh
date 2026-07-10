@@ -116,7 +116,6 @@ exec docker run --rm -i \
   --env JOB_ENGINE_POSTGRES_USER="$POSTGRES_USER" \
   --env JOB_ENGINE_POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
   --env JOB_ENGINE_DOCUMENT_IMPORT_ROOT=/app/tmp/imports \
-  --env JOB_ENGINE_JOB_ALLOWED_HOSTS="${JOB_ENGINE_JOB_ALLOWED_HOSTS:-}" \
   --volume "$DOCUMENT_IMPORT_ROOT:/app/tmp/imports:ro" \
   --volume "$GENERATED_PDF_ROOT:/app/tmp/generated-pdfs" \
   "$MCP_IMAGE"

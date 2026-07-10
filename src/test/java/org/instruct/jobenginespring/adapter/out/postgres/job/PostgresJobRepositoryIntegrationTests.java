@@ -19,6 +19,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Instant;
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -116,8 +118,8 @@ class PostgresJobRepositoryIntegrationTests {
                 new JobLinkIngestion(
                         UUID.fromString("12121212-1212-1212-1212-121212121212"),
                         JOB_ID,
-                        "https://example.test/jobs/1#details",
                         "https://example.test/jobs/1",
+                        "https://example.test/jobs/1?jk=job-1",
                         NOW,
                         200,
                         "Platform Engineer",
@@ -128,10 +130,10 @@ class PostgresJobRepositoryIntegrationTests {
 
         JobAggregate saved = repository.saveJobAggregate(aggregate);
 
-        Optional<JobAggregate> found = repository.findByNormalizedSourceUrl("https://example.test/jobs/1");
+        Optional<JobAggregate> found = repository.findByNormalizedSourceUrl("https://example.test/jobs/1?jk=job-1");
         assertTrue(found.isPresent());
         assertEquals(saved.job().id(), found.orElseThrow().job().id());
-        assertEquals("https://example.test/jobs/1", saved.linkIngestion().normalizedUrl());
+        assertEquals("https://example.test/jobs/1?jk=job-1", saved.linkIngestion().normalizedUrl());
     }
 
     @Test
@@ -140,8 +142,8 @@ class PostgresJobRepositoryIntegrationTests {
         JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                 analysisRunId,
                 "link",
-                "https://example.test/jobs/1#details",
                 "https://example.test/jobs/1",
+                "https://example.test/jobs/1?jk=job-1",
                 "FETCHED",
                 200,
                 "Platform Engineer",
@@ -170,8 +172,8 @@ class PostgresJobRepositoryIntegrationTests {
                 new JobLinkIngestion(
                         UUID.fromString("23232323-2323-2323-2323-232323232323"),
                         JOB_ID,
-                        "https://example.test/jobs/1#details",
                         "https://example.test/jobs/1",
+                        "https://example.test/jobs/1?jk=job-1",
                         NOW,
                         200,
                         "Platform Engineer",
@@ -222,8 +224,18 @@ class PostgresJobRepositoryIntegrationTests {
                 NOW
         );
 
-        JobAggregate saved = repository.saveJobAggregate(new JobAggregate(posting, List.of(), null, null));
-
+        JobAggregate saved = repository.saveJobAggregate(new JobAggregate(
+                posting,
+                List.of(),
+                null,
+                new JobTextIngestion(
+                        UUID.fromString("45454545-2222-3333-4444-555555555555"),
+                        posting.id(),
+                        "manual paste",
+                        "hash-no-skills",
+                        NOW
+                )
+        ));
         assertEquals(List.of(), saved.skills());
         assertEquals(null, saved.job().postedAt());
     }
@@ -271,14 +283,14 @@ class PostgresJobRepositoryIntegrationTests {
                 JOB_ID,
                 UUID.fromString("12121212-1212-1212-1212-121212121212"),
                 "fingerprint-one",
-                "https://example.test/jobs/1"
+                "https://example.test/jobs/1?jk=job-1"
         ));
 
         JobAggregate duplicateUrl = linkAggregate(
                 UUID.fromString("99999999-2222-3333-4444-555555555555"),
                 UUID.fromString("88888888-2222-3333-4444-555555555555"),
                 "fingerprint-two",
-                "https://example.test/jobs/1"
+                "https://example.test/jobs/1?jk=job-1"
         );
 
         JobAggregate reused = repository.saveJobAggregate(duplicateUrl);
@@ -286,7 +298,58 @@ class PostgresJobRepositoryIntegrationTests {
         assertEquals(JOB_ID, reused.job().id());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM job_schema.jobs", Integer.class));
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_link_ingestions", Integer.class));
-        assertTrue(repository.findByNormalizedSourceUrl("https://example.test/jobs/1").isPresent());
+        assertTrue(repository.findByNormalizedSourceUrl("https://example.test/jobs/1?jk=job-1").isPresent());
+    }
+
+    @Test
+    void saveJobAggregateDoesNotReuseExistingJobForDistinctCanonicalIdentityQueryParameters() {
+        repository.saveJobAggregate(linkAggregate(
+                JOB_ID,
+                UUID.fromString("12121212-1212-1212-1212-121212121212"),
+                "fingerprint-one",
+                "https://example.test/jobs/1?jk=job-1"
+        ));
+
+        JobAggregate distinctIdentity = linkAggregate(
+                UUID.fromString("99999999-2222-3333-4444-555555555555"),
+                UUID.fromString("88888888-2222-3333-4444-555555555555"),
+                "fingerprint-two",
+                "https://example.test/jobs/1?jk=job-2"
+        );
+
+        JobAggregate saved = repository.saveJobAggregate(distinctIdentity);
+
+        assertEquals(distinctIdentity.job().id(), saved.job().id());
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM job_schema.jobs", Integer.class));
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_link_ingestions", Integer.class));
+    }
+
+    @Test
+    void saveJobAggregateReusesExistingJobForDuplicateLinkCanonicalFingerprint() {
+        repository.saveJobAggregate(linkAggregate(
+                JOB_ID,
+                UUID.fromString("12121212-1212-1212-1212-121212121212"),
+                "duplicate-link-fingerprint",
+                "https://example.test/jobs/1"
+        ));
+
+        JobAggregate duplicateFingerprint = linkAggregate(
+                UUID.fromString("99999999-2222-3333-4444-555555555555"),
+                UUID.fromString("88888888-2222-3333-4444-555555555555"),
+                "duplicate-link-fingerprint",
+                "https://example.test/jobs/2"
+        );
+
+        JobAggregate reused = repository.saveJobAggregate(duplicateFingerprint);
+
+        assertEquals(JOB_ID, reused.job().id());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM job_schema.jobs", Integer.class));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_link_ingestions", Integer.class));
+    }
+
+    @Test
+    void listJobAggregatesReturnsEmptyWhenNoRowsExist() {
+        assertEquals(List.of(), repository.listJobAggregates());
     }
 
     @Test
@@ -347,7 +410,13 @@ class PostgresJobRepositoryIntegrationTests {
                 posting(missingJobId, "text", "fingerprint-missing-update"),
                 List.of(),
                 null,
-                null
+                new JobTextIngestion(
+                        UUID.fromString("55555555-2222-3333-4444-555555555555"),
+                        missingJobId,
+                        "manual paste",
+                        "hash-missing-update",
+                        NOW
+                )
         );
 
         IllegalStateException exception = assertThrows(
@@ -377,6 +446,55 @@ class PostgresJobRepositoryIntegrationTests {
         assertFalse(repository.deleteJob(JOB_ID));
     }
 
+    @Test
+    void v13RejectsCommittedJobWithoutMatchingProvenance() throws Exception {
+        try (Connection connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("""
+                    INSERT INTO job_schema.jobs
+                        (id, source_method, source_label, title, company, location, description,
+                         experience_requirement, employment_type, seniority, posted_at,
+                         canonical_fingerprint, created_at, updated_at)
+                    VALUES
+                        ('77777777-2222-3333-4444-555555555555', 'text', 'manual paste', 'Broken Job',
+                         NULL, NULL, 'Missing provenance', NULL, NULL, NULL, NULL,
+                         'broken-fingerprint', TIMESTAMP '2026-07-06 21:15:00+00',
+                         TIMESTAMP '2026-07-06 21:15:00+00')
+                    """).executeUpdate();
+
+            assertThrows(Exception.class, connection::commit);
+            connection.rollback();
+        }
+    }
+
+    @Test
+    void v13RejectsCommittedJobWithMismatchedProvenanceTable() throws Exception {
+        try (Connection connection = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())) {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("""
+                    INSERT INTO job_schema.jobs
+                        (id, source_method, source_label, title, company, location, description,
+                         experience_requirement, employment_type, seniority, posted_at,
+                         canonical_fingerprint, created_at, updated_at)
+                    VALUES
+                        ('88888888-2222-3333-4444-555555555555', 'link', 'Example ATS', 'Broken Link Job',
+                         NULL, NULL, 'Wrong provenance', NULL, NULL, NULL, NULL,
+                         'broken-link-fingerprint', TIMESTAMP '2026-07-06 21:15:00+00',
+                         TIMESTAMP '2026-07-06 21:15:00+00')
+                    """).executeUpdate();
+            connection.prepareStatement("""
+                    INSERT INTO job_schema.job_text_ingestions
+                        (id, job_id, source_label, input_text_hash, created_at)
+                    VALUES
+                        ('99999999-2222-3333-4444-555555555555', '88888888-2222-3333-4444-555555555555',
+                         'manual paste', 'wrong-provenance-hash', TIMESTAMP '2026-07-06 21:15:00+00')
+                    """).executeUpdate();
+
+            assertThrows(Exception.class, connection::commit);
+            connection.rollback();
+        }
+    }
+
     private static JobAggregate textAggregate(String fingerprint, String textHash) {
         return textAggregate(JOB_ID, UUID.fromString("66666666-2222-3333-4444-555555555555"), fingerprint, textHash);
     }
@@ -403,7 +521,7 @@ class PostgresJobRepositoryIntegrationTests {
                 new JobLinkIngestion(
                         linkIngestionId,
                         jobId,
-                        normalizedUrl + "#details",
+                        "https://example.test/jobs/1",
                         normalizedUrl,
                         NOW,
                         200,

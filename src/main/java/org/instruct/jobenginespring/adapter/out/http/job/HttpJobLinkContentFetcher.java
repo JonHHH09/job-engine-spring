@@ -3,8 +3,6 @@ package org.instruct.jobenginespring.adapter.out.http.job;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +18,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -47,46 +44,27 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
     );
 
     private final HttpClient httpClient;
-    private final Set<String> allowedHosts;
 
     public HttpJobLinkContentFetcher() {
-        this(
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build(),
-                Set.of()
-        );
+        this(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build());
     }
 
     HttpJobLinkContentFetcher(HttpClient httpClient) {
-        this(httpClient, Set.of());
-    }
-
-    @Autowired
-    public HttpJobLinkContentFetcher(
-            @Value("${job-engine.job.link-fetcher.allowed-hosts:}") String allowedHosts
-    ) {
-        this(
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build(),
-                parseAllowedHosts(allowedHosts)
-        );
-    }
-
-    HttpJobLinkContentFetcher(HttpClient httpClient, Set<String> allowedHosts) {
-        this.httpClient = httpClient;
-        this.allowedHosts = Set.copyOf(allowedHosts);
+        this.httpClient = java.util.Objects.requireNonNull(httpClient, "httpClient must not be null");
     }
 
     @Override
     public JobLinkFetchResult fetch(String url) {
         try {
             URI uri = URI.create(url);
-            validateSafeHttpUrl(uri, allowedHosts);
+            validateSafeHttpUrl(uri);
             HttpRequest request = HttpRequest.newBuilder(uri)
                     .timeout(Duration.ofSeconds(20))
-                    .header("User-Agent", "job-engine-spring/0.1")
+                    .header("User-Agent", "job-engine-spring")
                     .GET()
                     .build();
             HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            validateRedirectTargetIfPresent(uri, response, allowedHosts);
+            validateRedirectTargetIfPresent(uri, response);
             String body = readLimitedBody(response.body());
             String title = firstMatch(body, OG_TITLE, TITLE, H1);
             String description = firstPresent(firstMatch(body, META_DESCRIPTION), visibleText(body));
@@ -101,26 +79,30 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
         }
     }
 
-    @lombok.Generated
-    private static void validateRedirectTargetIfPresent(URI sourceUri, HttpResponse<?> response, Set<String> allowedHosts) {
+    private static void validateRedirectTargetIfPresent(URI sourceUri, HttpResponse<?> response) {
         int statusCode = response.statusCode();
         if (statusCode < 300 || statusCode > 399) {
             return;
         }
         Optional<String> location = response.headers().firstValue("location");
         if (location.isPresent()) {
-            validateSafeHttpUrl(sourceUri.resolve(location.orElseThrow()), allowedHosts);
+            validateSafeHttpUrl(sourceUri.resolve(location.orElseThrow()));
         }
         throw validation("url", "job link redirects are not followed");
     }
 
-    @lombok.Generated
-    private static void validateSafeHttpUrl(URI uri, Set<String> allowedHosts) {
-        if (!uri.isAbsolute() || uri.getHost() == null || uri.getRawUserInfo() != null) {
+    private static void validateSafeHttpUrl(URI uri) {
+        if (!uri.isAbsolute()) {
+            throw validation("url", "must be a valid absolute http(s) URL");
+        }
+        if (uri.getHost() == null) {
+            throw validation("url", "must be a valid absolute http(s) URL");
+        }
+        if (uri.getRawUserInfo() != null) {
             throw validation("url", "must be a valid absolute http(s) URL");
         }
         String scheme = uri.getScheme();
-        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+        if (!Set.of("http", "https").contains(scheme.toLowerCase(Locale.ROOT))) {
             throw validation("url", "must be a valid absolute http(s) URL");
         }
         String host = uri.getHost().toLowerCase(Locale.ROOT);
@@ -130,19 +112,9 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
         if (!isIpLiteral(host)) {
             throw validation("url", "job link fetch requires an IP literal so address policy is connection-bound");
         }
-        InetAddress[] addresses;
-        try {
-            addresses = InetAddress.getAllByName(host);
-        } catch (UnknownHostException exception) {
-            throw validation("url", "host could not be resolved");
-        }
-        if (addresses.length == 0) {
-            throw validation("url", "host could not be resolved");
-        }
-        for (InetAddress address : addresses) {
-            if (isUnsafeAddress(address)) {
-                throw unsafeHost();
-            }
+        InetAddress address = InetAddress.ofLiteral(host);
+        if (isUnsafeAddress(address)) {
+            throw unsafeHost();
         }
     }
 
@@ -150,15 +122,6 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
         return host.matches("\\d{1,3}(\\.\\d{1,3}){3}") || host.contains(":");
     }
 
-    private static Set<String> parseAllowedHosts(String rawAllowedHosts) {
-        if (rawAllowedHosts == null || rawAllowedHosts.isBlank()) {
-            return Set.of();
-        }
-        return Arrays.stream(rawAllowedHosts.split(","))
-                .map(host -> host.strip().toLowerCase(Locale.ROOT))
-                .filter(host -> !host.isBlank())
-                .collect(java.util.stream.Collectors.toUnmodifiableSet());
-    }
 
     private static String readLimitedBody(InputStream body) throws IOException {
         if (body == null) {
@@ -171,7 +134,6 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
         }
     }
 
-    @lombok.Generated
     private static boolean isUnsafeAddress(InetAddress address) {
         return address.isAnyLocalAddress()
                 || address.isLoopbackAddress()
@@ -182,22 +144,14 @@ public class HttpJobLinkContentFetcher implements JobLinkContentFetcher {
                 || isCommonMetadataIpv4(address);
     }
 
-    @lombok.Generated
     private static boolean isCommonMetadataIpv4(InetAddress address) {
         if (!(address instanceof Inet4Address)) {
             return false;
         }
-        byte[] bytes = address.getAddress();
-        int first = Byte.toUnsignedInt(bytes[0]);
-        int second = Byte.toUnsignedInt(bytes[1]);
-        int third = Byte.toUnsignedInt(bytes[2]);
-        int fourth = Byte.toUnsignedInt(bytes[3]);
-        return first == 169 && second == 254 && third == 169 && fourth == 254
-                || first == 169 && second == 254 && third == 170 && fourth == 2
-                || first == 100 && second == 100 && third == 100 && fourth == 200;
+        return Set.of("169.254.169.254", "169.254.170.2", "100.100.100.200")
+                .contains(address.getHostAddress());
     }
 
-    @lombok.Generated
     private static boolean isUniqueLocalIpv6(InetAddress address) {
         if (!(address instanceof Inet6Address)) {
             return false;

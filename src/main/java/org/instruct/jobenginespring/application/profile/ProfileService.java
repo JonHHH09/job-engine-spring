@@ -1,6 +1,7 @@
 package org.instruct.jobenginespring.application.profile;
 
 import lombok.NonNull;
+import org.instruct.jobenginespring.application.document.GeneratedResumeAssetService;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
@@ -33,15 +34,21 @@ public class ProfileService {
 
     @NonNull
     private final ProfileRepository profileRepository;
+    private final GeneratedResumeAssetService generatedResumeAssetService;
     private Clock clock = Clock.systemUTC();
 
     @Autowired
-    public ProfileService(ProfileRepository profileRepository) {
+    public ProfileService(ProfileRepository profileRepository, GeneratedResumeAssetService generatedResumeAssetService) {
         this.profileRepository = Objects.requireNonNull(profileRepository, "profileRepository must not be null");
+        this.generatedResumeAssetService = Objects.requireNonNull(generatedResumeAssetService, "generatedResumeAssetService must not be null");
     }
 
-    ProfileService(ProfileRepository profileRepository, Clock clock) {
-        this(profileRepository);
+    ProfileService(
+            ProfileRepository profileRepository,
+            GeneratedResumeAssetService generatedResumeAssetService,
+            Clock clock
+    ) {
+        this(profileRepository, generatedResumeAssetService);
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
@@ -80,7 +87,7 @@ public class ProfileService {
     @Transactional
     public boolean deleteProfile(UUID profileId) {
         Objects.requireNonNull(profileId, "profileId must not be null");
-        return profileRepository.deleteProfile(profileId);
+        return generatedResumeAssetService.deleteProfile(profileId);
     }
 
     private ProfileAggregate toAggregate(UUID profileId, ProfileWriteRequest request, Instant createdAt, Instant updatedAt) {

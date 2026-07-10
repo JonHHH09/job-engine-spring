@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,7 +30,17 @@ public class PostgresProfileResumeDocumentRepository implements ProfileResumeDoc
 
     @Override
     public ProfileResumeDocument save(ProfileResumeDocument resumeDocument) {
+        return replace(resumeDocument).saved();
+    }
+
+    @Override
+    public Replacement replace(ProfileResumeDocument resumeDocument) {
         Objects.requireNonNull(resumeDocument, "resumeDocument must not be null");
+        lockProfile(resumeDocument.profileId());
+        Optional<ProfileResumeDocument> previous = findByProfileIdAndResumeType(
+                resumeDocument.profileId(),
+                resumeDocument.resumeType()
+        );
         jdbc.sql("""
                         INSERT INTO profile.profile_resume_documents (
                             id, profile_id, document_id, file_path, resume_type, created_at, updated_at
@@ -49,7 +60,11 @@ public class PostgresProfileResumeDocumentRepository implements ProfileResumeDoc
                 .param("createdAt", Timestamp.from(resumeDocument.createdAt()))
                 .param("updatedAt", Timestamp.from(resumeDocument.updatedAt()))
                 .update();
-        return findByProfileIdAndResumeType(resumeDocument.profileId(), resumeDocument.resumeType()).orElseThrow();
+        ProfileResumeDocument saved = findByProfileIdAndResumeType(
+                resumeDocument.profileId(),
+                resumeDocument.resumeType()
+        ).orElseThrow();
+        return new Replacement(saved, previous);
     }
 
     @Override
@@ -76,6 +91,27 @@ public class PostgresProfileResumeDocumentRepository implements ProfileResumeDoc
                 .param("documentId", documentId)
                 .query(RESUME_DOCUMENT_MAPPER)
                 .optional();
+    }
+
+    @Override
+    public List<ProfileResumeDocument> lockAndFindAllByProfileId(UUID profileId) {
+        lockProfile(profileId);
+        return jdbc.sql("""
+                        SELECT id, profile_id, document_id, file_path, resume_type, created_at, updated_at
+                        FROM profile.profile_resume_documents
+                        WHERE profile_id = :profileId
+                        ORDER BY resume_type, id
+                        """)
+                .param("profileId", profileId)
+                .query(RESUME_DOCUMENT_MAPPER)
+                .list();
+    }
+
+    private void lockProfile(UUID profileId) {
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(:lockKey, 0))")
+                .param("lockKey", "generated-resume:" + profileId)
+                .query((resultSet, rowNumber) -> Boolean.TRUE)
+                .single();
     }
 
     private static ProfileResumeDocument mapResumeDocument(ResultSet resultSet, int rowNumber) throws SQLException {

@@ -8,6 +8,7 @@ import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobPostingAnalysisPort;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobAnalysisRun;
+import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
 import org.junit.jupiter.api.Test;
 
@@ -21,6 +22,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -54,11 +56,11 @@ class JobAnalysisServiceTests {
         analysisPort.response = sampleAnalysisResponse();
 
         JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest(
-                "https://Example.test/jobs/123#details"
+                "https://WWW.Indeed.com/jobs/123?jk=job-123&token=secret-value&utm_source=email#details"
         ));
 
         assertEquals("analysis_ready", result.status());
-        assertEquals("https://example.test/jobs/123", result.normalizedUrl());
+        assertEquals("https://www.indeed.com/jobs/123?jk=job-123", result.normalizedUrl());
         assertEquals("SUCCEEDED", result.hermesStatus());
         assertEquals("VALID", result.validationStatus());
         assertEquals(List.of(), result.validationErrors());
@@ -66,6 +68,12 @@ class JobAnalysisServiceTests {
         assertNotNull(result.analysisRunId());
         JobAnalysisRun stored = analysisRepository.saved.get(result.analysisRunId());
         assertEquals("link", stored.sourceType());
+        assertEquals("https://www.indeed.com/jobs/123", stored.originalUrl());
+        assertEquals("https://www.indeed.com/jobs/123?jk=job-123", stored.normalizedUrl());
+        assertEquals("https://WWW.Indeed.com/jobs/123?jk=job-123&token=secret-value&utm_source=email#details", fetcher.lastUrl);
+        assertFalse(stored.inputJson().toString().contains("secret-value"));
+        assertEquals("https://www.indeed.com/jobs/123", stored.inputJson().get("originalUrl"));
+        assertEquals("https://www.indeed.com/jobs/123?jk=job-123", stored.inputJson().get("normalizedUrl"));
         assertEquals("FETCHED", stored.fetchStatus());
         assertEquals(200, stored.httpStatus());
         assertEquals("Platform Engineer", stored.hermesResponseJson().get("title"));
@@ -78,13 +86,13 @@ class JobAnalysisServiceTests {
     @Test
     void analyzeJobLinkSkipsProviderForFailedFetchContent() {
         fetcher.result = new JobLinkContentFetcher.JobLinkFetchResult(
-                "https://example.test/jobs/blocked",
+                "https://www.indeed.com/jobs/blocked",
                 "404 Not Found",
                 "Not found",
                 404
         );
 
-        JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest("https://example.test/jobs/blocked"));
+        JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest("https://www.indeed.com/jobs/blocked"));
 
         assertEquals("analysis_invalid", result.status());
         assertEquals("FAILED", result.fetchStatus());
@@ -99,13 +107,13 @@ class JobAnalysisServiceTests {
     @Test
     void analyzeJobLinkDoesNotCallProviderForBlockedFetchedContent() {
         fetcher.result = new JobLinkContentFetcher.JobLinkFetchResult(
-                "https://example.test/jobs/blocked",
+                "https://www.indeed.com/jobs/blocked",
                 "Security Check - Example",
                 "Additional Verification Required. Enable JavaScript and cookies to continue.",
                 200
         );
 
-        JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest("https://example.test/jobs/blocked"));
+        JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest("https://www.indeed.com/jobs/blocked"));
 
         assertEquals("analysis_invalid", result.status());
         assertEquals("SECURITY_CHECK", result.fetchStatus());
@@ -119,7 +127,7 @@ class JobAnalysisServiceTests {
     void analyzeJobLinkDoesNotCallProviderWhenFetcherReturnsNullContent() {
         fetcher.result = null;
 
-        JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest("https://example.test/jobs/missing"));
+        JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest("https://www.indeed.com/jobs/missing"));
 
         assertEquals("analysis_invalid", result.status());
         assertEquals("FAILED", result.fetchStatus());
@@ -133,7 +141,7 @@ class JobAnalysisServiceTests {
     void addJobFromAnalysisReadsStoredHermesResponseAndUpdatesRunWithJobId() {
         JobAnalysisRun analysisRun = storedValidRun(ANALYSIS_ID);
         analysisRepository.saved.put(ANALYSIS_ID, analysisRun);
-        JobAggregate aggregate = new JobAggregate(samplePosting(), List.of(), null, null);
+        JobAggregate aggregate = new JobAggregate(samplePosting(), List.of(), sampleLinkIngestion(), null);
         when(jobService.addJobFromAnalyzedLink(any(JobService.AddJobFromAnalyzedLinkRequest.class)))
                 .thenReturn(new JobService.AddJobResult("created_job", aggregate));
 
@@ -147,8 +155,8 @@ class JobAnalysisServiceTests {
         assertEquals(JOB_ID, updated.createdJobId());
         assertEquals("VALID", updated.validationStatus());
         verify(jobService).addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/123",
-                "https://example.test/jobs/123",
+                "https://www.indeed.com/jobs/123",
+                "https://www.indeed.com/jobs/123",
                 "Hermes analysis",
                 "Platform Engineer",
                 "Example Corp",
@@ -193,13 +201,13 @@ class JobAnalysisServiceTests {
     @Test
     void weakStoredAnalysisDoesNotCreateJob() {
         Map<String, Object> weakResponse = new LinkedHashMap<>();
-        weakResponse.put("title", "https://example.test/jobs/123");
+        weakResponse.put("title", "https://www.indeed.com/jobs/123");
         weakResponse.put("description", "Enable JavaScript");
         analysisRepository.saved.put(ANALYSIS_ID, new JobAnalysisRun(
                 ANALYSIS_ID,
                 "link",
-                "https://example.test/jobs/123",
-                "https://example.test/jobs/123",
+                "https://www.indeed.com/jobs/123",
+                "https://www.indeed.com/jobs/123",
                 "FETCHED",
                 200,
                 "Example",
@@ -273,7 +281,7 @@ class JobAnalysisServiceTests {
                 null
         );
 
-        JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest("https://example.test/jobs/123"));
+        JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest("https://www.indeed.com/jobs/123"));
 
         assertEquals("analysis_invalid", result.status());
         assertEquals("INVALID", result.validationStatus());
@@ -288,7 +296,7 @@ class JobAnalysisServiceTests {
         JobAnalysisService.AnalyzeJobLinkResult analyzeResult = new JobAnalysisService.AnalyzeJobLinkResult(
                 ANALYSIS_ID,
                 "analysis_failed",
-                "https://example.test/jobs/123",
+                "https://www.indeed.com/jobs/123",
                 "FETCHED",
                 "FAILED",
                 "INVALID",
@@ -309,7 +317,7 @@ class JobAnalysisServiceTests {
                 "skills", List.of("Java", 42, " "),
                 "postedDate", "not-an-instant"
         )));
-        JobAggregate aggregate = new JobAggregate(samplePosting(), List.of(), null, null);
+        JobAggregate aggregate = new JobAggregate(samplePosting(), List.of(), sampleLinkIngestion(), null);
         when(jobService.addJobFromAnalyzedLink(any(JobService.AddJobFromAnalyzedLinkRequest.class)))
                 .thenReturn(new JobService.AddJobResult("created_job", aggregate));
 
@@ -317,8 +325,8 @@ class JobAnalysisServiceTests {
 
         assertEquals("created_job", result.status());
         verify(jobService).addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/123",
-                "https://example.test/jobs/123",
+                "https://www.indeed.com/jobs/123",
+                "https://www.indeed.com/jobs/123",
                 "Hermes analysis",
                 "Platform Engineer",
                 null,
@@ -337,8 +345,12 @@ class JobAnalysisServiceTests {
     @Test
     void invalidUrlsAreRejected() {
         assertThrows(ApplicationException.class, () -> service.analyzeJobLink(new AnalyzeJobLinkRequest(null)));
-        assertThrows(ApplicationException.class, () -> service.analyzeJobLink(new AnalyzeJobLinkRequest("mailto:test@example.test")));
+        assertThrows(ApplicationException.class, () -> service.analyzeJobLink(new AnalyzeJobLinkRequest("mailto:test@www.indeed.com")));
         assertThrows(ApplicationException.class, () -> service.analyzeJobLink(new AnalyzeJobLinkRequest("https://exa mple.test/jobs")));
+        ApplicationException userInfoException = assertThrows(ApplicationException.class, () -> service.analyzeJobLink(
+                new AnalyzeJobLinkRequest("https://user:secret@www.indeed.com/jobs/123")
+        ));
+        assertEquals(Map.of("field", "url", "reason", "must not include userinfo"), userInfoException.details());
     }
 
     @Test
@@ -346,8 +358,8 @@ class JobAnalysisServiceTests {
         JobAnalysisRun run = new JobAnalysisRun(
                 ANALYSIS_ID,
                 "link",
-                "https://example.test/jobs/123",
-                "https://example.test/jobs/123",
+                "https://www.indeed.com/jobs/123",
+                "https://www.indeed.com/jobs/123",
                 "FETCHED",
                 200,
                 null,
@@ -380,7 +392,7 @@ class JobAnalysisServiceTests {
         analysisPort.failure = new RuntimeException("provider down");
 
         JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest(
-                "https://example.test/jobs/123"
+                "https://www.indeed.com/jobs/123"
         ));
 
         assertEquals("analysis_failed", result.status());
@@ -396,7 +408,7 @@ class JobAnalysisServiceTests {
         analysisRepository.saveFailure = new RuntimeException("database unavailable");
 
         RuntimeException exception = assertThrows(RuntimeException.class, () -> service.analyzeJobLink(new AnalyzeJobLinkRequest(
-                "https://example.test/jobs/123"
+                "https://www.indeed.com/jobs/123"
         )));
 
         assertEquals("database unavailable", exception.getMessage());
@@ -408,12 +420,12 @@ class JobAnalysisServiceTests {
     void nullAnalysisResponseIsPersistedAsInvalidAnalysis() {
         analysisPort.response = null;
 
-        JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest("https://example.test"));
+        JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest("https://www.indeed.com"));
 
         assertEquals("analysis_invalid", result.status());
         assertEquals("FETCHED", result.fetchStatus());
         assertEquals("Hermes analysis response is missing", result.validationErrors().getFirst());
-        assertEquals("https://example.test/", result.normalizedUrl());
+        assertEquals("https://www.indeed.com/", result.normalizedUrl());
     }
 
     @Test
@@ -421,8 +433,8 @@ class JobAnalysisServiceTests {
         analysisRepository.saved.put(ANALYSIS_ID, new JobAnalysisRun(
                 ANALYSIS_ID,
                 "link",
-                "https://example.test/jobs/123/",
-                "https://example.test/jobs/123",
+                "https://www.indeed.com/jobs/123/",
+                "https://www.indeed.com/jobs/123",
                 "FETCHED",
                 200,
                 "Fetched Platform Engineer",
@@ -482,8 +494,8 @@ class JobAnalysisServiceTests {
         return new JobAnalysisRun(
                 analysisRunId,
                 "link",
-                "https://example.test/jobs/123",
-                "https://example.test/jobs/123",
+                "https://www.indeed.com/jobs/123",
+                "https://www.indeed.com/jobs/123",
                 "FETCHED",
                 200,
                 "Fetched Platform Engineer",
@@ -537,8 +549,8 @@ class JobAnalysisServiceTests {
         return new JobAnalysisRun(
                 ANALYSIS_ID,
                 "link",
-                "https://example.test/jobs/123",
-                "https://example.test/jobs/123",
+                "https://www.indeed.com/jobs/123",
+                "https://www.indeed.com/jobs/123",
                 "FETCHED",
                 200,
                 "Fetched Platform Engineer",
@@ -574,6 +586,19 @@ class JobAnalysisServiceTests {
         );
     }
 
+    private static JobLinkIngestion sampleLinkIngestion() {
+        return new JobLinkIngestion(
+                UUID.fromString("eeeeeeee-1111-1111-1111-eeeeeeeeeeee"),
+                JOB_ID,
+                "https://example.test/jobs/123",
+                "https://example.test/jobs/123",
+                NOW,
+                200,
+                "Fetched Platform Engineer",
+                NOW
+        );
+    }
+
     private static final class FakeAnalysisRunRepository implements JobAnalysisRunRepository {
         private final Map<UUID, JobAnalysisRun> saved = new LinkedHashMap<>();
         private RuntimeException saveFailure;
@@ -601,14 +626,16 @@ class JobAnalysisServiceTests {
 
     private static final class FakeLinkFetcher implements JobLinkContentFetcher {
         private JobLinkFetchResult result = new JobLinkFetchResult(
-                "https://example.test/jobs/123",
+                "https://www.indeed.com/jobs/123",
                 "Fetched Platform Engineer",
                 "Fetched public page text for a platform engineering role using Java and Kubernetes.",
                 200
         );
+        private String lastUrl;
 
         @Override
         public JobLinkFetchResult fetch(String url) {
+            lastUrl = url;
             return result;
         }
     }

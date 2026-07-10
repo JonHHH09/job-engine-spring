@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:18-alpine
+    image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
     environment:
       POSTGRES_DB: ${JOB_ENGINE_POSTGRES_DB:-job_engine}
       POSTGRES_USER: ${JOB_ENGINE_POSTGRES_USER:-postgres}
@@ -29,7 +29,6 @@ services:
       JOB_ENGINE_POSTGRES_USER: ${JOB_ENGINE_POSTGRES_USER:-postgres}
       JOB_ENGINE_POSTGRES_PASSWORD: ${JOB_ENGINE_POSTGRES_PASSWORD:-postgres}
       JOB_ENGINE_DOCUMENT_IMPORT_ROOT: /app/tmp/imports
-      JOB_ENGINE_JOB_ALLOWED_HOSTS: ${JOB_ENGINE_JOB_ALLOWED_HOSTS:-}
     volumes:
       - ./tmp/imports:/app/tmp/imports:ro
       - ./tmp/generated-pdfs:/app/tmp/generated-pdfs

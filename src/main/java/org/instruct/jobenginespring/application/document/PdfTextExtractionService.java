@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.springframework.ai.document.Document;
@@ -14,7 +15,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -60,6 +60,24 @@ public class PdfTextExtractionService {
         }
         String safeFileName = fileName == null || fileName.isBlank() ? "stored.pdf" : Path.of(fileName).getFileName().toString();
         return extractText(new NamedByteArrayResource(pdfContent, safeFileName), safeFileName, maxCharacters, includePages);
+    }
+
+    static PdfTextExtractionResult applyRequestView(
+            PdfTextExtractionResult canonical,
+            Integer maxCharactersValue,
+            Boolean includePagesValue
+    ) {
+        Objects.requireNonNull(canonical, "canonical must not be null");
+        int maxCharacters = resolveMaxCharacters(maxCharactersValue);
+        boolean includePages = includePagesValue == null || includePagesValue;
+        return new PdfTextExtractionResult(
+                canonical.fileName(),
+                canonical.pageCount(),
+                canonical.characterCount(),
+                canonical.characterCount() > maxCharacters,
+                truncate(canonical.text(), maxCharacters),
+                includePages ? truncatePages(canonical.pages(), maxCharacters) : List.of()
+        );
     }
 
     private PdfTextExtractionResult extractText(Resource pdfResource, String fileName, Integer maxCharactersValue, Boolean includePagesValue) {
@@ -110,7 +128,6 @@ public class PdfTextExtractionService {
         return allowedPath;
     }
 
-    @lombok.Generated
     private static void validateFileSize(Path path) {
         try {
             validateFileSize(Files.size(path));
@@ -125,15 +142,9 @@ public class PdfTextExtractionService {
         }
     }
 
-    @lombok.Generated
     private static boolean hasPdfHeader(Path path) {
-        byte[] header = new byte[PDF_MAGIC.length];
-        try (InputStream inputStream = Files.newInputStream(path)) {
-            int read = inputStream.readNBytes(header, 0, header.length);
-            if (read != header.length) {
-                return false;
-            }
-            return hasPdfHeader(header);
+        try {
+            return hasPdfHeader(Files.readAllBytes(path));
         } catch (IOException exception) {
             throw validation("path", "file is not readable");
         }
@@ -250,6 +261,14 @@ public class PdfTextExtractionService {
         );
     }
 
+    private static void closeDocument(PDDocument document) {
+        try {
+            document.close();
+        } catch (IOException exception) {
+            throw new IllegalStateException("PDF document could not be closed", exception);
+        }
+    }
+
     public record PdfTextExtractionRequest(String path, Integer maxCharacters, Boolean includePages) {
     }
 
@@ -273,13 +292,8 @@ public class PdfTextExtractionService {
         }
 
         @Override
-        @lombok.Generated
         public void close() {
-            try {
-                document.close();
-            } catch (IOException exception) {
-                throw new IllegalStateException("PDF document could not be closed", exception);
-            }
+            closeDocument(document);
         }
 
         private int pageCount() {

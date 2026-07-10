@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.job;
 
+import org.apache.commons.codec.digest.DigestUtils;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.JobService.AddJobFromLinkRequest;
 import org.instruct.jobenginespring.application.job.JobService.AddJobFromTextRequest;
@@ -138,6 +139,43 @@ class JobServiceTests {
     }
 
     @Test
+    void addJobFromTextReusesLegacyFourFieldFingerprintWhenInputTextHashDiffers() {
+        AddJobResult existing = service.addJobFromText(new AddJobFromTextRequest(
+                "Original source text",
+                "paste",
+                "Backend Developer",
+                "Example Corp",
+                "Remote",
+                "Build APIs",
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+        String legacyFingerprint = DigestUtils.sha256Hex("backend developer\nexample corp\nremote\nbuild apis");
+        repository.updateJobAggregate(withCanonicalFingerprint(existing.job(), legacyFingerprint));
+
+        AddJobResult duplicate = service.addJobFromText(new AddJobFromTextRequest(
+                "Different source text",
+                "paste",
+                "Backend Developer",
+                "Example Corp",
+                "Remote",
+                "Build APIs",
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        assertEquals("reused_existing_job", duplicate.status());
+        assertEquals(existing.job().job().id(), duplicate.job().job().id());
+        assertEquals(1, repository.listJobs().size());
+    }
+
+    @Test
     void addJobFromTextReportsReuseWhenRepositoryReturnsRaceWinner() {
         AddJobResult first = service.addJobFromText(new AddJobFromTextRequest(
                 "Backend Developer",
@@ -175,13 +213,13 @@ class JobServiceTests {
     @Test
     void addJobFromLinkFetchesPageContentAndReusesNormalizedUrl() {
         fetcher.result = new JobLinkContentFetcher.JobLinkFetchResult(
-                "https://Example.test/jobs/123?ref=abc",
+                "https://WWW.Indeed.com/jobs/123?jk=job-123&utm_source=email",
                 "Platform Engineer",
                 "Build cloud systems. Skills: Kubernetes, Java",
                 200
         );
         AddJobFromLinkRequest request = new AddJobFromLinkRequest(
-                "https://Example.test/jobs/123?ref=abc#section",
+                "https://WWW.Indeed.com/jobs/123?jk=job-123&utm_source=email#section",
                 "Example ATS",
                 null,
                 "Example Corp",
@@ -201,9 +239,64 @@ class JobServiceTests {
         assertEquals("reused_existing_job", second.status());
         assertEquals("link", first.job().job().sourceMethod());
         assertEquals("Platform Engineer", first.job().job().title());
-        assertEquals("https://example.test/jobs/123?ref=abc", first.job().linkIngestion().normalizedUrl());
+        assertEquals("https://www.indeed.com/jobs/123", first.job().linkIngestion().url());
+        assertEquals("https://www.indeed.com/jobs/123?jk=job-123", first.job().linkIngestion().normalizedUrl());
         assertEquals(200, first.job().linkIngestion().httpStatus());
         assertEquals(List.of("kubernetes", "java"), first.job().skills().stream().map(skill -> skill.normalizedSkill()).toList());
+    }
+
+    @Test
+    void addJobFromLinkDoesNotCollapseDifferentSafeIdentityQueryParameters() {
+        fetcher.result = new JobLinkContentFetcher.JobLinkFetchResult(
+                "https://www.indeed.com/jobs/view?jk=job-123&utm_source=email",
+                "Platform Engineer",
+                "Build cloud systems. Skills: Kubernetes, Java",
+                200
+        );
+
+        AddJobResult first = service.addJobFromLink(new AddJobFromLinkRequest(
+                "https://www.indeed.com/jobs/view?jk=job-123&utm_source=email&token=secret-one",
+                "Example ATS",
+                null,
+                "Example Corp",
+                "Remote",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        fetcher.result = new JobLinkContentFetcher.JobLinkFetchResult(
+                "https://www.indeed.com/jobs/view?jk=job-456&utm_source=email",
+                "Platform Engineer",
+                "Build cloud systems. Skills: Kubernetes, Java",
+                200
+        );
+
+        AddJobResult second = service.addJobFromLink(new AddJobFromLinkRequest(
+                "https://www.indeed.com/jobs/view?jk=job-456&utm_source=email&token=secret-two",
+                "Example ATS",
+                null,
+                "Example Corp",
+                "Remote",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        assertEquals("created_job", first.status());
+        assertEquals("created_job", second.status());
+        assertFalse(first.job().job().id().equals(second.job().job().id()));
+        assertEquals("https://www.indeed.com/jobs/view", first.job().linkIngestion().url());
+        assertEquals("https://www.indeed.com/jobs/view", second.job().linkIngestion().url());
+        assertEquals("https://www.indeed.com/jobs/view?jk=job-123", first.job().linkIngestion().normalizedUrl());
+        assertEquals("https://www.indeed.com/jobs/view?jk=job-456", second.job().linkIngestion().normalizedUrl());
+        assertEquals(2, repository.listJobs().size());
     }
 
     @Test
@@ -293,8 +386,8 @@ class JobServiceTests {
     @Test
     void addJobFromAnalyzedLinkUsesStoredAnalysisFieldsWithoutFetching() {
         AddJobResult result = service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://Example.test/jobs/456#details",
-                "https://example.test/jobs/456",
+                "https://Boards.Greenhouse.io/example/jobs/456?gh_jid=job-456&token=secret-value#details",
+                "https://boards.greenhouse.io/example/jobs/456?gh_jid=job-456",
                 "Hermes analysis",
                 "Platform Engineer",
                 "Example Corp",
@@ -312,15 +405,16 @@ class JobServiceTests {
         assertEquals("created_job", result.status());
         assertEquals("Platform Engineer", result.job().job().title());
         assertEquals("Hermes analysis", result.job().job().sourceLabel());
-        assertEquals("https://example.test/jobs/456", result.job().linkIngestion().normalizedUrl());
+        assertEquals("https://boards.greenhouse.io/example/jobs/456", result.job().linkIngestion().url());
+        assertEquals("https://boards.greenhouse.io/example/jobs/456?gh_jid=job-456", result.job().linkIngestion().normalizedUrl());
         assertEquals("Fetched Title", result.job().linkIngestion().sourceTitle());
         assertEquals(200, result.job().linkIngestion().httpStatus());
         assertEquals(List.of("kubernetes", "java"), result.job().skills().stream().map(JobSkill::normalizedSkill).toList());
         assertEquals(0, fetcher.calls);
 
         AddJobResult reused = service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://Example.test/jobs/456#details",
-                "https://example.test/jobs/456",
+                "https://Boards.Greenhouse.io/example/jobs/456?gh_jid=job-456&token=secret-value#details",
+                "https://boards.greenhouse.io/example/jobs/456?gh_jid=job-456",
                 "Hermes analysis",
                 "Platform Engineer",
                 "Example Corp",
@@ -370,6 +464,7 @@ class JobServiceTests {
 
         assertEquals(List.of("java", "spring"), result.queryTokens());
         assertEquals(1, result.totalMatches());
+        assertEquals(1, result.returnedCount());
         assertEquals("Java Backend Developer", result.jobs().getFirst().job().title());
         assertTrue(result.jobs().getFirst().matchedFields().contains("job.title"));
         assertTrue(result.jobs().getFirst().matchedFields().contains("job.skills"));
@@ -383,7 +478,33 @@ class JobServiceTests {
         JobService.JobSearchResult result = service.searchJobs(new JobSearchRequest("developer", 10));
 
         assertEquals(2, result.totalMatches());
+        assertEquals(2, result.returnedCount());
         assertEquals(List.of("Developer", "Developer"), result.jobs().stream().map(match -> match.job().title()).toList());
+    }
+
+    @Test
+    void searchJobsReportsFullMatchCountWhenLimitTruncatesResults() {
+        service.addJobFromText(new AddJobFromTextRequest("Java Platform", null, "Java Platform", null, null, "Java services", null, null, null, null, null));
+        service.addJobFromText(new AddJobFromTextRequest("Java Data", null, "Java Data", null, null, "Java pipelines", null, null, null, null, null));
+
+        JobService.JobSearchResult result = service.searchJobs(new JobSearchRequest("java", 1));
+
+        assertEquals(2, result.totalMatches());
+        assertEquals(1, result.returnedCount());
+        assertEquals(1, result.jobs().size());
+    }
+
+    @Test
+    void searchJobsUsesBatchAggregateLoadingInsteadOfPerJobLookups() {
+        service.addJobFromText(new AddJobFromTextRequest("Java Platform", null, "Java Platform", null, null, "Java services", null, null, null, null, null));
+        service.addJobFromText(new AddJobFromTextRequest("Kotlin Platform", null, "Kotlin Platform", null, null, "Kotlin services", null, null, null, null, null));
+        repository.listJobAggregatesCalls = 0;
+        repository.findJobAggregateCalls = 0;
+
+        service.searchJobs(new JobSearchRequest("platform", 10));
+
+        assertEquals(1, repository.listJobAggregatesCalls);
+        assertEquals(0, repository.findJobAggregateCalls);
     }
 
     @Test
@@ -537,6 +658,79 @@ class JobServiceTests {
     }
 
     @Test
+    void updateJobPreservesLegacyFourFieldFingerprintForNoOpTextUpdate() {
+        AddJobResult created = service.addJobFromText(new AddJobFromTextRequest(
+                "Backend Developer",
+                "manual paste",
+                "Backend Developer",
+                "Example Corp",
+                "Remote",
+                "Build backend services",
+                List.of("Java"),
+                null,
+                null,
+                null,
+                null
+        ));
+        String legacyFingerprint = DigestUtils.sha256Hex("backend developer\nexample corp\nremote\nbuild backend services");
+        repository.updateJobAggregate(withCanonicalFingerprint(created.job(), legacyFingerprint));
+
+        JobAggregate updated = service.updateJob(new UpdateJobRequest(
+                created.job().job().id(),
+                "refined source",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        assertEquals(legacyFingerprint, updated.job().canonicalFingerprint());
+    }
+
+    @Test
+    void updateJobPreservesLinkIdentityInCanonicalFingerprint() {
+        AddJobResult created = service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
+                "https://www.indeed.com/jobs/789?jk=job-789&token=secret",
+                "https://www.indeed.com/jobs/789?jk=job-789",
+                "Hermes analysis",
+                "Platform Engineer",
+                "Example Corp",
+                "Remote",
+                "Build cloud platforms for internal developer teams.",
+                List.of("Kubernetes", "Java"),
+                "4+ years",
+                "Full-time",
+                "Senior",
+                NOW,
+                200,
+                "Fetched Title"
+        ));
+        String fingerprint = created.job().job().canonicalFingerprint();
+
+        JobAggregate updated = service.updateJob(new UpdateJobRequest(
+                created.job().job().id(),
+                "refined source",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        assertEquals("refined source", updated.job().sourceLabel());
+        assertEquals(fingerprint, updated.job().canonicalFingerprint());
+    }
+
+    @Test
     void updateJobRejectsInvalidRequestsAndMissingJobs() {
         assertInvalidUpdateRequest(null, "request", "must not be null");
         assertInvalidUpdateRequest(new UpdateJobRequest(null, null, null, null, null, null, null, null, null, null, null), "jobId", "must not be null");
@@ -664,42 +858,46 @@ class JobServiceTests {
                 "https://exa mple.test/jobs", null, null, null, null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "url", "reason", "must be a valid absolute http(s) URL"), uriSyntaxException.details());
+        ApplicationException userInfoException = assertThrows(ApplicationException.class, () -> service.addJobFromLink(new AddJobFromLinkRequest(
+                "https://user:secret@www.indeed.com/jobs/123", null, null, null, null, null, null, null, null, null, null
+        )));
+        assertEquals(Map.of("field", "url", "reason", "must not include userinfo"), userInfoException.details());
         ApplicationException nullAnalyzedRequest = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(null));
         assertEquals(Map.of("field", "request", "reason", "must not be null"), nullAnalyzedRequest.details());
         ApplicationException nullAnalyzedUrl = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                null, "https://example.test/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
+                null, "https://www.indeed.com/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "url", "reason", "must not be blank"), nullAnalyzedUrl.details());
         ApplicationException blankAnalyzedUrl = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                " ", "https://example.test/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
+                " ", "https://www.indeed.com/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "url", "reason", "must not be blank"), blankAnalyzedUrl.details());
         ApplicationException nullNormalizedUrl = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", null, null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", null, null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "normalizedUrl", "reason", "must not be blank"), nullNormalizedUrl.details());
         ApplicationException blankNormalizedUrl = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", " ", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", " ", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "normalizedUrl", "reason", "must not be blank"), blankNormalizedUrl.details());
         ApplicationException blankAnalyzedTitle = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", "https://example.test/jobs/1", null, " ", null, null, "Description long enough", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", "https://www.indeed.com/jobs/1", null, " ", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "title", "reason", "must not be blank"), blankAnalyzedTitle.details());
         ApplicationException nullAnalyzedTitle = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", "https://example.test/jobs/1", null, null, null, null, "Description long enough", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", "https://www.indeed.com/jobs/1", null, null, null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "title", "reason", "must not be blank"), nullAnalyzedTitle.details());
         ApplicationException blankAnalyzedDescription = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", "https://example.test/jobs/1", null, "Title", null, null, " ", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", "https://www.indeed.com/jobs/1", null, "Title", null, null, " ", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "description", "reason", "must not be blank"), blankAnalyzedDescription.details());
         ApplicationException nullAnalyzedDescription = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", "https://example.test/jobs/1", null, "Title", null, null, null, null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", "https://www.indeed.com/jobs/1", null, "Title", null, null, null, null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "description", "reason", "must not be blank"), nullAnalyzedDescription.details());
         ApplicationException badAnalyzedNormalizedUrl = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", "ftp://example.test/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", "ftp://www.indeed.com/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "url", "reason", "must be an absolute http(s) URL"), badAnalyzedNormalizedUrl.details());
         ApplicationException nullSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(null));
@@ -714,21 +912,23 @@ class JobServiceTests {
         assertEquals(Map.of("field", "limit", "reason", "must be between 1 and 100"), limitSearchException.details());
         ApplicationException lowLimitSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("java", 0)));
         assertEquals(Map.of("field", "limit", "reason", "must be between 1 and 100"), lowLimitSearchException.details());
-        assertEquals(0, service.searchJobs(new JobSearchRequest("java", null)).totalMatches());
+        JobService.JobSearchResult emptyResult = service.searchJobs(new JobSearchRequest("java", null));
+        assertEquals(0, emptyResult.totalMatches());
+        assertEquals(0, emptyResult.returnedCount());
         assertEquals(List.of(), repository.listJobs());
     }
 
     @Test
     void normalizesUrlByRemovingTrailingPathSlashAndFragment() {
         fetcher.result = new JobLinkContentFetcher.JobLinkFetchResult(
-                "https://example.test/jobs/123/",
+                "https://www.indeed.com/jobs/123/?jk=job-123&utm_source=email",
                 "Platform Engineer",
                 "Build platforms",
                 200
         );
 
         AddJobResult result = service.addJobFromLink(new AddJobFromLinkRequest(
-                "https://example.test/jobs/123/#details",
+                "https://www.indeed.com/jobs/123/?jk=job-123&utm_source=email#details",
                 null,
                 null,
                 null,
@@ -741,7 +941,7 @@ class JobServiceTests {
                 null
         ));
 
-        assertEquals("https://example.test/jobs/123", result.job().linkIngestion().normalizedUrl());
+        assertEquals("https://www.indeed.com/jobs/123?jk=job-123", result.job().linkIngestion().normalizedUrl());
     }
 
 
@@ -757,7 +957,7 @@ class JobServiceTests {
                 UUID.randomUUID(), UUID.randomUUID(), "Java", "java", true, -1, NOW
         ));
         assertThrows(IllegalArgumentException.class, () -> new JobLinkIngestion(
-                UUID.randomUUID(), UUID.randomUUID(), " ", "https://example.test", NOW, 200, null, NOW
+                UUID.randomUUID(), UUID.randomUUID(), " ", "https://www.indeed.com", NOW, 200, null, NOW
         ));
         assertThrows(IllegalArgumentException.class, () -> new JobTextIngestion(
                 UUID.randomUUID(), UUID.randomUUID(), null, " ", NOW
@@ -769,16 +969,17 @@ class JobServiceTests {
                 UUID.randomUUID(), UUID.randomUUID(), "Java", null, true, 0, NOW
         ));
         assertThrows(IllegalArgumentException.class, () -> new JobLinkIngestion(
-                UUID.randomUUID(), UUID.randomUUID(), "https://example.test", null, NOW, 200, null, NOW
+                UUID.randomUUID(), UUID.randomUUID(), "https://www.indeed.com", null, NOW, 200, null, NOW
         ));
         assertThrows(IllegalArgumentException.class, () -> new JobTextIngestion(
                 UUID.randomUUID(), UUID.randomUUID(), null, null, NOW
         ));
+        UUID aggregateJobId = UUID.randomUUID();
         assertEquals(List.of(), new JobAggregate(new JobPosting(
-                UUID.randomUUID(), "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint", NOW, NOW
-        ), null, null, null).skills());
-        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, null).queryTokens());
-        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, null).jobs());
+                aggregateJobId, "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint", NOW, NOW
+        ), null, null, new JobTextIngestion(UUID.randomUUID(), aggregateJobId, null, "hash", NOW)).skills());
+        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, null).queryTokens());
+        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, null).jobs());
         JobPosting posting = new JobPosting(
                 UUID.randomUUID(), "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint-2", NOW, NOW
         );
@@ -829,14 +1030,14 @@ class JobServiceTests {
         assertEquals(0, scoreText.invoke(null, List.of("java"), "field", null, 2, matchedFields));
         assertEquals(2, scoreText.invoke(null, List.of("java"), "field", "javascript", 2, matchedFields));
         assertEquals(2, scoreText.invoke(null, List.of("javascript"), "field", "java", 2, matchedFields));
-        assertEquals("https://example.test/", normalizeUrl.invoke(null, "HTTPS://EXAMPLE.TEST"));
-        assertEquals("http://example.test/jobs", normalizeUrl.invoke(null, "HTTP://EXAMPLE.TEST/jobs/"));
-        assertEquals("https://example.test/jobs?ref=1", normalizeUrl.invoke(null, "https://example.test/jobs?ref=1#frag"));
+        assertEquals("https://www.indeed.com/", normalizeUrl.invoke(null, "HTTPS://WWW.INDEED.COM"));
+        assertEquals("http://www.indeed.com/jobs", normalizeUrl.invoke(null, "HTTP://WWW.INDEED.COM/jobs/"));
+        assertEquals("https://www.indeed.com/jobs?jk=job-123", normalizeUrl.invoke(null, "https://www.indeed.com/jobs?jk=job-123&ref=1#frag"));
         assertThrows(ApplicationException.class, () -> service.addJobFromLink(new AddJobFromLinkRequest(
-                "example.test/job", null, null, null, null, null, null, null, null, null, null
+                "www.indeed.com/job", null, null, null, null, null, null, null, null, null, null
         )));
         assertThrows(ApplicationException.class, () -> service.addJobFromLink(new AddJobFromLinkRequest(
-                "ftp://example.test/job", null, null, null, null, null, null, null, null, null, null
+                "ftp://www.indeed.com/job", null, null, null, null, null, null, null, null, null, null
         )));
         assertThrows(ApplicationException.class, () -> service.addJobFromLink(new AddJobFromLinkRequest(
                 "https:/missing-host", null, null, null, null, null, null, null, null, null, null
@@ -886,7 +1087,7 @@ class JobServiceTests {
     }
 
     private static final class FakeJobLinkContentFetcher implements JobLinkContentFetcher {
-        private JobLinkFetchResult result = new JobLinkFetchResult("https://example.test", "Fetched Job", "Fetched description", 200);
+        private JobLinkFetchResult result = new JobLinkFetchResult("https://www.indeed.com", "Fetched Job", "Fetched description", 200);
         private int calls;
 
         @Override
@@ -896,9 +1097,32 @@ class JobServiceTests {
         }
     }
 
+    private static JobAggregate withCanonicalFingerprint(JobAggregate aggregate, String canonicalFingerprint) {
+        JobPosting job = aggregate.job();
+        JobPosting migratedJob = new JobPosting(
+                job.id(),
+                job.sourceMethod(),
+                job.sourceLabel(),
+                job.title(),
+                job.company(),
+                job.location(),
+                job.description(),
+                job.experienceRequirement(),
+                job.employmentType(),
+                job.seniority(),
+                job.postedAt(),
+                canonicalFingerprint,
+                job.createdAt(),
+                job.updatedAt()
+        );
+        return new JobAggregate(migratedJob, aggregate.skills(), aggregate.linkIngestion(), aggregate.textIngestion());
+    }
+
     private static final class FakeJobRepository implements JobRepository {
         private final Map<UUID, JobAggregate> aggregates = new LinkedHashMap<>();
         private JobAggregate saveOverride;
+        private int listJobAggregatesCalls;
+        private int findJobAggregateCalls;
 
         @Override
         public List<JobPosting> listJobs() {
@@ -907,7 +1131,14 @@ class JobServiceTests {
 
         @Override
         public Optional<JobAggregate> findJobAggregate(UUID jobId) {
+            findJobAggregateCalls++;
             return Optional.ofNullable(aggregates.get(jobId));
+        }
+
+        @Override
+        public List<JobAggregate> listJobAggregates() {
+            listJobAggregatesCalls++;
+            return List.copyOf(aggregates.values());
         }
 
         @Override

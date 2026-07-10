@@ -16,6 +16,7 @@ import org.instruct.jobenginespring.domain.profile.UserProfile;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.DataClassRowMapper;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
@@ -34,6 +35,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.stream.Collectors;
 
 @Repository
@@ -68,6 +70,12 @@ public class PostgresProfileRepository implements ProfileRepository {
     }
 
     @Override
+    public List<ProfileAggregate> listProfileAggregates() {
+        List<UserProfile> profiles = listProfiles();
+        return aggregatesForProfiles(profiles);
+    }
+
+    @Override
     public Optional<UserProfile> findProfileById(UUID profileId) {
         return jdbc.sql("""
                         SELECT id, full_name, email, summary, created_at, updated_at
@@ -77,6 +85,12 @@ public class PostgresProfileRepository implements ProfileRepository {
                 .param("profileId", profileId)
                 .query(this::mapProfile)
                 .optional();
+    }
+
+    @Override
+    public Optional<ProfileAggregate> findProfileAggregate(UUID profileId) {
+        return findProfileById(profileId)
+                .flatMap(profile -> aggregatesForProfiles(List.of(profile)).stream().findFirst());
     }
 
     @Override
@@ -310,6 +324,128 @@ public class PostgresProfileRepository implements ProfileRepository {
                             (id, project_id, technology, normalized_technology, display_order, created_at)
                         VALUES (:id, :projectId, :technology, :normalizedTechnology, :displayOrder, :createdAt)
                         """, aggregate.projectTechnologies());
+    }
+
+    private List<ProfileAggregate> aggregatesForProfiles(List<UserProfile> profiles) {
+        if (profiles.isEmpty()) {
+            return List.of();
+        }
+        List<UUID> profileIds = profiles.stream().map(UserProfile::id).toList();
+        Map<UUID, List<ProfileContact>> contactsByProfileId = listByProfileId(profileIds, """
+                        SELECT id, profile_id, contact_type, contact_value, label, created_at, updated_at
+                        FROM profile.profile_contacts
+                        WHERE profile_id IN (:profileIds)
+                        ORDER BY profile_id, contact_type, contact_value, id
+                        """, CONTACT_MAPPER, ProfileContact::profileId);
+        Map<UUID, List<ProfileLink>> linksByProfileId = listByProfileId(profileIds, """
+                        SELECT id, profile_id, link_type, url, label, created_at, updated_at
+                        FROM profile.profile_links
+                        WHERE profile_id IN (:profileIds)
+                        ORDER BY profile_id, link_type, url, id
+                        """, LINK_MAPPER, ProfileLink::profileId);
+        Map<UUID, List<ProfileSkill>> skillsByProfileId = listByProfileId(profileIds, """
+                        SELECT id, profile_id, skill, normalized_skill, category, display_order, created_at
+                        FROM profile.profile_skills
+                        WHERE profile_id IN (:profileIds)
+                        ORDER BY profile_id, display_order, skill, id
+                        """, SKILL_MAPPER, ProfileSkill::profileId);
+        Map<UUID, List<ProfileLanguage>> languagesByProfileId = listByProfileId(profileIds, """
+                        SELECT id, profile_id, language, normalized_language, proficiency, display_order, created_at
+                        FROM profile.profile_languages
+                        WHERE profile_id IN (:profileIds)
+                        ORDER BY profile_id, display_order, language, id
+                        """, LANGUAGE_MAPPER, ProfileLanguage::profileId);
+        Map<UUID, List<Education>> educationByProfileId = listByProfileId(profileIds, """
+                        SELECT id, profile_id, institution, degree, field, location, start_date, end_date,
+                               relevant_focus, created_at
+                        FROM profile.education
+                        WHERE profile_id IN (:profileIds)
+                        ORDER BY profile_id, start_date NULLS LAST, institution, id
+                        """, EDUCATION_MAPPER, Education::profileId);
+        Map<UUID, List<Experience>> experiencesByProfileId = listByProfileId(profileIds, """
+                        SELECT id, profile_id, company, title, location, start_date, end_date, description,
+                               display_order, created_at
+                        FROM profile.experiences
+                        WHERE profile_id IN (:profileIds)
+                        ORDER BY profile_id, display_order, start_date DESC NULLS LAST, id
+                        """, EXPERIENCE_MAPPER, Experience::profileId);
+        Map<UUID, List<ProjectTechnology>> technologiesByProfileId = new LinkedHashMap<>();
+        Map<UUID, List<ProjectTechnology>> technologiesByProjectId = new LinkedHashMap<>();
+        for (UUID profileId : profileIds) {
+            technologiesByProfileId.put(profileId, new ArrayList<>());
+        }
+        namedJdbc.query("""
+                        SELECT technology.id, project.profile_id, technology.project_id, technology.technology,
+                               technology.normalized_technology, technology.display_order, technology.created_at
+                        FROM profile.project_technologies technology
+                        JOIN profile.projects project ON project.id = technology.project_id
+                        WHERE project.profile_id IN (:profileIds)
+                        ORDER BY project.profile_id, project.display_order, technology.display_order,
+                                 technology.technology, technology.id
+                        """,
+                new MapSqlParameterSource("profileIds", profileIds),
+                (RowCallbackHandler) resultSet -> {
+                    ProjectTechnology technology = TECHNOLOGY_MAPPER.mapRow(resultSet, 0);
+                    UUID profileId = resultSet.getObject("profile_id", UUID.class);
+                    technologiesByProfileId.get(profileId).add(technology);
+                    technologiesByProjectId.computeIfAbsent(technology.projectId(), ignored -> new ArrayList<>()).add(technology);
+                });
+        Map<UUID, List<ProfileProject>> projectsByProfileId = new LinkedHashMap<>();
+        for (UUID profileId : profileIds) {
+            projectsByProfileId.put(profileId, new ArrayList<>());
+        }
+        namedJdbc.query("""
+                        SELECT id, profile_id, name, url, description, display_order, created_at
+                        FROM profile.projects
+                        WHERE profile_id IN (:profileIds)
+                        ORDER BY profile_id, display_order, name, id
+                        """,
+                new MapSqlParameterSource("profileIds", profileIds),
+                (RowCallbackHandler) resultSet -> {
+                    UUID projectId = resultSet.getObject("id", UUID.class);
+                    UUID profileId = resultSet.getObject("profile_id", UUID.class);
+                    projectsByProfileId.get(profileId)
+                            .add(new ProfileProject(
+                                    projectId,
+                                    profileId,
+                                    resultSet.getString("name"),
+                                    resultSet.getString("url"),
+                                    resultSet.getString("description"),
+                                    List.copyOf(technologiesByProjectId.getOrDefault(projectId, List.of())),
+                                    resultSet.getInt("display_order"),
+                                    resultSet.getTimestamp("created_at").toInstant()
+                            ));
+                });
+        return profiles.stream()
+                .map(profile -> new ProfileAggregate(
+                        profile,
+                        List.copyOf(contactsByProfileId.getOrDefault(profile.id(), List.of())),
+                        List.copyOf(linksByProfileId.getOrDefault(profile.id(), List.of())),
+                        List.copyOf(skillsByProfileId.getOrDefault(profile.id(), List.of())),
+                        List.copyOf(languagesByProfileId.getOrDefault(profile.id(), List.of())),
+                        List.copyOf(educationByProfileId.getOrDefault(profile.id(), List.of())),
+                        List.copyOf(experiencesByProfileId.getOrDefault(profile.id(), List.of())),
+                        List.copyOf(projectsByProfileId.getOrDefault(profile.id(), List.of())),
+                        List.copyOf(technologiesByProfileId.getOrDefault(profile.id(), List.of()))
+                ))
+                .toList();
+    }
+
+    private <T> Map<UUID, List<T>> listByProfileId(
+            List<UUID> profileIds,
+            String sql,
+            RowMapper<T> mapper,
+            java.util.function.Function<T, UUID> profileIdExtractor
+    ) {
+        Map<UUID, List<T>> valuesByProfileId = new LinkedHashMap<>();
+        for (UUID profileId : profileIds) {
+            valuesByProfileId.put(profileId, new ArrayList<>());
+        }
+        namedJdbc.query(sql, new MapSqlParameterSource("profileIds", profileIds), (RowCallbackHandler) resultSet -> {
+            T value = mapper.mapRow(resultSet, 0);
+            valuesByProfileId.get(profileIdExtractor.apply(value)).add(value);
+        });
+        return valuesByProfileId;
     }
 
     private void deleteOwnedRows(String table, UUID profileId) {
