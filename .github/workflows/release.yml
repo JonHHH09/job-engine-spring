@@ -122,45 +122,94 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
-      - name: Build release container image from verified jar
+      - name: Set up QEMU for cross-platform verification
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.6.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.11.1
+
+      - name: Build linux/amd64 release container image from verified jar
         run: |
           JAR_SHA256="$(cut -d ' ' -f1 SHA256SUMS)"
-          docker build \
+          docker buildx build \
+            --platform linux/amd64 \
             --provenance=false \
+            --load \
             -f Dockerfile.release \
             --build-arg JAR_FILE="target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar" \
             --build-arg VERSION="${{ steps.release.outputs.release_version }}" \
             --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --build-arg JAR_SHA256="$JAR_SHA256" \
-            -t job-engine-spring:release-candidate \
+            -t job-engine-spring:release-candidate-amd64 \
             .
 
-      - name: Smoke-test release image
-        run: MCP_IMAGE=job-engine-spring:release-candidate MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
+      - name: Smoke-test linux/amd64 release image
+        run: MCP_IMAGE=job-engine-spring:release-candidate-amd64 MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
 
-      - name: Generate CycloneDX SBOM for smoke-tested image
+      - name: Build linux/arm64 release container image from verified jar
+        run: |
+          JAR_SHA256="$(cut -d ' ' -f1 SHA256SUMS)"
+          docker buildx build \
+            --platform linux/arm64 \
+            --provenance=false \
+            --load \
+            -f Dockerfile.release \
+            --build-arg JAR_FILE="target/job-engine-spring-${{ steps.release.outputs.release_version }}.jar" \
+            --build-arg VERSION="${{ steps.release.outputs.release_version }}" \
+            --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --build-arg JAR_SHA256="$JAR_SHA256" \
+            -t job-engine-spring:release-candidate-arm64 \
+            .
+
+      - name: Smoke-test linux/arm64 release image
+        run: MCP_IMAGE=job-engine-spring:release-candidate-arm64 MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
+
+      - name: Record and export smoke-tested platform images
+        run: |
+          : > IMAGE-IDS
+          for platform in linux/amd64 linux/arm64; do
+            architecture="${platform#linux/}"
+            image="job-engine-spring:release-candidate-${architecture}"
+            image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+            printf '%s %s\n' "$platform" "$image_id" >> IMAGE-IDS
+            docker image save "$image" | gzip -1 > "release-candidate-linux-${architecture}.tar.gz"
+          done
+
+      - name: Generate CycloneDX SBOM for smoke-tested linux/amd64 image
         uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
         with:
-          image: job-engine-spring:release-candidate
+          image: job-engine-spring:release-candidate-amd64
           format: cyclonedx-json
-          output-file: "job-engine-spring-${{ steps.release.outputs.release_tag }}.image.cdx.json"
+          output-file: "job-engine-spring-${{ steps.release.outputs.release_tag }}.amd64.image.cdx.json"
           upload-artifact: false
           upload-release-assets: false
 
-      - name: Generate SPDX SBOM for smoke-tested image
+      - name: Generate SPDX SBOM for smoke-tested linux/amd64 image
         uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
         with:
-          image: job-engine-spring:release-candidate
+          image: job-engine-spring:release-candidate-amd64
           format: spdx-json
-          output-file: "job-engine-spring-${{ steps.release.outputs.release_tag }}.image.spdx.json"
+          output-file: "job-engine-spring-${{ steps.release.outputs.release_tag }}.amd64.image.spdx.json"
           upload-artifact: false
           upload-release-assets: false
 
-      - name: Record image ID
-        run: docker image inspect job-engine-spring:release-candidate --format '{{.Id}}' > IMAGE-ID
+      - name: Generate CycloneDX SBOM for smoke-tested linux/arm64 image
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          image: job-engine-spring:release-candidate-arm64
+          format: cyclonedx-json
+          output-file: "job-engine-spring-${{ steps.release.outputs.release_tag }}.arm64.image.cdx.json"
+          upload-artifact: false
+          upload-release-assets: false
 
-      - name: Export smoke-tested image
-        run: docker image save job-engine-spring:release-candidate | gzip -1 > release-candidate-image.tar.gz
+      - name: Generate SPDX SBOM for smoke-tested linux/arm64 image
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          image: job-engine-spring:release-candidate-arm64
+          format: spdx-json
+          output-file: "job-engine-spring-${{ steps.release.outputs.release_tag }}.arm64.image.spdx.json"
+          upload-artifact: false
+          upload-release-assets: false
 
       - name: Upload verified release artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -171,10 +220,13 @@ jobs:
             SHA256SUMS
             job-engine-spring-${{ steps.release.outputs.release_tag }}.cdx.json
             job-engine-spring-${{ steps.release.outputs.release_tag }}.spdx.json
-            job-engine-spring-${{ steps.release.outputs.release_tag }}.image.cdx.json
-            job-engine-spring-${{ steps.release.outputs.release_tag }}.image.spdx.json
-            IMAGE-ID
-            release-candidate-image.tar.gz
+            IMAGE-IDS
+            release-candidate-linux-amd64.tar.gz
+            release-candidate-linux-arm64.tar.gz
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.amd64.image.cdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.amd64.image.spdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.arm64.image.cdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.arm64.image.spdx.json
           if-no-files-found: error
 
       - name: Compose cleanup
@@ -218,17 +270,27 @@ jobs:
         with:
           name: verified-release-artifacts
 
-      - name: Load smoke-tested release image
+      - name: Load and verify smoke-tested platform images
         run: |
-          gzip -dc release-candidate-image.tar.gz | docker image load
-          expected_image_id="$(tr -d '\r\n' < IMAGE-ID)"
-          actual_image_id="$(docker image inspect job-engine-spring:release-candidate --format '{{.Id}}')"
-          if [[ "$actual_image_id" != "$expected_image_id" ]]; then
-            echo "Loaded image ID does not match the smoke-tested image." >&2
-            echo "Expected: $expected_image_id" >&2
-            echo "Actual:   $actual_image_id" >&2
-            exit 1
-          fi
+          gzip -dc release-candidate-linux-amd64.tar.gz | docker image load
+          gzip -dc release-candidate-linux-arm64.tar.gz | docker image load
+          while read -r platform expected_image_id; do
+            architecture="${platform#linux/}"
+            image="job-engine-spring:release-candidate-${architecture}"
+            actual_image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+            if [[ "$actual_image_id" != "$expected_image_id" ]]; then
+              echo "Loaded ${platform} image does not match the smoke-tested image." >&2
+              echo "Expected: $expected_image_id" >&2
+              echo "Actual:   $actual_image_id" >&2
+              exit 1
+            fi
+          done < IMAGE-IDS
+
+      - name: Set up QEMU for multi-platform publication
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.6.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.11.1
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
@@ -243,33 +305,84 @@ jobs:
       - name: Check Cosign install
         run: cosign version
 
-      - name: Publish container image
+      - name: Publish verified platform images and manifest index
         id: publish_image
         env:
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
         run: |
           IMAGE_REPOSITORY=ghcr.io/${GITHUB_REPOSITORY,,}
           IMAGE_NAME="${IMAGE_REPOSITORY}:${RELEASE_TAG}"
+          : > IMAGE-DIGESTS
 
-          docker tag job-engine-spring:release-candidate "$IMAGE_NAME"
-          docker push "$IMAGE_NAME"
+          for platform in linux/amd64 linux/arm64; do
+            architecture="${platform#linux/}"
+            image="job-engine-spring:release-candidate-${architecture}"
+            platform_tag="${IMAGE_NAME}-${architecture}"
+            expected_image_id="$(awk -v platform="$platform" '$1 == platform { print $2 }' IMAGE-IDS)"
+            actual_image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+            if [[ "$actual_image_id" != "$expected_image_id" ]]; then
+              echo "${platform} image changed after smoke-test verification." >&2
+              exit 1
+            fi
 
-          verified_image_id="$(tr -d '\r\n' < IMAGE-ID)"
-          published_config_digest="$(docker manifest inspect "$IMAGE_NAME" | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')"
-          if [[ "$published_config_digest" != "$verified_image_id" ]]; then
-            echo "Published registry image config does not match the smoke-tested image." >&2
-            echo "Expected: $verified_image_id" >&2
-            echo "Actual:   $published_config_digest" >&2
+            docker tag "$image" "$platform_tag"
+            docker push "$platform_tag"
+
+            remote_raw="$(docker buildx imagetools inspect --raw "$platform_tag")"
+            remote_config_digest="$(printf '%s' "$remote_raw" | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')"
+            if [[ "$remote_config_digest" != "$expected_image_id" ]]; then
+              echo "Published ${platform} config does not match the smoke-tested image." >&2
+              echo "Expected: $expected_image_id" >&2
+              echo "Actual:   $remote_config_digest" >&2
+              exit 1
+            fi
+
+            remote_manifest_digest="$(docker buildx imagetools inspect "$platform_tag" | awk '/^Digest:/ { print $2; exit }')"
+            if [[ ! "$remote_manifest_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Could not resolve the immutable ${platform} manifest digest." >&2
+              exit 1
+            fi
+            printf '%s %s@%s config=%s\n' "$platform" "$IMAGE_REPOSITORY" "$remote_manifest_digest" "$remote_config_digest" >> IMAGE-DIGESTS
+          done
+
+          amd64_image_ref="$(awk '$1 == "linux/amd64" { print $2 }' IMAGE-DIGESTS)"
+          arm64_image_ref="$(awk '$1 == "linux/arm64" { print $2 }' IMAGE-DIGESTS)"
+          tag_args=(-t "$IMAGE_NAME")
+          if [[ "$RELEASE_TAG" != *-* ]]; then
+            tag_args+=(-t "${IMAGE_REPOSITORY}:latest")
+          fi
+          docker buildx imagetools create "${tag_args[@]}" "$amd64_image_ref" "$arm64_image_ref"
+
+          manifest_digest="$(docker buildx imagetools inspect "$IMAGE_NAME" | awk '/^Digest:/ { print $2; exit }')"
+          if [[ ! "$manifest_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not resolve the immutable multi-platform manifest digest." >&2
             exit 1
           fi
+          docker buildx imagetools inspect --raw "$IMAGE_NAME" | python3 -c '
+          import json
+          import sys
 
+          payload = json.load(sys.stdin)
+          platforms = {
+              "{}/{}".format(entry["platform"]["os"], entry["platform"]["architecture"])
+              for entry in payload.get("manifests", [])
+              if entry.get("platform", {}).get("os") == "linux"
+          }
+          required = {"linux/amd64", "linux/arm64"}
+          if not required.issubset(platforms):
+              raise SystemExit(f"Published image is missing required platforms: {sorted(required - platforms)}")
+          print("Published platforms: " + ", ".join(sorted(platforms)))
+          '
           if [[ "$RELEASE_TAG" != *-* ]]; then
-            docker tag job-engine-spring:release-candidate "${IMAGE_REPOSITORY}:latest"
-            docker push "${IMAGE_REPOSITORY}:latest"
+            latest_digest="$(docker buildx imagetools inspect "${IMAGE_REPOSITORY}:latest" | awk '/^Digest:/ { print $2; exit }')"
+            if [[ "$latest_digest" != "$manifest_digest" ]]; then
+              echo "The latest tag does not reference the version tag's manifest list." >&2
+              exit 1
+            fi
           fi
 
-          immutable_image_ref="$(docker image inspect "$IMAGE_NAME" --format '{{index .RepoDigests 0}}')"
-          echo "$immutable_image_ref" > IMAGE-DIGESTS
+          immutable_image_ref="${IMAGE_REPOSITORY}@${manifest_digest}"
+          printf 'index %s\n' "$immutable_image_ref" >> IMAGE-DIGESTS
           {
             echo "image_repository=$IMAGE_REPOSITORY"
             echo "image_name=$IMAGE_NAME"
@@ -397,9 +510,13 @@ jobs:
             SHA256SUMS
             job-engine-spring-${{ steps.release.outputs.release_tag }}.cdx.json
             job-engine-spring-${{ steps.release.outputs.release_tag }}.spdx.json
-            job-engine-spring-${{ steps.release.outputs.release_tag }}.image.cdx.json
-            job-engine-spring-${{ steps.release.outputs.release_tag }}.image.spdx.json
-            IMAGE-ID
+            IMAGE-IDS
+            release-candidate-linux-amd64.tar.gz
+            release-candidate-linux-arm64.tar.gz
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.amd64.image.cdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.amd64.image.spdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.arm64.image.cdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.arm64.image.spdx.json
             IMAGE-DIGESTS
 
   dry-run-report:
@@ -452,33 +569,31 @@ jobs:
           }
           EOF
 
-          cosign sign-blob --yes --bundle dry-run-signature.bundle IMAGE-ID
+          cosign sign-blob --yes --bundle dry-run-signature.bundle SHA256SUMS
           cosign verify-blob \
             --bundle dry-run-signature.bundle \
             --certificate-identity "$certificate_identity" \
             --certificate-oidc-issuer "$certificate_issuer" \
-            IMAGE-ID
+            SHA256SUMS
 
           cosign attest-blob --yes \
             --type slsaprovenance \
             --predicate dry-run-provenance.json \
             --bundle dry-run-attestation.bundle \
-            IMAGE-ID
+            SHA256SUMS
           cosign verify-blob-attestation \
             --type slsaprovenance \
             --bundle dry-run-attestation.bundle \
             --certificate-identity "$certificate_identity" \
             --certificate-oidc-issuer "$certificate_issuer" \
-            IMAGE-ID
+            SHA256SUMS
 
       - name: Report release dry run
         run: |
           {
             echo "Manual branch run completed verification only; no GitHub Release or GHCR package was published."
-            echo "Dry-run artifacts include the versioned jar, SHA256SUMS, jar and smoke-tested-image CycloneDX/SPDX SBOMs, IMAGE-ID, and the smoke-tested image tarball."
-            echo "After downloading the artifacts, verify them locally with:"
+            echo "Dry-run artifacts include the versioned jar, SHA256SUMS, and CycloneDX/SPDX SBOMs for both smoke-tested Linux architectures."
+            echo "After downloading the artifacts, verify the release jar checksum locally with:"
             echo "  sha256sum -c SHA256SUMS"
-            echo "  gzip -dc release-candidate-image.tar.gz | docker image load"
-            printf '%s\n' "  test \"\$(docker image inspect job-engine-spring:release-candidate --format '{{.Id}}')\" = \"\$(tr -d '\\r\\n' < IMAGE-ID)\""
-            echo "  MCP_IMAGE=job-engine-spring:release-candidate MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh"
+            echo "The dry run verifies keyless signature and provenance attestations for SHA256SUMS; it never publishes a registry manifest."
           } | tee -a "$GITHUB_STEP_SUMMARY"
