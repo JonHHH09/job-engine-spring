@@ -26,6 +26,10 @@ AS $$
 DECLARE
     trimmed text;
     without_fragment text;
+    without_userinfo text;
+    base_url text;
+    raw_query text;
+    safe_query text;
 BEGIN
     IF raw_value IS NULL OR btrim(raw_value) = '' THEN
         RETURN raw_value;
@@ -33,10 +37,50 @@ BEGIN
 
     trimmed := btrim(raw_value);
     without_fragment := regexp_replace(trimmed, '#.*$', '');
+    without_userinfo := regexp_replace(without_fragment, '^(https?://)[^/?#]*@', '\1', 'i');
+    base_url := regexp_replace(without_userinfo, '\?.*$', '');
+    raw_query := substring(without_userinfo from '\?(.*)$');
 
-    RETURN regexp_replace(without_fragment, '^(https?://)[^/?#]*@', '\1', 'i');
+    IF raw_query IS NULL OR raw_query = '' THEN
+        RETURN base_url;
+    END IF;
+
+    SELECT string_agg(
+            lower(split_part(pair, '=', 1)) || '=' || substring(pair from position('=' in pair) + 1),
+            '&' ORDER BY lower(split_part(pair, '=', 1)), substring(pair from position('=' in pair) + 1)
+    )
+    INTO safe_query
+    FROM regexp_split_to_table(raw_query, '&') AS pair
+    WHERE position('=' in pair) > 1
+      AND substring(pair from position('=' in pair) + 1) <> ''
+      AND lower(split_part(pair, '=', 1)) IN (
+          'gh_jid', 'gh_src', 'jk', 'jobid', 'job_id', 'jid',
+          'posting_id', 'postingid', 'reqid', 'req_id', 'vacancyid'
+      );
+
+    RETURN CASE WHEN safe_query IS NULL THEN base_url ELSE base_url || '?' || safe_query END;
 END;
 $$;
+
+DO $$
+DECLARE
+    conflicting_identity_groups integer;
+BEGIN
+    SELECT count(*)
+    INTO conflicting_identity_groups
+    FROM (
+        SELECT job_schema.scrub_canonical_job_url(normalized_url)
+        FROM job_schema.job_link_ingestions
+        GROUP BY job_schema.scrub_canonical_job_url(normalized_url)
+        HAVING count(*) > 1
+    ) conflicts;
+
+    IF conflicting_identity_groups > 0 THEN
+        RAISE EXCEPTION
+            'V13 blocked: % canonical job URL conflict group(s). Merge duplicate link jobs before retrying.',
+            conflicting_identity_groups;
+    END IF;
+END $$;
 
 UPDATE job_schema.job_link_ingestions
 SET url = job_schema.scrub_safe_display_url(url),
