@@ -186,6 +186,11 @@ class JobEngineSpringApplicationTests {
                 public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
                     return extraction;
                 }
+
+                @Override
+                public boolean deleteFileIfUnreferenced(UUID fileId) {
+                    return false;
+                }
             };
         }
 
@@ -230,6 +235,16 @@ class JobEngineSpringApplicationTests {
                 @Override
                 public Optional<ProfileResumeDocument> findByDocumentId(UUID documentId) {
                     return Optional.empty();
+                }
+
+                @Override
+                public java.util.List<ProfileResumeDocument> lockAndFindAllByProfileId(UUID profileId) {
+                    return java.util.List.of();
+                }
+
+                @Override
+                public Replacement replace(ProfileResumeDocument resumeDocument) {
+                    return new Replacement(resumeDocument, Optional.empty());
                 }
             };
         }

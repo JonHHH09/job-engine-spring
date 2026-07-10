@@ -133,6 +133,31 @@ class PostgresDocumentRepositoryIntegrationTests {
     }
 
     @Test
+    void deletesOnlyUnreferencedDocumentAndPreservesSharedBlob() {
+        StoredDocumentFile existing = sampleFile(SHA256, PDF_CONTENT);
+        UUID duplicateId = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        StoredDocumentFile duplicate = new StoredDocumentFile(
+                duplicateId,
+                "duplicate.pdf",
+                "application/pdf",
+                PDF_CONTENT.length,
+                SHA256,
+                PDF_CONTENT,
+                NOW,
+                NOW
+        );
+        repository.saveFile(existing);
+        repository.saveFile(duplicate);
+
+        assertTrue(repository.deleteFileIfUnreferenced(FILE_ID));
+
+        assertFalse(repository.findFileMetadataById(FILE_ID).isPresent());
+        assertTrue(repository.findFileMetadataById(duplicateId).isPresent());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.blobs", Integer.class));
+        assertFalse(repository.deleteFileIfUnreferenced(UUID.randomUUID()));
+    }
+
+    @Test
     void duplicatePrimaryKeyWithoutMatchingSha256RethrowsConstraintFailure() {
         repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
         StoredDocumentFile conflictingId = sampleFile(

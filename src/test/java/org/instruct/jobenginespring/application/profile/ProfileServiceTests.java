@@ -10,6 +10,7 @@ import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWr
 import org.instruct.jobenginespring.application.profile.ProfileService.ProjectTechnologyWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProjectWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.SkillWriteRequest;
+import org.instruct.jobenginespring.application.document.GeneratedResumeAssetService;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.domain.profile.Education;
@@ -39,14 +40,26 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class ProfileServiceTests {
 
     private static final Instant NOW = Instant.parse("2026-06-30T18:30:00Z");
 
     private final FakeProfileRepository repository = new FakeProfileRepository();
-    private final ProfileService service = new ProfileService(repository, Clock.fixed(NOW, ZoneOffset.UTC));
+    private final GeneratedResumeAssetService generatedResumeAssetService = mock(GeneratedResumeAssetService.class);
+    private final ProfileService service = new ProfileService(
+            repository,
+            generatedResumeAssetService,
+            Clock.fixed(NOW, ZoneOffset.UTC)
+    );
 
+    ProfileServiceTests() {
+        when(generatedResumeAssetService.deleteProfile(any()))
+                .thenAnswer(invocation -> repository.deleteProfile(invocation.getArgument(0)));
+    }
 
     @Test
     void createProfilePersistsNormalizedAggregate() {

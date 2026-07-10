@@ -3,6 +3,8 @@ package org.instruct.jobenginespring.application.document;
 import org.instruct.jobenginespring.application.document.GeneratePdfResumeService.GeneratePdfResumeRequest;
 import org.instruct.jobenginespring.application.document.GeneratePdfResumeService.GeneratePdfResumeResult;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
+import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
+import org.instruct.jobenginespring.application.document.port.TransactionLifecycle;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService;
@@ -44,10 +46,17 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 class GeneratePdfResumeServiceTests {
 
@@ -76,7 +85,7 @@ class GeneratePdfResumeServiceTests {
         ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
                 profileRepository,
                 documentStorageService,
-                resumeDocumentRepository,
+                assetService(),
                 Clock.fixed(NOW, ZoneOffset.UTC)
         );
         service = new GeneratePdfResumeService(workflow, tempDir.resolve("master-resume"));
@@ -93,7 +102,9 @@ class GeneratePdfResumeServiceTests {
         assertEquals(GeneratePdfResumeService.MASTER_RESUME_TYPE, result.resumeType());
         assertFalse(result.replacedExistingLink());
         assertEquals(NOW.toString(), result.linkedAt());
-        assertTrue(result.filePath().endsWith("master-resume-" + PROFILE_ID + ".pdf"));
+        assertTrue(Path.of(result.filePath()).getFileName().toString().matches(
+                "master-resume-" + PROFILE_ID + "-[0-9a-f-]{36}\\.pdf"
+        ));
         assertEquals(result.filePath(), result.generatedFile().path());
         assertEquals(result.documentId(), result.document().id());
         assertEquals(result.documentId(), resumeDocumentRepository.findByProfileIdAndResumeType(
@@ -130,7 +141,9 @@ class GeneratePdfResumeServiceTests {
                 PROFILE_ID,
                 GeneratePdfResumeService.MASTER_RESUME_TYPE
         ).orElseThrow().documentId());
-        assertEquals(2, documentRepository.fileCount());
+        assertEquals(1, documentRepository.fileCount());
+        assertFalse(Files.exists(Path.of(first.filePath())));
+        assertTrue(Files.exists(Path.of(second.filePath())));
     }
 
     @Test
@@ -152,7 +165,9 @@ class GeneratePdfResumeServiceTests {
                 PROFILE_ID,
                 GenerateCaPdfResumeService.CANADIAN_RESUME_TYPE
         ).orElseThrow().documentId());
-        assertTrue(canadian.filePath().endsWith("canadian-resume-" + PROFILE_ID + ".pdf"));
+        assertTrue(Path.of(canadian.filePath()).getFileName().toString().matches(
+                "canadian-resume-" + PROFILE_ID + "-[0-9a-f-]{36}\\.pdf"
+        ));
 
         PdfTextExtractionService.PdfTextExtractionResult text = new PdfTextExtractionService()
                 .extractText(Files.readAllBytes(Path.of(canadian.filePath())), "canadian-resume.pdf", null, false);
@@ -224,7 +239,7 @@ class GeneratePdfResumeServiceTests {
         ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
                 profileRepository,
                 new DocumentStorageService(documentRepository, mock(PdfTextExtractionService.class), Clock.fixed(NOW, ZoneOffset.UTC)),
-                resumeDocumentRepository,
+                assetService(),
                 Clock.fixed(NOW, ZoneOffset.UTC)
         );
 
@@ -250,7 +265,7 @@ class GeneratePdfResumeServiceTests {
         ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
                 profileRepository,
                 new DocumentStorageService(documentRepository, mock(PdfTextExtractionService.class), Clock.fixed(NOW, ZoneOffset.UTC)),
-                resumeDocumentRepository,
+                assetService(),
                 Clock.fixed(NOW, ZoneOffset.UTC)
         );
 
@@ -358,6 +373,99 @@ class GeneratePdfResumeServiceTests {
         assertEquals(List.of("."), invokeResumeList("splitSentences", new Class<?>[]{String.class}, " . "));
         assertEquals(List.of("Normalized bullet"), invokeResumeList("experienceBullets", new Class<?>[]{String.class, int.class}, "• Normalized bullet", 3));
         assertEquals("-", invokeResumeString("stripBulletPrefix", new Class<?>[]{String.class}, "-"));
+    }
+
+    @Test
+    void generatedResumeFileNamesAreUniqueWithOrWithoutRequestedPdfName() throws Exception {
+        Method method = ProfileResumePdfGenerationWorkflow.class.getDeclaredMethod("uniqueFileName", String.class);
+        method.setAccessible(true);
+
+        String defaultName = (String) method.invoke(null, new Object[]{null});
+        String extensionlessName = (String) method.invoke(null, "resume");
+        String uppercaseExtensionName = (String) method.invoke(null, "resume.PDF");
+
+        assertTrue(defaultName.matches("generated-resume-[0-9a-f-]{36}\\.pdf"));
+        assertTrue(extensionlessName.matches("resume-[0-9a-f-]{36}\\.pdf"));
+        assertTrue(uppercaseExtensionName.matches("resume-[0-9a-f-]{36}\\.pdf"));
+    }
+
+    @Test
+    void persistenceFailureDeletesGeneratedFileImmediately() throws Exception {
+        DocumentStorageService storage = mock(DocumentStorageService.class);
+        GeneratedResumeAssetService assets = assetService();
+        IllegalStateException persistenceFailure = new IllegalStateException("persistence failed");
+        when(storage.storeGeneratedDocumentFile(any(), eq(DocumentStorageService.PDF_MEDIA_TYPE)))
+                .thenThrow(persistenceFailure);
+        ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
+                profileRepository, storage, assets, Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> workflow.generateAndLink(command(tempDir.resolve("failed")))
+        );
+
+        assertSame(persistenceFailure, thrown);
+        try (var files = Files.list(tempDir.resolve("failed"))) {
+            List<Path> remainingFiles = files.toList();
+            assertEquals(List.of(), remainingFiles, "generated files must be deleted after persistence failure");
+        }
+    }
+
+    @Test
+    void cleanupFailureIsSuppressedOnPersistenceFailure() {
+        DocumentStorageService storage = mock(DocumentStorageService.class);
+        GeneratedResumeAssetService assets = mock(GeneratedResumeAssetService.class);
+        IllegalStateException persistenceFailure = new IllegalStateException("persistence failed");
+        IllegalStateException cleanupFailure = new IllegalStateException("cleanup failed");
+        when(storage.storeGeneratedDocumentFile(any(), eq(DocumentStorageService.PDF_MEDIA_TYPE)))
+                .thenThrow(persistenceFailure);
+        doThrow(cleanupFailure).when(assets).discardFailedGeneratedFile(any());
+        ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
+                profileRepository, storage, assets, Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> workflow.generateAndLink(command(tempDir.resolve("suppressed")))
+        );
+
+        assertSame(persistenceFailure, thrown);
+        assertEquals(List.of(cleanupFailure), List.of(thrown.getSuppressed()));
+    }
+
+    private static ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand command(Path outputDirectory) {
+        return new ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand(
+                PROFILE_ID, "master_resume", outputDirectory, "resume.pdf", "Resume", "Body"
+        );
+    }
+
+    private GeneratedResumeAssetService assetService() {
+        GeneratedResumeFileRepository files = filePath -> {
+            try {
+                Files.deleteIfExists(Path.of(filePath));
+            } catch (java.io.IOException exception) {
+                throw new IllegalStateException(exception);
+            }
+        };
+        TransactionLifecycle transactions = new TransactionLifecycle() {
+            @Override
+            public void afterCommit(Runnable action) {
+                action.run();
+            }
+
+            @Override
+            public void afterRollback(Runnable action) {
+                // Unit tests execute without a transaction; failure paths clean up directly.
+            }
+        };
+        return new GeneratedResumeAssetService(
+                profileRepository,
+                resumeDocumentRepository,
+                documentRepository,
+                files,
+                transactions
+        );
     }
 
     private static ProfileAggregate emptyAggregate(UUID profileId) {
@@ -608,6 +716,11 @@ class GeneratePdfResumeServiceTests {
             return extraction;
         }
 
+        @Override
+        public boolean deleteFileIfUnreferenced(UUID fileId) {
+            return files.remove(fileId) != null;
+        }
+
         private int fileCount() {
             return files.size();
         }
@@ -617,7 +730,12 @@ class GeneratePdfResumeServiceTests {
         private final Map<String, ProfileResumeDocument> linksByProfileAndType = new LinkedHashMap<>();
 
         @Override
-        public ProfileResumeDocument save(ProfileResumeDocument resumeDocument) {
+        public synchronized ProfileResumeDocument save(ProfileResumeDocument resumeDocument) {
+            return replace(resumeDocument).saved();
+        }
+
+        @Override
+        public synchronized Replacement replace(ProfileResumeDocument resumeDocument) {
             String key = key(resumeDocument.profileId(), resumeDocument.resumeType());
             ProfileResumeDocument existing = linksByProfileAndType.get(key);
             ProfileResumeDocument saved = existing == null
@@ -632,7 +750,7 @@ class GeneratePdfResumeServiceTests {
                     resumeDocument.updatedAt()
             );
             linksByProfileAndType.put(key, saved);
-            return saved;
+            return new Replacement(saved, Optional.ofNullable(existing));
         }
 
         @Override
@@ -645,6 +763,13 @@ class GeneratePdfResumeServiceTests {
             return linksByProfileAndType.values().stream()
                     .filter(link -> link.documentId().equals(documentId))
                     .findFirst();
+        }
+
+        @Override
+        public List<ProfileResumeDocument> lockAndFindAllByProfileId(UUID profileId) {
+            return linksByProfileAndType.values().stream()
+                    .filter(link -> link.profileId().equals(profileId))
+                    .toList();
         }
 
         private int count() {
