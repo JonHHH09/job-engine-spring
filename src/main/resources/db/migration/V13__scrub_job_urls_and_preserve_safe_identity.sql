@@ -1,3 +1,66 @@
+CREATE OR REPLACE FUNCTION job_schema.decode_job_query_component(raw_value text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+AS $$
+DECLARE
+    decoded bytea := ''::bytea;
+    position_index integer := 1;
+    current_character text;
+    encoded_byte text;
+BEGIN
+    WHILE position_index <= length(raw_value) LOOP
+        current_character := substring(raw_value from position_index for 1);
+        IF current_character = '+' THEN
+            decoded := decoded || decode('20', 'hex');
+            position_index := position_index + 1;
+        ELSIF current_character = '%'
+              AND position_index + 2 <= length(raw_value)
+              AND substring(raw_value from position_index + 1 for 2) ~ '^[0-9A-Fa-f]{2}$' THEN
+            encoded_byte := substring(raw_value from position_index + 1 for 2);
+            decoded := decoded || decode(encoded_byte, 'hex');
+            position_index := position_index + 3;
+        ELSE
+            decoded := decoded || convert_to(current_character, 'UTF8');
+            position_index := position_index + 1;
+        END IF;
+    END LOOP;
+
+    RETURN convert_from(decoded, 'UTF8');
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION job_schema.encode_job_query_component(raw_value text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+AS $$
+DECLARE
+    encoded text := '';
+    utf8_bytes bytea := convert_to(raw_value, 'UTF8');
+    position_index integer;
+    current_byte integer;
+BEGIN
+    FOR position_index IN 0..length(utf8_bytes) - 1 LOOP
+        current_byte := get_byte(utf8_bytes, position_index);
+        IF (current_byte BETWEEN 48 AND 57)
+           OR (current_byte BETWEEN 65 AND 90)
+           OR (current_byte BETWEEN 97 AND 122)
+           OR current_byte IN (42, 45, 46, 95) THEN
+            encoded := encoded || chr(current_byte);
+        ELSIF current_byte = 32 THEN
+            encoded := encoded || '%20';
+        ELSE
+            encoded := encoded || '%' || upper(lpad(to_hex(current_byte), 2, '0'));
+        END IF;
+    END LOOP;
+
+    RETURN encoded;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION job_schema.scrub_safe_display_url(raw_value text)
 RETURNS text
 LANGUAGE plpgsql
@@ -46,14 +109,19 @@ BEGIN
     END IF;
 
     SELECT string_agg(
-            lower(split_part(pair, '=', 1)) || '=' || substring(pair from position('=' in pair) + 1),
-            '&' ORDER BY lower(split_part(pair, '=', 1)), substring(pair from position('=' in pair) + 1)
+            job_schema.encode_job_query_component(lower(decoded_name)) || '='
+                || job_schema.encode_job_query_component(decoded_value),
+            '&' ORDER BY lower(decoded_name), decoded_value
     )
     INTO safe_query
     FROM regexp_split_to_table(raw_query, '&') AS pair
+    CROSS JOIN LATERAL (
+        SELECT job_schema.decode_job_query_component(split_part(pair, '=', 1)) AS decoded_name,
+               btrim(job_schema.decode_job_query_component(substring(pair from position('=' in pair) + 1))) AS decoded_value
+    ) decoded
     WHERE position('=' in pair) > 1
-      AND substring(pair from position('=' in pair) + 1) <> ''
-      AND lower(split_part(pair, '=', 1)) IN (
+      AND decoded_value <> ''
+      AND lower(decoded_name) IN (
           'gh_jid', 'gh_src', 'jk', 'jobid', 'job_id', 'jid',
           'posting_id', 'postingid', 'reqid', 'req_id', 'vacancyid'
       );
@@ -147,3 +215,5 @@ ALTER TABLE job_schema.job_analysis_runs
 
 DROP FUNCTION job_schema.scrub_safe_display_url(text);
 DROP FUNCTION job_schema.scrub_canonical_job_url(text);
+DROP FUNCTION job_schema.decode_job_query_component(text);
+DROP FUNCTION job_schema.encode_job_query_component(text);
