@@ -181,6 +181,11 @@ class JobEngineSpringApplicationTests {
                 public PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction) {
                     return extraction;
                 }
+
+                @Override
+                public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
+                    return extraction;
+                }
             };
         }
 

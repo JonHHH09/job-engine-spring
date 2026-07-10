@@ -128,19 +128,44 @@ public class PostgresDocumentRepository implements DocumentRepository {
     @Override
     public PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction) {
         Objects.requireNonNull(extraction, "extraction must not be null");
+        MapSqlParameterSource parameters = extractionParameters(extraction);
+        return jdbc.sql("""
+                        INSERT INTO document.pdf_extractions (
+                            id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
+                        ) VALUES (
+                            :id, :fileId, :extractor, :characterCount, :pageCount, :truncated, :extractedText, :createdAt
+                        )
+                        ON CONFLICT (file_id) DO UPDATE SET file_id = EXCLUDED.file_id
+                        RETURNING id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
+                        """)
+                .params(parameters.getValues())
+                .query(EXTRACTION_MAPPER)
+                .single();
+    }
+
+    @Override
+    public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
+        Objects.requireNonNull(extraction, "extraction must not be null");
         namedJdbc.update("""
-                INSERT INTO document.pdf_extractions (
-                    id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
-                ) VALUES (
-                    :id, :fileId, :extractor, :characterCount, :pageCount, :truncated, :extractedText, :createdAt
-                )
+                UPDATE document.pdf_extractions
+                SET extractor = :extractor,
+                    character_count = :characterCount,
+                    page_count = :pageCount,
+                    truncated = :truncated,
+                    extracted_text = :extractedText,
+                    created_at = :createdAt
+                WHERE id = :id AND file_id = :fileId
                 """, extractionParameters(extraction));
+        return findExtractionById(extraction.id());
+    }
+
+    private PdfExtractionRecord findExtractionById(UUID extractionId) {
         return jdbc.sql("""
                         SELECT id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
                         FROM document.pdf_extractions
                         WHERE id = :id
                         """)
-                .param("id", extraction.id())
+                .param("id", extractionId)
                 .query(EXTRACTION_MAPPER)
                 .single();
     }

@@ -28,7 +28,7 @@ import java.util.UUID;
 public class DocumentStorageService {
 
     public static final String PDF_MEDIA_TYPE = "application/pdf";
-    private static final String PDF_EXTRACTOR = "spring-ai-page-pdf-document-reader";
+    private static final String PDF_EXTRACTOR = "spring-ai-page-pdf-document-reader:canonical-250000-v1";
     private static final byte[] PDF_MAGIC = new byte[]{'%', 'P', 'D', 'F', '-'};
 
     @NonNull
@@ -98,11 +98,7 @@ public class DocumentStorageService {
 
         if (safeRequest.persistExtraction() != null && safeRequest.persistExtraction()) {
             return documentRepository.findPdfExtractionByFileId(file.id())
-                    .map(existing -> new StoredPdfTextExtractionResult(
-                            file.metadata(),
-                            existing.id(),
-                            toExtractionResult(file.originalFileName(), existing)
-                    ))
+                    .map(existing -> persistedResult(file, existing, safeRequest))
                     .orElseGet(() -> extractAndPersist(file, safeRequest));
         }
 
@@ -131,25 +127,84 @@ public class DocumentStorageService {
     }
 
     private StoredPdfTextExtractionResult extractAndPersist(StoredDocumentFile file, ExtractStoredPdfTextRequest request) {
-        PdfTextExtractionResult extraction = pdfTextExtractionService.extractText(
+        PdfTextExtractionResult canonical = extractCanonical(file);
+        UUID extractionId = UUID.randomUUID();
+        PdfExtractionRecord saved = documentRepository.savePdfExtraction(toRecord(extractionId, file.id(), canonical));
+        return new StoredPdfTextExtractionResult(
+                file.metadata(),
+                saved.id(),
+                PdfTextExtractionService.applyRequestView(canonical, request.maxCharacters(), request.includePages())
+        );
+    }
+
+    private StoredPdfTextExtractionResult persistedResult(
+            StoredDocumentFile file,
+            PdfExtractionRecord existing,
+            ExtractStoredPdfTextRequest request
+    ) {
+        if (!PDF_EXTRACTOR.equals(existing.extractor())) {
+            PdfTextExtractionResult canonical = extractCanonical(file);
+            PdfExtractionRecord refreshed = documentRepository.updatePdfExtraction(
+                    toRecord(existing.id(), file.id(), canonical)
+            );
+            return new StoredPdfTextExtractionResult(
+                    file.metadata(),
+                    refreshed.id(),
+                    PdfTextExtractionService.applyRequestView(canonical, request.maxCharacters(), request.includePages())
+            );
+        }
+
+        return persistedResponse(
+                file,
+                existing.id(),
+                toExtractionResult(file.originalFileName(), existing),
+                request
+        );
+    }
+
+    private StoredPdfTextExtractionResult persistedResponse(
+            StoredDocumentFile file,
+            UUID extractionId,
+            PdfTextExtractionResult canonical,
+            ExtractStoredPdfTextRequest request
+    ) {
+        if (request.includePages() == null || request.includePages()) {
+            PdfTextExtractionResult response = pdfTextExtractionService.extractText(
+                    file.content(),
+                    file.originalFileName(),
+                    request.maxCharacters(),
+                    true
+            );
+            return new StoredPdfTextExtractionResult(file.metadata(), extractionId, response);
+        }
+
+        return new StoredPdfTextExtractionResult(
+                file.metadata(),
+                extractionId,
+                PdfTextExtractionService.applyRequestView(canonical, request.maxCharacters(), false)
+        );
+    }
+
+    private PdfTextExtractionResult extractCanonical(StoredDocumentFile file) {
+        return pdfTextExtractionService.extractText(
                 file.content(),
                 file.originalFileName(),
-                request.maxCharacters(),
-                request.includePages()
+                PdfTextExtractionService.MAX_CHARACTERS_LIMIT,
+                true
         );
-        UUID extractionId = UUID.randomUUID();
-        Instant now = clock.instant();
-        PdfExtractionRecord saved = documentRepository.savePdfExtraction(new PdfExtractionRecord(
+    }
+
+    private PdfExtractionRecord toRecord(UUID extractionId, UUID fileId, PdfTextExtractionResult extraction) {
+        return new PdfExtractionRecord(
                 extractionId,
-                file.id(),
+                fileId,
                 PDF_EXTRACTOR,
                 extraction.characterCount(),
                 extraction.pageCount(),
                 extraction.truncated(),
                 extraction.text(),
-                now
-        ));
-        return new StoredPdfTextExtractionResult(file.metadata(), saved.id(), extraction);
+                clock.instant()
+        );
     }
 
     private static PdfTextExtractionResult toExtractionResult(String fileName, PdfExtractionRecord extraction) {

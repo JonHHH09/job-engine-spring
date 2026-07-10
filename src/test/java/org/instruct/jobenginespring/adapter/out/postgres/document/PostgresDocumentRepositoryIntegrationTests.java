@@ -1,6 +1,10 @@
 package org.instruct.jobenginespring.adapter.out.postgres.document;
 
 import org.flywaydb.core.Flyway;
+import org.instruct.jobenginespring.application.document.DocumentStorageService;
+import org.instruct.jobenginespring.application.document.DocumentStorageService.ExtractStoredPdfTextRequest;
+import org.instruct.jobenginespring.application.document.PdfTextExtractionService;
+import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
@@ -17,12 +21,22 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @Testcontainers
 class PostgresDocumentRepositoryIntegrationTests {
@@ -153,9 +167,108 @@ class PostgresDocumentRepositoryIntegrationTests {
     }
 
     @Test
-    void enforcesOnePdfExtractionPerFile() {
+    void updatesPdfExtractionInPlace() {
         repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
         repository.savePdfExtraction(new PdfExtractionRecord(
+                EXTRACTION_ID, FILE_ID, "legacy", 5, 1, true, "short", NOW
+        ));
+        Instant refreshedAt = NOW.plusSeconds(60);
+        PdfExtractionRecord canonical = new PdfExtractionRecord(
+                EXTRACTION_ID,
+                FILE_ID,
+                "spring-ai-page-pdf-document-reader:canonical-250000-v1",
+                11,
+                1,
+                false,
+                "sample text",
+                refreshedAt
+        );
+
+        PdfExtractionRecord updated = repository.updatePdfExtraction(canonical);
+
+        assertEquals(canonical, updated);
+        assertEquals(canonical, repository.findPdfExtractionByFileId(FILE_ID).orElseThrow());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
+    }
+
+    @Test
+    void persistedCanonicalExtractionIsNotConstrainedByFirstRequestLimit() {
+        repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
+        PdfTextExtractionService extractionService = mock(PdfTextExtractionService.class);
+        PdfTextExtractionResult canonical = new PdfTextExtractionResult(
+                "sample.pdf",
+                1,
+                20,
+                false,
+                "0123456789abcdefghij",
+                List.of()
+        );
+        when(extractionService.extractText(
+                any(byte[].class),
+                eq("sample.pdf"),
+                eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
+                eq(true)
+        )).thenReturn(canonical);
+        DocumentStorageService service = new DocumentStorageService(repository, extractionService, "/tmp");
+
+        var first = service.extractStoredPdfText(new ExtractStoredPdfTextRequest(FILE_ID, 5, false, true));
+        var second = service.extractStoredPdfText(new ExtractStoredPdfTextRequest(FILE_ID, 15, false, true));
+
+        assertEquals("01234", first.extraction().text());
+        assertEquals("0123456789abcde", second.extraction().text());
+        assertEquals(first.extractionId(), second.extractionId());
+        PdfExtractionRecord persisted = repository.findPdfExtractionByFileId(FILE_ID).orElseThrow();
+        assertEquals(20, persisted.characterCount());
+        assertEquals("0123456789abcdefghij", persisted.extractedText());
+        verify(extractionService, times(1)).extractText(any(byte[].class), any(), any(), any());
+    }
+
+    @Test
+    void simultaneousFirstPersistedExtractionReusesTheWinningRow() throws Exception {
+        repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
+        PdfTextExtractionService extractionService = mock(PdfTextExtractionService.class);
+        PdfTextExtractionResult canonical = new PdfTextExtractionResult(
+                "sample.pdf", 1, 11, false, "sample text", List.of()
+        );
+        CountDownLatch start = new CountDownLatch(1);
+        CyclicBarrier bothExtracted = new CyclicBarrier(2);
+        when(extractionService.extractText(
+                any(byte[].class),
+                eq("sample.pdf"),
+                eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
+                eq(true)
+        )).thenAnswer(invocation -> {
+            bothExtracted.await();
+            return canonical;
+        });
+        DocumentStorageService service = new DocumentStorageService(repository, extractionService, "/tmp");
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<DocumentStorageService.StoredPdfTextExtractionResult> first = executor.submit(() -> {
+                start.await();
+                return service.extractStoredPdfText(new ExtractStoredPdfTextRequest(FILE_ID, 20, false, true));
+            });
+            Future<DocumentStorageService.StoredPdfTextExtractionResult> second = executor.submit(() -> {
+                start.await();
+                return service.extractStoredPdfText(new ExtractStoredPdfTextRequest(FILE_ID, 20, false, true));
+            });
+            start.countDown();
+
+            var firstResult = first.get();
+            var secondResult = second.get();
+
+            assertEquals(firstResult.extractionId(), secondResult.extractionId());
+            assertEquals("sample text", firstResult.extraction().text());
+            assertEquals("sample text", secondResult.extraction().text());
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
+            verify(extractionService, times(2)).extractText(any(byte[].class), any(), any(), any());
+        }
+    }
+
+    @Test
+    void savePdfExtractionReusesExistingRowForTheFile() {
+        repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
+        PdfExtractionRecord existing = new PdfExtractionRecord(
                 EXTRACTION_ID,
                 FILE_ID,
                 "test-extractor",
@@ -164,19 +277,21 @@ class PostgresDocumentRepositoryIntegrationTests {
                 false,
                 "sample text",
                 NOW
-        ));
+        );
+        repository.savePdfExtraction(existing);
         PdfExtractionRecord duplicate = new PdfExtractionRecord(
                 UUID.fromString("99999999-9999-9999-9999-999999999999"),
                 FILE_ID,
-                "test-extractor",
-                11,
+                "different-extractor",
+                9,
                 1,
-                false,
-                "sample text",
-                NOW
+                true,
+                "different",
+                NOW.plusSeconds(1)
         );
 
-        assertThrows(org.springframework.dao.DuplicateKeyException.class, () -> repository.savePdfExtraction(duplicate));
+        assertEquals(existing, repository.savePdfExtraction(duplicate));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
     }
 
     @Test
