@@ -87,7 +87,7 @@ public class JobAnalysisService {
         String originalUrl = clean(safeRequest.url());
         String normalizedUrl = normalizeUrl(originalUrl);
         JobLinkFetchResult fetched = linkContentFetcher.fetch(originalUrl);
-        Map<String, Object> inputJson = analysisInput(originalUrl, normalizedUrl, fetched);
+        Map<String, Object> inputJson = analysisInput(normalizedUrl, normalizedUrl, fetched);
         Instant now = clock.instant();
         UUID analysisRunId = UUID.randomUUID();
         FetchValidation fetchValidation = validateFetchedContentForAnalysis(fetched);
@@ -95,7 +95,7 @@ public class JobAnalysisService {
             JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                     analysisRunId,
                     SOURCE_TYPE_LINK,
-                    originalUrl,
+                    normalizedUrl,
                     normalizedUrl,
                     fetchValidation.fetchStatus(),
                     fetched == null ? null : fetched.httpStatus(),
@@ -121,7 +121,7 @@ public class JobAnalysisService {
             JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                     analysisRunId,
                     SOURCE_TYPE_LINK,
-                    originalUrl,
+                    normalizedUrl,
                     normalizedUrl,
                     FETCH_STATUS_FETCHED,
                     fetched.httpStatus(),
@@ -145,7 +145,7 @@ public class JobAnalysisService {
         JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                 analysisRunId,
                 SOURCE_TYPE_LINK,
-                originalUrl,
+                normalizedUrl,
                 normalizedUrl,
                 FETCH_STATUS_FETCHED,
                 fetched.httpStatus(),
@@ -469,7 +469,7 @@ public class JobAnalysisService {
             if (path.length() > 1 && path.endsWith("/")) {
                 path = path.substring(0, path.length() - 1);
             }
-            URI normalized = new URI(scheme.toLowerCase(Locale.ROOT), uri.getRawUserInfo(), host.toLowerCase(Locale.ROOT), uri.getPort(), path, uri.getRawQuery(), null);
+            URI normalized = new URI(scheme.toLowerCase(Locale.ROOT), null, host.toLowerCase(Locale.ROOT), uri.getPort(), path, null, null);
             return normalized.toString();
         } catch (URISyntaxException exception) {
             throw validation("url", "must be a valid absolute http(s) URL");

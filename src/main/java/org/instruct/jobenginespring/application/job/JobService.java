@@ -198,7 +198,7 @@ public class JobService {
                 cleanToNull(safeRequest.seniority()),
                 safeRequest.postedAt(),
                 skills,
-                new LinkSource(clean(safeRequest.url()), normalizedUrl, fetched.httpStatus(), cleanToNull(fetched.title())),
+                new LinkSource(normalizedUrl, normalizedUrl, fetched.httpStatus(), cleanToNull(fetched.title())),
                 null
         ));
     }
@@ -206,7 +206,9 @@ public class JobService {
     @Transactional
     public AddJobResult addJobFromAnalyzedLink(AddJobFromAnalyzedLinkRequest request) {
         AddJobFromAnalyzedLinkRequest safeRequest = validateAnalyzedLinkRequest(request);
-        Optional<JobAggregate> existingByUrl = jobRepository.findByNormalizedSourceUrl(safeRequest.normalizedUrl());
+        String persistedUrl = normalizeUrl(safeRequest.url());
+        String normalizedUrl = normalizeUrl(safeRequest.normalizedUrl());
+        Optional<JobAggregate> existingByUrl = jobRepository.findByNormalizedSourceUrl(normalizedUrl);
         if (existingByUrl.isPresent()) {
             return new AddJobResult("reused_existing_job", existingByUrl.orElseThrow());
         }
@@ -225,7 +227,7 @@ public class JobService {
                 cleanToNull(safeRequest.seniority()),
                 safeRequest.postedAt(),
                 skills,
-                new LinkSource(clean(safeRequest.url()), clean(safeRequest.normalizedUrl()), safeRequest.httpStatus(), cleanToNull(safeRequest.sourceTitle())),
+                new LinkSource(persistedUrl, normalizedUrl, safeRequest.httpStatus(), cleanToNull(safeRequest.sourceTitle())),
                 null
         ));
     }
@@ -520,7 +522,7 @@ public class JobService {
             if (path.length() > 1 && path.endsWith("/")) {
                 path = path.substring(0, path.length() - 1);
             }
-            URI normalized = new URI(scheme.toLowerCase(Locale.ROOT), uri.getRawUserInfo(), host.toLowerCase(Locale.ROOT), uri.getPort(), path, uri.getRawQuery(), null);
+            URI normalized = new URI(scheme.toLowerCase(Locale.ROOT), null, host.toLowerCase(Locale.ROOT), uri.getPort(), path, null, null);
             return normalized.toString();
         } catch (URISyntaxException exception) {
             throw validation("url", "must be a valid absolute http(s) URL");

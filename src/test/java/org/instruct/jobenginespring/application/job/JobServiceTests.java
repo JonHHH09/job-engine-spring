@@ -201,7 +201,8 @@ class JobServiceTests {
         assertEquals("reused_existing_job", second.status());
         assertEquals("link", first.job().job().sourceMethod());
         assertEquals("Platform Engineer", first.job().job().title());
-        assertEquals("https://example.test/jobs/123?ref=abc", first.job().linkIngestion().normalizedUrl());
+        assertEquals("https://example.test/jobs/123", first.job().linkIngestion().url());
+        assertEquals("https://example.test/jobs/123", first.job().linkIngestion().normalizedUrl());
         assertEquals(200, first.job().linkIngestion().httpStatus());
         assertEquals(List.of("kubernetes", "java"), first.job().skills().stream().map(skill -> skill.normalizedSkill()).toList());
     }
@@ -293,7 +294,7 @@ class JobServiceTests {
     @Test
     void addJobFromAnalyzedLinkUsesStoredAnalysisFieldsWithoutFetching() {
         AddJobResult result = service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://Example.test/jobs/456#details",
+                "https://Example.test/jobs/456?token=secret-value#details",
                 "https://example.test/jobs/456",
                 "Hermes analysis",
                 "Platform Engineer",
@@ -312,6 +313,7 @@ class JobServiceTests {
         assertEquals("created_job", result.status());
         assertEquals("Platform Engineer", result.job().job().title());
         assertEquals("Hermes analysis", result.job().job().sourceLabel());
+        assertEquals("https://example.test/jobs/456", result.job().linkIngestion().url());
         assertEquals("https://example.test/jobs/456", result.job().linkIngestion().normalizedUrl());
         assertEquals("Fetched Title", result.job().linkIngestion().sourceTitle());
         assertEquals(200, result.job().linkIngestion().httpStatus());
@@ -319,7 +321,7 @@ class JobServiceTests {
         assertEquals(0, fetcher.calls);
 
         AddJobResult reused = service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://Example.test/jobs/456#details",
+                "https://Example.test/jobs/456?token=secret-value#details",
                 "https://example.test/jobs/456",
                 "Hermes analysis",
                 "Platform Engineer",
@@ -831,7 +833,7 @@ class JobServiceTests {
         assertEquals(2, scoreText.invoke(null, List.of("javascript"), "field", "java", 2, matchedFields));
         assertEquals("https://example.test/", normalizeUrl.invoke(null, "HTTPS://EXAMPLE.TEST"));
         assertEquals("http://example.test/jobs", normalizeUrl.invoke(null, "HTTP://EXAMPLE.TEST/jobs/"));
-        assertEquals("https://example.test/jobs?ref=1", normalizeUrl.invoke(null, "https://example.test/jobs?ref=1#frag"));
+        assertEquals("https://example.test/jobs", normalizeUrl.invoke(null, "https://example.test/jobs?ref=1#frag"));
         assertThrows(ApplicationException.class, () -> service.addJobFromLink(new AddJobFromLinkRequest(
                 "example.test/job", null, null, null, null, null, null, null, null, null, null
         )));
