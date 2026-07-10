@@ -75,18 +75,17 @@ public class JobService {
     public JobSearchResult searchJobs(JobSearchRequest request) {
         JobSearchRequest safeRequest = validateSearch(request);
         List<String> queryTokens = tokens(safeRequest.query());
-        List<JobSearchMatch> matches = jobRepository.listJobs().stream()
-                .map(JobPosting::id)
-                .map(jobRepository::findJobAggregate)
-                .flatMap(Optional::stream)
+        List<JobSearchMatch> matches = jobRepository.listJobAggregates().stream()
                 .map(aggregate -> match(aggregate, queryTokens))
                 .filter(match -> match.score() > 0)
                 .sorted(Comparator.comparingInt(JobSearchMatch::score).reversed()
                         .thenComparing(match -> match.job().title())
                         .thenComparing(match -> match.job().id()))
+                .toList();
+        List<JobSearchMatch> returned = matches.stream()
                 .limit(safeRequest.limit())
                 .toList();
-        return new JobSearchResult(safeRequest.query().strip(), queryTokens, matches.size(), matches);
+        return new JobSearchResult(safeRequest.query().strip(), queryTokens, matches.size(), returned.size(), returned);
     }
 
     @Transactional
@@ -665,7 +664,7 @@ public class JobService {
     public record DeleteJobResult(UUID jobId, boolean deleted) {
     }
 
-    public record JobSearchResult(String query, List<String> queryTokens, int totalMatches, List<JobSearchMatch> jobs) {
+    public record JobSearchResult(String query, List<String> queryTokens, int totalMatches, int returnedCount, List<JobSearchMatch> jobs) {
         public JobSearchResult {
             queryTokens = queryTokens == null ? List.of() : List.copyOf(queryTokens);
             jobs = jobs == null ? List.of() : List.copyOf(jobs);

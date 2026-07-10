@@ -426,6 +426,7 @@ class JobServiceTests {
 
         assertEquals(List.of("java", "spring"), result.queryTokens());
         assertEquals(1, result.totalMatches());
+        assertEquals(1, result.returnedCount());
         assertEquals("Java Backend Developer", result.jobs().getFirst().job().title());
         assertTrue(result.jobs().getFirst().matchedFields().contains("job.title"));
         assertTrue(result.jobs().getFirst().matchedFields().contains("job.skills"));
@@ -439,7 +440,33 @@ class JobServiceTests {
         JobService.JobSearchResult result = service.searchJobs(new JobSearchRequest("developer", 10));
 
         assertEquals(2, result.totalMatches());
+        assertEquals(2, result.returnedCount());
         assertEquals(List.of("Developer", "Developer"), result.jobs().stream().map(match -> match.job().title()).toList());
+    }
+
+    @Test
+    void searchJobsReportsFullMatchCountWhenLimitTruncatesResults() {
+        service.addJobFromText(new AddJobFromTextRequest("Java Platform", null, "Java Platform", null, null, "Java services", null, null, null, null, null));
+        service.addJobFromText(new AddJobFromTextRequest("Java Data", null, "Java Data", null, null, "Java pipelines", null, null, null, null, null));
+
+        JobService.JobSearchResult result = service.searchJobs(new JobSearchRequest("java", 1));
+
+        assertEquals(2, result.totalMatches());
+        assertEquals(1, result.returnedCount());
+        assertEquals(1, result.jobs().size());
+    }
+
+    @Test
+    void searchJobsUsesBatchAggregateLoadingInsteadOfPerJobLookups() {
+        service.addJobFromText(new AddJobFromTextRequest("Java Platform", null, "Java Platform", null, null, "Java services", null, null, null, null, null));
+        service.addJobFromText(new AddJobFromTextRequest("Kotlin Platform", null, "Kotlin Platform", null, null, "Kotlin services", null, null, null, null, null));
+        repository.listJobAggregatesCalls = 0;
+        repository.findJobAggregateCalls = 0;
+
+        service.searchJobs(new JobSearchRequest("platform", 10));
+
+        assertEquals(1, repository.listJobAggregatesCalls);
+        assertEquals(0, repository.findJobAggregateCalls);
     }
 
     @Test
@@ -812,7 +839,9 @@ class JobServiceTests {
         assertEquals(Map.of("field", "limit", "reason", "must be between 1 and 100"), limitSearchException.details());
         ApplicationException lowLimitSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("java", 0)));
         assertEquals(Map.of("field", "limit", "reason", "must be between 1 and 100"), lowLimitSearchException.details());
-        assertEquals(0, service.searchJobs(new JobSearchRequest("java", null)).totalMatches());
+        JobService.JobSearchResult emptyResult = service.searchJobs(new JobSearchRequest("java", null));
+        assertEquals(0, emptyResult.totalMatches());
+        assertEquals(0, emptyResult.returnedCount());
         assertEquals(List.of(), repository.listJobs());
     }
 
@@ -872,11 +901,12 @@ class JobServiceTests {
         assertThrows(IllegalArgumentException.class, () -> new JobTextIngestion(
                 UUID.randomUUID(), UUID.randomUUID(), null, null, NOW
         ));
+        UUID aggregateJobId = UUID.randomUUID();
         assertEquals(List.of(), new JobAggregate(new JobPosting(
-                UUID.randomUUID(), "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint", NOW, NOW
-        ), null, null, null).skills());
-        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, null).queryTokens());
-        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, null).jobs());
+                aggregateJobId, "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint", NOW, NOW
+        ), null, null, new JobTextIngestion(UUID.randomUUID(), aggregateJobId, null, "hash", NOW)).skills());
+        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, null).queryTokens());
+        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, null).jobs());
         JobPosting posting = new JobPosting(
                 UUID.randomUUID(), "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint-2", NOW, NOW
         );
@@ -997,6 +1027,8 @@ class JobServiceTests {
     private static final class FakeJobRepository implements JobRepository {
         private final Map<UUID, JobAggregate> aggregates = new LinkedHashMap<>();
         private JobAggregate saveOverride;
+        private int listJobAggregatesCalls;
+        private int findJobAggregateCalls;
 
         @Override
         public List<JobPosting> listJobs() {
@@ -1005,7 +1037,14 @@ class JobServiceTests {
 
         @Override
         public Optional<JobAggregate> findJobAggregate(UUID jobId) {
+            findJobAggregateCalls++;
             return Optional.ofNullable(aggregates.get(jobId));
+        }
+
+        @Override
+        public List<JobAggregate> listJobAggregates() {
+            listJobAggregatesCalls++;
+            return List.copyOf(aggregates.values());
         }
 
         @Override

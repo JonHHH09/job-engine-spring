@@ -130,7 +130,9 @@ class PostgresProfileRepositoryIntegrationTests {
     void savesAndListsEverySupportedChildCollection() {
         repository.saveProfileAggregate(completeAggregate());
 
+        assertEquals(List.of("location"), repository.listContacts(PROFILE_ID).stream().map(ProfileContact::contactType).toList());
         assertEquals(List.of("portfolio"), repository.listLinks(PROFILE_ID).stream().map(ProfileLink::linkType).toList());
+        assertEquals(List.of("spring ai"), repository.listSkills(PROFILE_ID).stream().map(ProfileSkill::normalizedSkill).toList());
         assertEquals(List.of("english"), repository.listLanguages(PROFILE_ID).stream().map(ProfileLanguage::normalizedLanguage).toList());
         assertEquals(List.of("Example University"), repository.listEducation(PROFILE_ID).stream().map(Education::institution).toList());
         assertEquals(List.of("Example Corp"), repository.listExperiences(PROFILE_ID).stream().map(Experience::company).toList());
@@ -245,6 +247,11 @@ class PostgresProfileRepositoryIntegrationTests {
                 JOIN profile.projects project ON project.id = technology.project_id
                 WHERE project.profile_id = ?
                 """, Integer.class, PROFILE_ID));
+    }
+
+    @Test
+    void listProfileAggregatesReturnsEmptyWhenNoRowsExist() {
+        assertEquals(List.of(), repository.listProfileAggregates());
     }
 
     private static ProfileAggregate sampleAggregate(

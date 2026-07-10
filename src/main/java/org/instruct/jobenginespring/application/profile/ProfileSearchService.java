@@ -46,18 +46,17 @@ public class ProfileSearchService {
     public ProfileSearchResult searchProfiles(ProfileSearchRequest request) {
         ProfileSearchRequest safeRequest = validate(request);
         List<String> queryTokens = tokens(safeRequest.query());
-        List<ProfileSearchMatch> matches = profileRepository.listProfiles().stream()
-                .map(UserProfile::id)
-                .map(profileRepository::findProfileAggregate)
-                .flatMap(java.util.Optional::stream)
+        List<ProfileSearchMatch> matches = profileRepository.listProfileAggregates().stream()
                 .map(aggregate -> match(aggregate, queryTokens))
                 .filter(match -> match.score() > 0)
                 .sorted(Comparator.comparingInt(ProfileSearchMatch::score).reversed()
                         .thenComparing(match -> match.profile().fullName())
                         .thenComparing(match -> match.profile().id()))
+                .toList();
+        List<ProfileSearchMatch> returned = matches.stream()
                 .limit(safeRequest.limit())
                 .toList();
-        return new ProfileSearchResult(safeRequest.query().strip(), queryTokens, matches.size(), matches);
+        return new ProfileSearchResult(safeRequest.query().strip(), queryTokens, matches.size(), returned.size(), returned);
     }
 
     private static ProfileSearchRequest validate(ProfileSearchRequest request) {
@@ -215,6 +214,7 @@ public class ProfileSearchService {
             String query,
             List<String> queryTokens,
             int totalMatches,
+            int returnedCount,
             List<ProfileSearchMatch> profiles
     ) {
         public ProfileSearchResult {
