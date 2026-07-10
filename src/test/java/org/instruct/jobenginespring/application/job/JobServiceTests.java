@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.job;
 
+import org.apache.commons.codec.digest.DigestUtils;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.JobService.AddJobFromLinkRequest;
 import org.instruct.jobenginespring.application.job.JobService.AddJobFromTextRequest;
@@ -135,6 +136,43 @@ class JobServiceTests {
         assertEquals("created_job", first.status());
         assertEquals("reused_existing_job", second.status());
         assertEquals(first.job().job().id(), second.job().job().id());
+    }
+
+    @Test
+    void addJobFromTextReusesLegacyFourFieldFingerprintWhenInputTextHashDiffers() {
+        AddJobResult existing = service.addJobFromText(new AddJobFromTextRequest(
+                "Original source text",
+                "paste",
+                "Backend Developer",
+                "Example Corp",
+                "Remote",
+                "Build APIs",
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+        String legacyFingerprint = DigestUtils.sha256Hex("backend developer\nexample corp\nremote\nbuild apis");
+        repository.updateJobAggregate(withCanonicalFingerprint(existing.job(), legacyFingerprint));
+
+        AddJobResult duplicate = service.addJobFromText(new AddJobFromTextRequest(
+                "Different source text",
+                "paste",
+                "Backend Developer",
+                "Example Corp",
+                "Remote",
+                "Build APIs",
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        assertEquals("reused_existing_job", duplicate.status());
+        assertEquals(existing.job().job().id(), duplicate.job().job().id());
+        assertEquals(1, repository.listJobs().size());
     }
 
     @Test
@@ -620,6 +658,41 @@ class JobServiceTests {
     }
 
     @Test
+    void updateJobPreservesLegacyFourFieldFingerprintForNoOpTextUpdate() {
+        AddJobResult created = service.addJobFromText(new AddJobFromTextRequest(
+                "Backend Developer",
+                "manual paste",
+                "Backend Developer",
+                "Example Corp",
+                "Remote",
+                "Build backend services",
+                List.of("Java"),
+                null,
+                null,
+                null,
+                null
+        ));
+        String legacyFingerprint = DigestUtils.sha256Hex("backend developer\nexample corp\nremote\nbuild backend services");
+        repository.updateJobAggregate(withCanonicalFingerprint(created.job(), legacyFingerprint));
+
+        JobAggregate updated = service.updateJob(new UpdateJobRequest(
+                created.job().job().id(),
+                "refined source",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        assertEquals(legacyFingerprint, updated.job().canonicalFingerprint());
+    }
+
+    @Test
     void updateJobPreservesLinkIdentityInCanonicalFingerprint() {
         AddJobResult created = service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
                 "https://www.indeed.com/jobs/789?jk=job-789&token=secret",
@@ -1022,6 +1095,27 @@ class JobServiceTests {
             calls++;
             return result;
         }
+    }
+
+    private static JobAggregate withCanonicalFingerprint(JobAggregate aggregate, String canonicalFingerprint) {
+        JobPosting job = aggregate.job();
+        JobPosting migratedJob = new JobPosting(
+                job.id(),
+                job.sourceMethod(),
+                job.sourceLabel(),
+                job.title(),
+                job.company(),
+                job.location(),
+                job.description(),
+                job.experienceRequirement(),
+                job.employmentType(),
+                job.seniority(),
+                job.postedAt(),
+                canonicalFingerprint,
+                job.createdAt(),
+                job.updatedAt()
+        );
+        return new JobAggregate(migratedJob, aggregate.skills(), aggregate.linkIngestion(), aggregate.textIngestion());
     }
 
     private static final class FakeJobRepository implements JobRepository {

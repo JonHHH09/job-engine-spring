@@ -44,6 +44,18 @@ class JobUrlPolicyTests {
     }
 
     @Test
+    void canonicalSourceUrlDoesNotCollapseQueryIdentifiedJobsForOtherHosts() {
+        assertEquals(
+                "https://careers.example.test/jobs?id=job-123",
+                JobUrlPolicy.canonicalSourceUrl("https://careers.example.test/jobs?id=job-123")
+        );
+        assertEquals(
+                "https://careers.example.test/jobs?id=job-456",
+                JobUrlPolicy.canonicalSourceUrl("https://careers.example.test/jobs?id=job-456")
+        );
+    }
+
+    @Test
     void canonicalSourceUrlRejectsUnsafeIdentityValues() {
         assertEquals(
                 "https://www.indeed.com/viewjob",

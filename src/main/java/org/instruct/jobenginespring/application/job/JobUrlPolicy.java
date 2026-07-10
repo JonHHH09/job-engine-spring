@@ -21,6 +21,7 @@ final class JobUrlPolicy {
             "greenhouse.io", Set.of("gh_jid"),
             "indeed.com", Set.of("jk")
     );
+    private static final Set<String> GENERIC_IDENTITY_PARAMETERS = Set.of("id", "job_id", "jobid");
     private static final int MAX_IDENTITY_VALUE_LENGTH = 128;
 
     private JobUrlPolicy() {
@@ -85,9 +86,6 @@ final class JobUrlPolicy {
             return List.of();
         }
         Set<String> allowedParameters = identityParametersForHost(host);
-        if (allowedParameters.isEmpty()) {
-            return List.of();
-        }
         List<QueryParameter> safe = new ArrayList<>();
         for (String pair : rawQuery.split("&")) {
             if (pair.isBlank()) {
@@ -114,7 +112,7 @@ final class JobUrlPolicy {
                 .filter(entry -> normalizedHost.equals(entry.getKey()) || normalizedHost.endsWith("." + entry.getKey()))
                 .map(Map.Entry::getValue)
                 .findFirst()
-                .orElse(Set.of());
+                .orElse(GENERIC_IDENTITY_PARAMETERS);
     }
 
     private static boolean isSafeIdentityValue(String value) {

@@ -502,13 +502,17 @@ public class JobService {
     }
 
     private static String fingerprint(String canonicalSourceUrl, String title, String company, String location, String description) {
-        return sha256(String.join("\n",
-                normalizedKey(canonicalSourceUrl),
+        List<String> components = new ArrayList<>();
+        if (canonicalSourceUrl != null) {
+            components.add(normalizedKey(canonicalSourceUrl));
+        }
+        components.addAll(List.of(
                 normalizedKey(title),
                 normalizedKey(company),
                 normalizedKey(location),
                 canonicalWhitespace(description)
         ));
+        return sha256(String.join("\n", components));
     }
 
     private static String normalizeUrl(String rawUrl) {
