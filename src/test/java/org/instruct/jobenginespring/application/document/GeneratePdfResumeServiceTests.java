@@ -459,12 +459,18 @@ class GeneratePdfResumeServiceTests {
                 // Unit tests execute without a transaction; failure paths clean up directly.
             }
         };
+        GeneratedResumeCleanupService cleanupService = mock(GeneratedResumeCleanupService.class);
+        when(cleanupService.enqueueAfterCommit(any(String.class))).thenAnswer(invocation -> {
+            files.deleteIfExists(invocation.getArgument(0));
+            return UUID.randomUUID();
+        });
         return new GeneratedResumeAssetService(
                 profileRepository,
                 resumeDocumentRepository,
                 documentRepository,
                 files,
-                transactions
+                transactions,
+                cleanupService
         );
     }
 

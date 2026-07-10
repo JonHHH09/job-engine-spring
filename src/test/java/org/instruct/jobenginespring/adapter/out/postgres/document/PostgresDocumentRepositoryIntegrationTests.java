@@ -90,7 +90,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 ORDER BY table_name
                 """, String.class);
 
-        assertEquals(List.of("blobs", "documents", "pdf_extractions"), tables);
+        assertEquals(List.of("blobs", "documents", "generated_resume_file_cleanups", "pdf_extractions"), tables);
     }
 
     @Test

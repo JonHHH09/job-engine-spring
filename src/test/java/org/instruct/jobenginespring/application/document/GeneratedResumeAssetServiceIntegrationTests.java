@@ -3,9 +3,11 @@ package org.instruct.jobenginespring.application.document;
 import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.adapter.out.filesystem.document.LocalGeneratedResumeFileRepository;
 import org.instruct.jobenginespring.adapter.out.postgres.document.PostgresDocumentRepository;
+import org.instruct.jobenginespring.adapter.out.postgres.document.PostgresGeneratedResumeCleanupRepository;
 import org.instruct.jobenginespring.adapter.out.postgres.profile.PostgresProfileRepository;
 import org.instruct.jobenginespring.adapter.out.postgres.profile.PostgresProfileResumeDocumentRepository;
 import org.instruct.jobenginespring.adapter.out.transaction.SpringTransactionLifecycle;
+import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
 import org.junit.jupiter.api.BeforeAll;
@@ -32,6 +34,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -81,18 +84,28 @@ class GeneratedResumeAssetServiceIntegrationTests {
 
     @BeforeEach
     void setUp() {
-        jdbc.update("TRUNCATE TABLE profile.profiles, document.documents, document.blobs CASCADE");
+        jdbc.update("TRUNCATE TABLE profile.profiles, document.documents, document.blobs, "
+                + "document.generated_resume_file_cleanups CASCADE");
         NamedParameterJdbcTemplate namedJdbc = new NamedParameterJdbcTemplate(jdbc);
         profileRepository = new PostgresProfileRepository(namedJdbc);
         PostgresDocumentRepository documentRepository = new PostgresDocumentRepository(namedJdbc);
         PostgresProfileResumeDocumentRepository resumeDocumentRepository =
                 new PostgresProfileResumeDocumentRepository(JdbcClient.create(namedJdbc));
+        LocalGeneratedResumeFileRepository fileRepository = new LocalGeneratedResumeFileRepository(tempDir);
+        SpringTransactionLifecycle transactionLifecycle = new SpringTransactionLifecycle();
+        GeneratedResumeCleanupService cleanupService = new GeneratedResumeCleanupService(
+                new PostgresGeneratedResumeCleanupRepository(JdbcClient.create(namedJdbc)),
+                fileRepository,
+                transactionLifecycle,
+                Clock.fixed(NOW, ZoneOffset.UTC)
+        );
         assetService = new GeneratedResumeAssetService(
                 profileRepository,
                 resumeDocumentRepository,
                 documentRepository,
-                new LocalGeneratedResumeFileRepository(tempDir),
-                new SpringTransactionLifecycle()
+                fileRepository,
+                transactionLifecycle,
+                cleanupService
         );
         DocumentStorageService storageService = new DocumentStorageService(
                 documentRepository,
@@ -184,6 +197,73 @@ class GeneratedResumeAssetServiceIntegrationTests {
                     .filter(path -> Files.exists(Path.of(path)))
                     .count());
         }
+    }
+
+    @Test
+    void committedRegenerationReportsSuccessWhileFailedFileCleanupRemainsDurableAndRetryable() {
+        var first = transactions.execute(status -> generationService.generatePdfResume(
+                new GeneratePdfResumeService.GeneratePdfResumeRequest(PROFILE_ID)
+        ));
+        NamedParameterJdbcTemplate namedJdbc = new NamedParameterJdbcTemplate(jdbc);
+        PostgresDocumentRepository documentRepository = new PostgresDocumentRepository(namedJdbc);
+        LocalGeneratedResumeFileRepository localFiles = new LocalGeneratedResumeFileRepository(tempDir);
+        AtomicBoolean failFirstDelete = new AtomicBoolean(true);
+        GeneratedResumeFileRepository flakyFiles = filePath -> {
+            if (filePath.equals(first.filePath()) && failFirstDelete.getAndSet(false)) {
+                throw new IllegalStateException("simulated filesystem outage");
+            }
+            localFiles.deleteIfExists(filePath);
+        };
+        SpringTransactionLifecycle transactionLifecycle = new SpringTransactionLifecycle();
+        GeneratedResumeCleanupService cleanupService = new GeneratedResumeCleanupService(
+                new PostgresGeneratedResumeCleanupRepository(JdbcClient.create(namedJdbc)),
+                flakyFiles,
+                transactionLifecycle,
+                Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        GeneratedResumeAssetService flakyAssetService = new GeneratedResumeAssetService(
+                profileRepository,
+                new PostgresProfileResumeDocumentRepository(JdbcClient.create(namedJdbc)),
+                documentRepository,
+                flakyFiles,
+                transactionLifecycle,
+                cleanupService
+        );
+        DocumentStorageService storageService = new DocumentStorageService(
+                documentRepository, mock(PdfTextExtractionService.class), Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        var flakyGenerationService = new GeneratePdfResumeService(
+                new ProfileResumePdfGenerationWorkflow(
+                        profileRepository, storageService, flakyAssetService, Clock.fixed(NOW, ZoneOffset.UTC)
+                ),
+                tempDir
+        );
+
+        var committed = transactions.execute(status -> flakyGenerationService.generatePdfResume(
+                new GeneratePdfResumeService.GeneratePdfResumeRequest(PROFILE_ID)
+        ));
+
+        assertTrue(Files.exists(Path.of(first.filePath())));
+        assertTrue(Files.exists(Path.of(committed.filePath())));
+        assertEquals("PENDING", jdbc.queryForObject(
+                "SELECT status FROM document.generated_resume_file_cleanups WHERE file_path = ?",
+                String.class,
+                first.filePath()
+        ));
+        jdbc.update(
+                "UPDATE document.generated_resume_file_cleanups SET next_attempt_at = ? WHERE file_path = ?",
+                java.sql.Timestamp.from(NOW),
+                first.filePath()
+        );
+
+        cleanupService.retryDueTasks();
+
+        assertFalse(Files.exists(Path.of(first.filePath())));
+        assertEquals("COMPLETED", jdbc.queryForObject(
+                "SELECT status FROM document.generated_resume_file_cleanups WHERE file_path = ?",
+                String.class,
+                first.filePath()
+        ));
     }
 
     private int count(String table) {

@@ -20,19 +20,22 @@ public class GeneratedResumeAssetService {
     private final DocumentRepository documentRepository;
     private final GeneratedResumeFileRepository fileRepository;
     private final TransactionLifecycle transactionLifecycle;
+    private final GeneratedResumeCleanupService cleanupService;
 
     public GeneratedResumeAssetService(
             ProfileRepository profileRepository,
             ProfileResumeDocumentRepository resumeDocumentRepository,
             DocumentRepository documentRepository,
             GeneratedResumeFileRepository fileRepository,
-            TransactionLifecycle transactionLifecycle
+            TransactionLifecycle transactionLifecycle,
+            GeneratedResumeCleanupService cleanupService
     ) {
         this.profileRepository = Objects.requireNonNull(profileRepository, "profileRepository must not be null");
         this.resumeDocumentRepository = Objects.requireNonNull(resumeDocumentRepository, "resumeDocumentRepository must not be null");
         this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
         this.fileRepository = Objects.requireNonNull(fileRepository, "fileRepository must not be null");
         this.transactionLifecycle = Objects.requireNonNull(transactionLifecycle, "transactionLifecycle must not be null");
+        this.cleanupService = Objects.requireNonNull(cleanupService, "cleanupService must not be null");
     }
 
     ProfileResumeDocumentRepository.Replacement replace(ProfileResumeDocument resumeDocument) {
@@ -62,7 +65,7 @@ public class GeneratedResumeAssetService {
 
     private void deleteUnreferencedAfterReplacement(ProfileResumeDocument previous) {
         if (documentRepository.deleteFileIfUnreferenced(previous.documentId())) {
-            transactionLifecycle.afterCommit(() -> fileRepository.deleteIfExists(previous.filePath()));
+            cleanupService.enqueueAfterCommit(previous.filePath());
         }
     }
 }

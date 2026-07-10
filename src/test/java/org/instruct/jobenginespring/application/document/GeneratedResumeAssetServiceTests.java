@@ -36,6 +36,7 @@ class GeneratedResumeAssetServiceTests {
     private final DocumentRepository documentRepository = mock(DocumentRepository.class);
     private final GeneratedResumeFileRepository fileRepository = mock(GeneratedResumeFileRepository.class);
     private final TransactionLifecycle transactionLifecycle = mock(TransactionLifecycle.class);
+    private final GeneratedResumeCleanupService cleanupService = mock(GeneratedResumeCleanupService.class);
     private GeneratedResumeAssetService service;
 
     @BeforeEach
@@ -45,7 +46,8 @@ class GeneratedResumeAssetServiceTests {
                 resumeDocumentRepository,
                 documentRepository,
                 fileRepository,
-                transactionLifecycle
+                transactionLifecycle,
+                cleanupService
         );
     }
 
@@ -60,11 +62,8 @@ class GeneratedResumeAssetServiceTests {
         assertSame(replacement, service.replace(saved));
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
-        ArgumentCaptor<Runnable> cleanup = ArgumentCaptor.forClass(Runnable.class);
-        verify(transactionLifecycle).afterCommit(cleanup.capture());
+        verify(cleanupService).enqueueAfterCommit("old.pdf");
         verifyNoInteractions(fileRepository);
-        cleanup.getValue().run();
-        verify(fileRepository).deleteIfExists("old.pdf");
     }
 
     @Test
@@ -76,7 +75,7 @@ class GeneratedResumeAssetServiceTests {
 
         service.replace(unchanged);
 
-        verifyNoInteractions(documentRepository, fileRepository, transactionLifecycle);
+        verifyNoInteractions(documentRepository, fileRepository, transactionLifecycle, cleanupService);
 
         ProfileResumeDocument previous = link(OLD_DOCUMENT_ID, "old.pdf");
         ProfileResumeDocument saved = link(NEW_DOCUMENT_ID, "new.pdf");
@@ -88,7 +87,7 @@ class GeneratedResumeAssetServiceTests {
         service.replace(saved);
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
-        verify(transactionLifecycle, never()).afterCommit(org.mockito.ArgumentMatchers.any());
+        verifyNoInteractions(cleanupService);
     }
 
     @Test
@@ -106,7 +105,7 @@ class GeneratedResumeAssetServiceTests {
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
         verify(documentRepository).deleteFileIfUnreferenced(NEW_DOCUMENT_ID);
-        verify(transactionLifecycle).afterCommit(org.mockito.ArgumentMatchers.any());
+        verify(cleanupService).enqueueAfterCommit("master.pdf");
 
         UUID missing = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
         when(resumeDocumentRepository.lockAndFindAllByProfileId(missing)).thenReturn(List.of(master));
