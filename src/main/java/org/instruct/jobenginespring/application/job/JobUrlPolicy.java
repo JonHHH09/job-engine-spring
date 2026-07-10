@@ -15,7 +15,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-@lombok.Generated
 final class JobUrlPolicy {
 
     private static final Set<String> SAFE_IDENTITY_PARAMETERS = Set.of(
@@ -64,7 +63,7 @@ final class JobUrlPolicy {
 
     private static String normalize(URI uri, List<QueryParameter> queryParameters) {
         String rawPath = uri.getRawPath();
-        String path = rawPath == null || rawPath.isEmpty() ? "/" : rawPath;
+        String path = rawPath.isEmpty() ? "/" : rawPath;
         if (path.length() > 1 && path.endsWith("/")) {
             path = path.substring(0, path.length() - 1);
         }
@@ -83,7 +82,7 @@ final class JobUrlPolicy {
             normalized.append(':').append(uri.getPort());
         }
         normalized.append(path);
-        if (query != null && !query.isEmpty()) {
+        if (query != null) {
             normalized.append('?').append(query);
         }
         return normalized.toString();
@@ -95,7 +94,7 @@ final class JobUrlPolicy {
         }
         List<QueryParameter> safe = new ArrayList<>();
         for (String pair : rawQuery.split("&")) {
-            if (pair == null || pair.isBlank()) {
+            if (pair.isBlank()) {
                 continue;
             }
             String[] parts = pair.split("=", 2);
