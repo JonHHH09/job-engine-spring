@@ -55,11 +55,11 @@ class JobAnalysisServiceTests {
         analysisPort.response = sampleAnalysisResponse();
 
         JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest(
-                "https://Example.test/jobs/123?token=secret-value&utm_source=email#details"
+                "https://Example.test/jobs/123?jk=job-123&token=secret-value&utm_source=email#details"
         ));
 
         assertEquals("analysis_ready", result.status());
-        assertEquals("https://example.test/jobs/123", result.normalizedUrl());
+        assertEquals("https://example.test/jobs/123?jk=job-123", result.normalizedUrl());
         assertEquals("SUCCEEDED", result.hermesStatus());
         assertEquals("VALID", result.validationStatus());
         assertEquals(List.of(), result.validationErrors());
@@ -68,9 +68,11 @@ class JobAnalysisServiceTests {
         JobAnalysisRun stored = analysisRepository.saved.get(result.analysisRunId());
         assertEquals("link", stored.sourceType());
         assertEquals("https://example.test/jobs/123", stored.originalUrl());
-        assertEquals("https://example.test/jobs/123", stored.normalizedUrl());
-        assertEquals("https://Example.test/jobs/123?token=secret-value&utm_source=email#details", fetcher.lastUrl);
+        assertEquals("https://example.test/jobs/123?jk=job-123", stored.normalizedUrl());
+        assertEquals("https://Example.test/jobs/123?jk=job-123&token=secret-value&utm_source=email#details", fetcher.lastUrl);
         assertFalse(stored.inputJson().toString().contains("secret-value"));
+        assertEquals("https://example.test/jobs/123", stored.inputJson().get("originalUrl"));
+        assertEquals("https://example.test/jobs/123?jk=job-123", stored.inputJson().get("normalizedUrl"));
         assertEquals("FETCHED", stored.fetchStatus());
         assertEquals(200, stored.httpStatus());
         assertEquals("Platform Engineer", stored.hermesResponseJson().get("title"));
@@ -344,6 +346,10 @@ class JobAnalysisServiceTests {
         assertThrows(ApplicationException.class, () -> service.analyzeJobLink(new AnalyzeJobLinkRequest(null)));
         assertThrows(ApplicationException.class, () -> service.analyzeJobLink(new AnalyzeJobLinkRequest("mailto:test@example.test")));
         assertThrows(ApplicationException.class, () -> service.analyzeJobLink(new AnalyzeJobLinkRequest("https://exa mple.test/jobs")));
+        ApplicationException userInfoException = assertThrows(ApplicationException.class, () -> service.analyzeJobLink(
+                new AnalyzeJobLinkRequest("https://user:secret@example.test/jobs/123")
+        ));
+        assertEquals(Map.of("field", "url", "reason", "must not include userinfo"), userInfoException.details());
     }
 
     @Test

@@ -16,8 +16,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.text.Normalizer;
 import java.time.Clock;
 import java.time.Instant;
@@ -102,7 +100,7 @@ public class JobService {
         String location = patchNullable(current.location(), safeRequest.location());
         String description = patchRequired(current.description(), safeRequest.description(), "description");
         Instant now = clock.instant();
-        String canonicalFingerprint = fingerprint(title, company, location, description);
+        String canonicalFingerprint = fingerprint(existing.linkIngestion(), title, company, location, description);
         rejectDuplicateUpdateFingerprint(current.id(), canonicalFingerprint);
         JobPosting updated = new JobPosting(
                 current.id(),
@@ -167,13 +165,15 @@ public class JobService {
     @Transactional
     public AddJobResult addJobFromLink(AddJobFromLinkRequest request) {
         AddJobFromLinkRequest safeRequest = validateLinkRequest(request);
-        String normalizedUrl = normalizeUrl(safeRequest.url());
+        String retrievalUrl = clean(safeRequest.url());
+        String safeDisplayUrl = safeDisplayUrl(retrievalUrl);
+        String normalizedUrl = normalizeUrl(retrievalUrl);
         Optional<JobAggregate> existingByUrl = jobRepository.findByNormalizedSourceUrl(normalizedUrl);
         if (existingByUrl.isPresent()) {
             return new AddJobResult("reused_existing_job", existingByUrl.orElseThrow());
         }
 
-        JobLinkFetchResult fetched = linkContentFetcher.fetch(clean(safeRequest.url()));
+        JobLinkFetchResult fetched = linkContentFetcher.fetch(retrievalUrl);
         String explicitDescription = cleanToNull(safeRequest.description());
         if (explicitDescription == null) {
             validateFetchedJobContent(fetched);
@@ -195,7 +195,7 @@ public class JobService {
                 cleanToNull(safeRequest.seniority()),
                 safeRequest.postedAt(),
                 skills,
-                new LinkSource(normalizedUrl, normalizedUrl, fetched.httpStatus(), cleanToNull(fetched.title())),
+                new LinkSource(safeDisplayUrl, normalizedUrl, fetched.httpStatus(), cleanToNull(fetched.title())),
                 null
         ));
     }
@@ -203,7 +203,7 @@ public class JobService {
     @Transactional
     public AddJobResult addJobFromAnalyzedLink(AddJobFromAnalyzedLinkRequest request) {
         AddJobFromAnalyzedLinkRequest safeRequest = validateAnalyzedLinkRequest(request);
-        String persistedUrl = normalizeUrl(safeRequest.url());
+        String persistedUrl = safeDisplayUrl(safeRequest.url());
         String normalizedUrl = normalizeUrl(safeRequest.normalizedUrl());
         Optional<JobAggregate> existingByUrl = jobRepository.findByNormalizedSourceUrl(normalizedUrl);
         if (existingByUrl.isPresent()) {
@@ -491,11 +491,20 @@ public class JobService {
     }
 
     private static String fingerprint(DraftJob draft) {
-        return fingerprint(draft.title(), draft.company(), draft.location(), draft.description());
+        return fingerprint(draft.linkSource(), draft.title(), draft.company(), draft.location(), draft.description());
     }
 
-    private static String fingerprint(String title, String company, String location, String description) {
+    private static String fingerprint(JobLinkIngestion linkIngestion, String title, String company, String location, String description) {
+        return fingerprint(linkIngestion == null ? null : linkIngestion.normalizedUrl(), title, company, location, description);
+    }
+
+    private static String fingerprint(LinkSource linkSource, String title, String company, String location, String description) {
+        return fingerprint(linkSource == null ? null : linkSource.normalizedUrl(), title, company, location, description);
+    }
+
+    private static String fingerprint(String canonicalSourceUrl, String title, String company, String location, String description) {
         return sha256(String.join("\n",
+                normalizedKey(canonicalSourceUrl),
                 normalizedKey(title),
                 normalizedKey(company),
                 normalizedKey(location),
@@ -504,22 +513,11 @@ public class JobService {
     }
 
     private static String normalizeUrl(String rawUrl) {
-        try {
-            URI uri = new URI(clean(rawUrl));
-            String scheme = uri.getScheme();
-            String host = uri.getHost();
-            if (scheme == null || host == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
-                throw validation("url", "must be an absolute http(s) URL");
-            }
-            String path = uri.getRawPath().isBlank() ? "/" : uri.getRawPath();
-            if (path.length() > 1 && path.endsWith("/")) {
-                path = path.substring(0, path.length() - 1);
-            }
-            URI normalized = new URI(scheme.toLowerCase(Locale.ROOT), null, host.toLowerCase(Locale.ROOT), uri.getPort(), path, null, null);
-            return normalized.toString();
-        } catch (URISyntaxException exception) {
-            throw validation("url", "must be a valid absolute http(s) URL");
-        }
+        return JobUrlPolicy.canonicalSourceUrl(rawUrl);
+    }
+
+    private static String safeDisplayUrl(String rawUrl) {
+        return JobUrlPolicy.safeDisplayUrl(rawUrl);
     }
 
     private static String clean(String value) {
