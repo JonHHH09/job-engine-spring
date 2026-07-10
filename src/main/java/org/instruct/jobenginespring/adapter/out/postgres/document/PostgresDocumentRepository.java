@@ -128,14 +128,19 @@ public class PostgresDocumentRepository implements DocumentRepository {
     @Override
     public PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction) {
         Objects.requireNonNull(extraction, "extraction must not be null");
-        namedJdbc.update("""
-                INSERT INTO document.pdf_extractions (
-                    id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
-                ) VALUES (
-                    :id, :fileId, :extractor, :characterCount, :pageCount, :truncated, :extractedText, :createdAt
-                )
-                """, extractionParameters(extraction));
-        return findExtractionById(extraction.id());
+        MapSqlParameterSource parameters = extractionParameters(extraction);
+        return jdbc.sql("""
+                        INSERT INTO document.pdf_extractions (
+                            id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
+                        ) VALUES (
+                            :id, :fileId, :extractor, :characterCount, :pageCount, :truncated, :extractedText, :createdAt
+                        )
+                        ON CONFLICT (file_id) DO UPDATE SET file_id = EXCLUDED.file_id
+                        RETURNING id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
+                        """)
+                .params(parameters.getValues())
+                .query(EXTRACTION_MAPPER)
+                .single();
     }
 
     @Override

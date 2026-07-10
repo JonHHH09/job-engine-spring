@@ -21,6 +21,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -220,9 +224,51 @@ class PostgresDocumentRepositoryIntegrationTests {
     }
 
     @Test
-    void enforcesOnePdfExtractionPerFile() {
+    void simultaneousFirstPersistedExtractionReusesTheWinningRow() throws Exception {
         repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
-        repository.savePdfExtraction(new PdfExtractionRecord(
+        PdfTextExtractionService extractionService = mock(PdfTextExtractionService.class);
+        PdfTextExtractionResult canonical = new PdfTextExtractionResult(
+                "sample.pdf", 1, 11, false, "sample text", List.of()
+        );
+        CountDownLatch start = new CountDownLatch(1);
+        CyclicBarrier bothExtracted = new CyclicBarrier(2);
+        when(extractionService.extractText(
+                any(byte[].class),
+                eq("sample.pdf"),
+                eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
+                eq(true)
+        )).thenAnswer(invocation -> {
+            bothExtracted.await();
+            return canonical;
+        });
+        DocumentStorageService service = new DocumentStorageService(repository, extractionService, "/tmp");
+
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            Future<DocumentStorageService.StoredPdfTextExtractionResult> first = executor.submit(() -> {
+                start.await();
+                return service.extractStoredPdfText(new ExtractStoredPdfTextRequest(FILE_ID, 20, false, true));
+            });
+            Future<DocumentStorageService.StoredPdfTextExtractionResult> second = executor.submit(() -> {
+                start.await();
+                return service.extractStoredPdfText(new ExtractStoredPdfTextRequest(FILE_ID, 20, false, true));
+            });
+            start.countDown();
+
+            var firstResult = first.get();
+            var secondResult = second.get();
+
+            assertEquals(firstResult.extractionId(), secondResult.extractionId());
+            assertEquals("sample text", firstResult.extraction().text());
+            assertEquals("sample text", secondResult.extraction().text());
+            assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
+            verify(extractionService, times(2)).extractText(any(byte[].class), any(), any(), any());
+        }
+    }
+
+    @Test
+    void savePdfExtractionReusesExistingRowForTheFile() {
+        repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
+        PdfExtractionRecord existing = new PdfExtractionRecord(
                 EXTRACTION_ID,
                 FILE_ID,
                 "test-extractor",
@@ -231,19 +277,21 @@ class PostgresDocumentRepositoryIntegrationTests {
                 false,
                 "sample text",
                 NOW
-        ));
+        );
+        repository.savePdfExtraction(existing);
         PdfExtractionRecord duplicate = new PdfExtractionRecord(
                 UUID.fromString("99999999-9999-9999-9999-999999999999"),
                 FILE_ID,
-                "test-extractor",
-                11,
+                "different-extractor",
+                9,
                 1,
-                false,
-                "sample text",
-                NOW
+                true,
+                "different",
+                NOW.plusSeconds(1)
         );
 
-        assertThrows(org.springframework.dao.DuplicateKeyException.class, () -> repository.savePdfExtraction(duplicate));
+        assertEquals(existing, repository.savePdfExtraction(duplicate));
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
     }
 
     @Test
