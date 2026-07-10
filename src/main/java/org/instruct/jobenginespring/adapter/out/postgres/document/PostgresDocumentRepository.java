@@ -170,6 +170,42 @@ public class PostgresDocumentRepository implements DocumentRepository {
                 .single();
     }
 
+    @Override
+    public boolean deleteFileIfUnreferenced(UUID fileId) {
+        Optional<UUID> deletedBlobId = jdbc.sql("""
+                        DELETE FROM document.documents stored_document
+                        WHERE stored_document.id = :fileId
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM profile.profile_resume_documents resume_document
+                              WHERE resume_document.document_id = stored_document.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM document.pdf_extractions extraction
+                              JOIN profile.profile_pdf_sources source
+                                ON source.pdf_extraction_id = extraction.id
+                              WHERE extraction.file_id = stored_document.id
+                          )
+                        RETURNING stored_document.blob_id
+                        """)
+                .param("fileId", fileId)
+                .query(UUID.class)
+                .optional();
+        deletedBlobId.ifPresent(blobId -> jdbc.sql("""
+                        DELETE FROM document.blobs blob
+                        WHERE blob.id = :blobId
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM document.documents stored_document
+                              WHERE stored_document.blob_id = blob.id
+                          )
+                        """)
+                .param("blobId", blobId)
+                .update());
+        return deletedBlobId.isPresent();
+    }
+
     private static MapSqlParameterSource fileParameters(StoredDocumentFile file) {
         return new MapSqlParameterSource()
                 .addValue("id", file.id())

@@ -2,6 +2,7 @@ package org.instruct.jobenginespring;
 
 import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
+import org.instruct.jobenginespring.application.document.port.GeneratedResumeCleanupRepository;
 import org.instruct.jobenginespring.application.job.port.JobAnalysisRunRepository;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
@@ -62,6 +63,11 @@ class JobEngineSpringApplicationTests {
         @Bean
         DocumentStorageService documentStorageService() {
             return org.mockito.Mockito.mock(DocumentStorageService.class);
+        }
+
+        @Bean
+        GeneratedResumeCleanupRepository generatedResumeCleanupRepository() {
+            return org.mockito.Mockito.mock(GeneratedResumeCleanupRepository.class);
         }
 
         @Bean
@@ -186,6 +192,11 @@ class JobEngineSpringApplicationTests {
                 public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
                     return extraction;
                 }
+
+                @Override
+                public boolean deleteFileIfUnreferenced(UUID fileId) {
+                    return false;
+                }
             };
         }
 
@@ -230,6 +241,16 @@ class JobEngineSpringApplicationTests {
                 @Override
                 public Optional<ProfileResumeDocument> findByDocumentId(UUID documentId) {
                     return Optional.empty();
+                }
+
+                @Override
+                public java.util.List<ProfileResumeDocument> lockAndFindAllByProfileId(UUID profileId) {
+                    return java.util.List.of();
+                }
+
+                @Override
+                public Replacement replace(ProfileResumeDocument resumeDocument) {
+                    return new Replacement(resumeDocument, Optional.empty());
                 }
             };
         }

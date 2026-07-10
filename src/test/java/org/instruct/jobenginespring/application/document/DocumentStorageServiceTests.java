@@ -460,6 +460,11 @@ class DocumentStorageServiceTests {
             return extraction;
         }
 
+        @Override
+        public boolean deleteFileIfUnreferenced(UUID fileId) {
+            return files.remove(fileId) != null;
+        }
+
         private int fileCount() {
             return files.size();
         }

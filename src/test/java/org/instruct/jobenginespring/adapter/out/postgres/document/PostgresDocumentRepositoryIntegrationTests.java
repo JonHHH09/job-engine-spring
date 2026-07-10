@@ -90,7 +90,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 ORDER BY table_name
                 """, String.class);
 
-        assertEquals(List.of("blobs", "documents", "pdf_extractions"), tables);
+        assertEquals(List.of("blobs", "documents", "generated_resume_file_cleanups", "pdf_extractions"), tables);
     }
 
     @Test
@@ -130,6 +130,31 @@ class PostgresDocumentRepositoryIntegrationTests {
         assertEquals("duplicate.pdf", second.originalFileName());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.blobs", Integer.class));
         assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM document.documents", Integer.class));
+    }
+
+    @Test
+    void deletesOnlyUnreferencedDocumentAndPreservesSharedBlob() {
+        StoredDocumentFile existing = sampleFile(SHA256, PDF_CONTENT);
+        UUID duplicateId = UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc");
+        StoredDocumentFile duplicate = new StoredDocumentFile(
+                duplicateId,
+                "duplicate.pdf",
+                "application/pdf",
+                PDF_CONTENT.length,
+                SHA256,
+                PDF_CONTENT,
+                NOW,
+                NOW
+        );
+        repository.saveFile(existing);
+        repository.saveFile(duplicate);
+
+        assertTrue(repository.deleteFileIfUnreferenced(FILE_ID));
+
+        assertFalse(repository.findFileMetadataById(FILE_ID).isPresent());
+        assertTrue(repository.findFileMetadataById(duplicateId).isPresent());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.blobs", Integer.class));
+        assertFalse(repository.deleteFileIfUnreferenced(UUID.randomUUID()));
     }
 
     @Test
