@@ -38,7 +38,7 @@ jobs:
         id: release
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "tag" ]]; then
             RELEASE_TAG="${GITHUB_REF_NAME}"
             # Keep this SemVer subset aligned with scripts/release.sh.
             if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z-]*(\.[0-9A-Za-z][0-9A-Za-z-]*)*)?$ ]]; then
@@ -138,6 +138,24 @@ jobs:
       - name: Smoke-test release image
         run: MCP_IMAGE=job-engine-spring:release-candidate MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
 
+      - name: Generate CycloneDX SBOM for smoke-tested image
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          image: job-engine-spring:release-candidate
+          format: cyclonedx-json
+          output-file: "job-engine-spring-${{ steps.release.outputs.release_tag }}.image.cdx.json"
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate SPDX SBOM for smoke-tested image
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          image: job-engine-spring:release-candidate
+          format: spdx-json
+          output-file: "job-engine-spring-${{ steps.release.outputs.release_tag }}.image.spdx.json"
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Record image ID
         run: docker image inspect job-engine-spring:release-candidate --format '{{.Id}}' > IMAGE-ID
 
@@ -153,6 +171,8 @@ jobs:
             SHA256SUMS
             job-engine-spring-${{ steps.release.outputs.release_tag }}.cdx.json
             job-engine-spring-${{ steps.release.outputs.release_tag }}.spdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.image.cdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.image.spdx.json
             IMAGE-ID
             release-candidate-image.tar.gz
           if-no-files-found: error
@@ -165,7 +185,7 @@ jobs:
     name: Publish release artifacts
     runs-on: ubuntu-latest
     needs: verify
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     timeout-minutes: 30
     permissions:
       contents: write
@@ -272,50 +292,74 @@ jobs:
           runtime_base_image="${runtime_base_ref%@sha256:*}"
           runtime_base_digest="${runtime_base_ref##*@sha256:}"
           runtime_base_purl="pkg:docker/${runtime_base_image/:/@}"
+          maven_metadata="$(python3 - <<'PY'
+          import pathlib
+          import re
+
+          properties = {}
+          for line in pathlib.Path('.mvn/wrapper/maven-wrapper.properties').read_text().splitlines():
+              line = line.strip()
+              if line and not line.startswith('#') and '=' in line:
+                  key, value = line.split('=', 1)
+                  properties[key.strip()] = value.strip()
+
+          distribution_url = properties.get('distributionUrl', '')
+          match = re.search(r'/apache-maven/([^/]+)/apache-maven-\1-bin\.zip$', distribution_url)
+          if not match:
+              raise SystemExit('Unable to derive Maven version from wrapper distributionUrl')
+
+          checksum = properties.get('distributionSha256Sum', '')
+          if not re.fullmatch(r'[0-9a-fA-F]{64}', checksum):
+              raise SystemExit('Maven wrapper distributionSha256Sum must be a SHA-256 digest')
+
+          print(match.group(1), checksum.lower())
+          PY
+          )"
+          read -r maven_version maven_checksum <<< "$maven_metadata"
+          maven_purl="pkg:maven/org.apache.maven/apache-maven@${maven_version}"
 
           cat > provenance-predicate.json <<EOF
           {
-            "buildDefinition": {
-              "buildType": "https://github.com/JonHHH09/job-engine-spring/.github/workflows/release.yml@refs/heads/master",
-              "externalParameters": {
+            "builder": {
+              "id": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
+            },
+            "buildType": "https://github.com/JonHHH09/job-engine-spring/.github/workflows/release.yml@refs/heads/master",
+            "invocation": {
+              "configSource": {
+                "uri": "git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${GITHUB_SHA}",
+                "digest": {"sha1": "${GITHUB_SHA}"},
+                "entryPoint": ".github/workflows/release.yml"
+              },
+              "parameters": {
                 "releaseTag": "${RELEASE_TAG}",
                 "releaseVersion": "${RELEASE_VERSION}",
                 "imageRef": "${IMAGE_REF}"
               },
-              "internalParameters": {
+              "environment": {
                 "workflowRef": "${GITHUB_WORKFLOW_REF}",
                 "runId": "${GITHUB_RUN_ID}",
                 "runAttempt": "${GITHUB_RUN_ATTEMPT}"
-              },
-              "resolvedDependencies": [
-                {
-                  "uri": "git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${GITHUB_SHA}",
-                  "digest": {
-                    "gitCommit": "${GITHUB_SHA}"
-                  }
-                },
-                {
-                  "uri": "${runtime_base_purl}",
-                  "digest": {
-                    "sha256": "${runtime_base_digest}"
-                  }
-                },
-                {
-                  "uri": "pkg:maven/org.apache.maven/apache-maven@3.9.16",
-                  "digest": {
-                    "sha256": "5af3b743dd8b876b5c45da33b676251e5f1687712644abb4ee519ca56e1d89ce"
-                  }
-                }
-              ]
-            },
-            "runDetails": {
-              "builder": {
-                "id": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
-              },
-              "metadata": {
-                "invocationId": "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
               }
-            }
+            },
+            "metadata": {
+              "buildInvocationId": "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+              "completeness": {"parameters": true, "environment": true, "materials": true},
+              "reproducible": false
+            },
+            "materials": [
+              {
+                "uri": "git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${GITHUB_SHA}",
+                "digest": {"sha1": "${GITHUB_SHA}"}
+              },
+              {
+                "uri": "${runtime_base_purl}",
+                "digest": {"sha256": "${runtime_base_digest}"}
+              },
+              {
+                "uri": "${maven_purl}",
+                "digest": {"sha256": "${maven_checksum}"}
+              }
+            ]
           }
           EOF
 
@@ -324,6 +368,23 @@ jobs:
           COSIGN_YES: "true"
           IMAGE_REF: ${{ steps.publish_image.outputs.image_ref }}
         run: cosign attest --type slsaprovenance --predicate provenance-predicate.json "$IMAGE_REF"
+
+      - name: Verify release image signature and SLSA provenance
+        env:
+          IMAGE_REF: ${{ steps.publish_image.outputs.image_ref }}
+        run: |
+          certificate_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}"
+          certificate_issuer="https://token.actions.githubusercontent.com"
+
+          cosign verify \
+            --certificate-identity "$certificate_identity" \
+            --certificate-oidc-issuer "$certificate_issuer" \
+            "$IMAGE_REF"
+          cosign verify-attestation \
+            --type slsaprovenance \
+            --certificate-identity "$certificate_identity" \
+            --certificate-oidc-issuer "$certificate_issuer" \
+            "$IMAGE_REF"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
@@ -336,6 +397,8 @@ jobs:
             SHA256SUMS
             job-engine-spring-${{ steps.release.outputs.release_tag }}.cdx.json
             job-engine-spring-${{ steps.release.outputs.release_tag }}.spdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.image.cdx.json
+            job-engine-spring-${{ steps.release.outputs.release_tag }}.image.spdx.json
             IMAGE-ID
             IMAGE-DIGESTS
 
@@ -343,15 +406,76 @@ jobs:
     name: Report release dry run
     runs-on: ubuntu-latest
     needs: verify
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+    if: github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
+      id-token: write
     steps:
+      - name: Download verified release artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: verified-release-artifacts
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+
+      - name: Exercise keyless signature and provenance verification
+        shell: bash
+        run: |
+          certificate_identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
+          certificate_issuer="https://token.actions.githubusercontent.com"
+
+          cat > dry-run-provenance.json <<EOF
+          {
+            "builder": {
+              "id": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            },
+            "buildType": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}",
+            "invocation": {
+              "configSource": {
+                "uri": "git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${GITHUB_SHA}",
+                "digest": {"sha1": "${GITHUB_SHA}"},
+                "entryPoint": ".github/workflows/release.yml"
+              },
+              "parameters": {"dryRun": true},
+              "environment": {"workflowRef": "${GITHUB_WORKFLOW_REF}"}
+            },
+            "metadata": {
+              "buildInvocationId": "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+              "completeness": {"parameters": true, "environment": true, "materials": true},
+              "reproducible": false
+            },
+            "materials": [{
+              "uri": "git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${GITHUB_SHA}",
+              "digest": {"sha1": "${GITHUB_SHA}"}
+            }]
+          }
+          EOF
+
+          cosign sign-blob --yes --bundle dry-run-signature.bundle IMAGE-ID
+          cosign verify-blob \
+            --bundle dry-run-signature.bundle \
+            --certificate-identity "$certificate_identity" \
+            --certificate-oidc-issuer "$certificate_issuer" \
+            IMAGE-ID
+
+          cosign attest-blob --yes \
+            --type slsaprovenance \
+            --predicate dry-run-provenance.json \
+            --bundle dry-run-attestation.bundle \
+            IMAGE-ID
+          cosign verify-blob-attestation \
+            --type slsaprovenance \
+            --bundle dry-run-attestation.bundle \
+            --certificate-identity "$certificate_identity" \
+            --certificate-oidc-issuer "$certificate_issuer" \
+            IMAGE-ID
+
       - name: Report release dry run
         run: |
           {
             echo "Manual branch run completed verification only; no GitHub Release or GHCR package was published."
-            echo "Dry-run artifacts include the versioned jar, SHA256SUMS, CycloneDX SBOM, SPDX SBOM, IMAGE-ID, and the smoke-tested image tarball."
+            echo "Dry-run artifacts include the versioned jar, SHA256SUMS, jar and smoke-tested-image CycloneDX/SPDX SBOMs, IMAGE-ID, and the smoke-tested image tarball."
             echo "After downloading the artifacts, verify them locally with:"
             echo "  sha256sum -c SHA256SUMS"
             echo "  gzip -dc release-candidate-image.tar.gz | docker image load"

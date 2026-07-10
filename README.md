@@ -225,7 +225,7 @@ To publish a release explicitly, run the release helper with the desired version
 
 The helper requires a clean working tree, fetches `origin/master`, refuses existing local or remote tags, creates an annotated `vMAJOR.MINOR.PATCH[-PRERELEASE]` tag that points exactly at `origin/master`, and pushes only that tag. The tag push triggers `.github/workflows/release.yml`, which performs verification before publishing the GitHub Release and GHCR image.
 
-To exercise the release flow safely without publishing anything, run `.github/workflows/release.yml` manually from a branch or `development`. The workflow dispatch path still performs the clean Maven verification, verified-jar packaging, SBOM generation, release-image build, and release-image smoke test, but it skips GitHub Release creation, GHCR publication, Cosign signing, and provenance attestation. Download the dry-run artifacts and verify them locally with:
+To exercise the release flow safely without publishing anything, run `.github/workflows/release.yml` manually from a branch or `development`. The workflow dispatch path performs clean Maven verification, verified-jar packaging, jar and smoke-tested-image SBOM generation, release-image build, and release-image smoke testing. It also exercises keyless Cosign signing and SLSA provenance attestation against the generated image-identity artifact, then verifies both with the expected GitHub Actions OIDC workflow identity. It never creates a GitHub Release or publishes a GHCR package. Download the dry-run artifacts and verify them locally with:
 
 ```bash
 sha256sum -c SHA256SUMS
