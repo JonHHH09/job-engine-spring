@@ -164,6 +164,17 @@ jobs:
       - name: Smoke-test linux/arm64 release image
         run: MCP_IMAGE=job-engine-spring:release-candidate-arm64 MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
 
+      - name: Record and export smoke-tested platform images
+        run: |
+          : > IMAGE-IDS
+          for platform in linux/amd64 linux/arm64; do
+            architecture="${platform#linux/}"
+            image="job-engine-spring:release-candidate-${architecture}"
+            image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+            printf '%s %s\n' "$platform" "$image_id" >> IMAGE-IDS
+            docker image save "$image" | gzip -1 > "release-candidate-linux-${architecture}.tar.gz"
+          done
+
       - name: Generate CycloneDX SBOM for smoke-tested linux/amd64 image
         uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
         with:
@@ -209,6 +220,9 @@ jobs:
             SHA256SUMS
             job-engine-spring-${{ steps.release.outputs.release_tag }}.cdx.json
             job-engine-spring-${{ steps.release.outputs.release_tag }}.spdx.json
+            IMAGE-IDS
+            release-candidate-linux-amd64.tar.gz
+            release-candidate-linux-arm64.tar.gz
             job-engine-spring-${{ steps.release.outputs.release_tag }}.amd64.image.cdx.json
             job-engine-spring-${{ steps.release.outputs.release_tag }}.amd64.image.spdx.json
             job-engine-spring-${{ steps.release.outputs.release_tag }}.arm64.image.cdx.json
@@ -256,6 +270,22 @@ jobs:
         with:
           name: verified-release-artifacts
 
+      - name: Load and verify smoke-tested platform images
+        run: |
+          gzip -dc release-candidate-linux-amd64.tar.gz | docker image load
+          gzip -dc release-candidate-linux-arm64.tar.gz | docker image load
+          while read -r platform expected_image_id; do
+            architecture="${platform#linux/}"
+            image="job-engine-spring:release-candidate-${architecture}"
+            actual_image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+            if [[ "$actual_image_id" != "$expected_image_id" ]]; then
+              echo "Loaded ${platform} image does not match the smoke-tested image." >&2
+              echo "Expected: $expected_image_id" >&2
+              echo "Actual:   $actual_image_id" >&2
+              exit 1
+            fi
+          done < IMAGE-IDS
+
       - name: Set up QEMU for multi-platform publication
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.6.0
 
@@ -275,38 +305,59 @@ jobs:
       - name: Check Cosign install
         run: cosign version
 
-      - name: Publish multi-platform container image
+      - name: Publish verified platform images and manifest index
         id: publish_image
         env:
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
-          RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
         run: |
           IMAGE_REPOSITORY=ghcr.io/${GITHUB_REPOSITORY,,}
           IMAGE_NAME="${IMAGE_REPOSITORY}:${RELEASE_TAG}"
-          JAR_SHA256="$(cut -d ' ' -f1 SHA256SUMS)"
-          TAG_ARGS=(--tag "$IMAGE_NAME")
-          if [[ "$RELEASE_TAG" != *-* ]]; then
-            TAG_ARGS+=(--tag "${IMAGE_REPOSITORY}:latest")
-          fi
+          : > IMAGE-DIGESTS
 
-          docker buildx build \
-            --platform linux/amd64,linux/arm64 \
-            --provenance=false \
-            --push \
-            -f Dockerfile.release \
-            --build-arg JAR_FILE="job-engine-spring-${RELEASE_TAG}.jar" \
-            --build-arg VERSION="$RELEASE_VERSION" \
-            --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            --build-arg JAR_SHA256="$JAR_SHA256" \
-            "${TAG_ARGS[@]}" \
-            .
+          for platform in linux/amd64 linux/arm64; do
+            architecture="${platform#linux/}"
+            image="job-engine-spring:release-candidate-${architecture}"
+            platform_tag="${IMAGE_NAME}-${architecture}"
+            expected_image_id="$(awk -v platform="$platform" '$1 == platform { print $2 }' IMAGE-IDS)"
+            actual_image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+            if [[ "$actual_image_id" != "$expected_image_id" ]]; then
+              echo "${platform} image changed after smoke-test verification." >&2
+              exit 1
+            fi
+
+            docker tag "$image" "$platform_tag"
+            docker push "$platform_tag"
+
+            remote_raw="$(docker buildx imagetools inspect --raw "$platform_tag")"
+            remote_config_digest="$(printf '%s' "$remote_raw" | python3 -c 'import json,sys; print(json.load(sys.stdin)["config"]["digest"])')"
+            if [[ "$remote_config_digest" != "$expected_image_id" ]]; then
+              echo "Published ${platform} config does not match the smoke-tested image." >&2
+              echo "Expected: $expected_image_id" >&2
+              echo "Actual:   $remote_config_digest" >&2
+              exit 1
+            fi
+
+            remote_manifest_digest="$(docker buildx imagetools inspect "$platform_tag" | awk '/^Digest:/ { print $2; exit }')"
+            if [[ ! "$remote_manifest_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "Could not resolve the immutable ${platform} manifest digest." >&2
+              exit 1
+            fi
+            printf '%s %s@%s config=%s\n' "$platform" "$IMAGE_REPOSITORY" "$remote_manifest_digest" "$remote_config_digest" >> IMAGE-DIGESTS
+          done
+
+          amd64_image_ref="$(awk '$1 == "linux/amd64" { print $2 }' IMAGE-DIGESTS)"
+          arm64_image_ref="$(awk '$1 == "linux/arm64" { print $2 }' IMAGE-DIGESTS)"
+          tag_args=(-t "$IMAGE_NAME")
+          if [[ "$RELEASE_TAG" != *-* ]]; then
+            tag_args+=(-t "${IMAGE_REPOSITORY}:latest")
+          fi
+          docker buildx imagetools create "${tag_args[@]}" "$amd64_image_ref" "$arm64_image_ref"
 
           manifest_digest="$(docker buildx imagetools inspect "$IMAGE_NAME" | awk '/^Digest:/ { print $2; exit }')"
           if [[ ! "$manifest_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "Could not resolve the immutable multi-platform manifest digest." >&2
             exit 1
           fi
-
           docker buildx imagetools inspect --raw "$IMAGE_NAME" | python3 -c '
           import json
           import sys
@@ -322,7 +373,6 @@ jobs:
               raise SystemExit(f"Published image is missing required platforms: {sorted(required - platforms)}")
           print("Published platforms: " + ", ".join(sorted(platforms)))
           '
-
           if [[ "$RELEASE_TAG" != *-* ]]; then
             latest_digest="$(docker buildx imagetools inspect "${IMAGE_REPOSITORY}:latest" | awk '/^Digest:/ { print $2; exit }')"
             if [[ "$latest_digest" != "$manifest_digest" ]]; then
@@ -332,7 +382,7 @@ jobs:
           fi
 
           immutable_image_ref="${IMAGE_REPOSITORY}@${manifest_digest}"
-          printf '%s\n' "$immutable_image_ref" > IMAGE-DIGESTS
+          printf 'index %s\n' "$immutable_image_ref" >> IMAGE-DIGESTS
           {
             echo "image_repository=$IMAGE_REPOSITORY"
             echo "image_name=$IMAGE_NAME"
@@ -460,6 +510,9 @@ jobs:
             SHA256SUMS
             job-engine-spring-${{ steps.release.outputs.release_tag }}.cdx.json
             job-engine-spring-${{ steps.release.outputs.release_tag }}.spdx.json
+            IMAGE-IDS
+            release-candidate-linux-amd64.tar.gz
+            release-candidate-linux-arm64.tar.gz
             job-engine-spring-${{ steps.release.outputs.release_tag }}.amd64.image.cdx.json
             job-engine-spring-${{ steps.release.outputs.release_tag }}.amd64.image.spdx.json
             job-engine-spring-${{ steps.release.outputs.release_tag }}.arm64.image.cdx.json
