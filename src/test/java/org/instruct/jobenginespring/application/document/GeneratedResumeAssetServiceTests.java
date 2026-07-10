@@ -67,7 +67,7 @@ class GeneratedResumeAssetServiceTests {
     }
 
     @Test
-    void replacementPreservesStillReferencedOrUnchangedAssets() {
+    void replacementPreservesUnchangedAsset() {
         ProfileResumeDocument unchanged = link(OLD_DOCUMENT_ID, "same.pdf");
         when(resumeDocumentRepository.replace(unchanged)).thenReturn(
                 new ProfileResumeDocumentRepository.Replacement(unchanged, Optional.of(unchanged))
@@ -76,7 +76,10 @@ class GeneratedResumeAssetServiceTests {
         service.replace(unchanged);
 
         verifyNoInteractions(documentRepository, fileRepository, transactionLifecycle, cleanupService);
+    }
 
+    @Test
+    void replacementCleansOldFileWhenDocumentRemainsReferenced() {
         ProfileResumeDocument previous = link(OLD_DOCUMENT_ID, "old.pdf");
         ProfileResumeDocument saved = link(NEW_DOCUMENT_ID, "new.pdf");
         when(resumeDocumentRepository.replace(saved)).thenReturn(
@@ -87,7 +90,7 @@ class GeneratedResumeAssetServiceTests {
         service.replace(saved);
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
-        verifyNoInteractions(cleanupService);
+        verify(cleanupService).enqueueAfterCommit("old.pdf");
     }
 
     @Test

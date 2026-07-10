@@ -64,8 +64,7 @@ public class GeneratedResumeAssetService {
     }
 
     private void deleteUnreferencedAfterReplacement(ProfileResumeDocument previous) {
-        if (documentRepository.deleteFileIfUnreferenced(previous.documentId())) {
-            cleanupService.enqueueAfterCommit(previous.filePath());
-        }
+        documentRepository.deleteFileIfUnreferenced(previous.documentId());
+        cleanupService.enqueueAfterCommit(previous.filePath());
     }
 }
