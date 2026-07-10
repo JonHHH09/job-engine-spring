@@ -9,10 +9,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import json
 import selectors
 import subprocess
 import sys
+import threading
 import time
 from typing import Any
 
@@ -102,6 +104,16 @@ def main() -> int:
     selector = selectors.DefaultSelector()
     assert proc.stdout is not None
     selector.register(proc.stdout, selectors.EVENT_READ)
+    stderr_tail: deque[str] = deque(maxlen=200)
+
+    def drain_stderr() -> None:
+        if proc.stderr is None:
+            return
+        for line in proc.stderr:
+            stderr_tail.append(line)
+
+    stderr_thread = threading.Thread(target=drain_stderr, name="mcp-stderr-drain", daemon=True)
+    stderr_thread.start()
 
     try:
         send(
@@ -142,7 +154,8 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
-        stderr = proc.stderr.read() if proc.stderr is not None else ""
+        stderr_thread.join(timeout=5)
+        stderr = "".join(stderr_tail)
         if proc.returncode not in (0, -15, 143) and stderr:
             sys.stderr.write(stderr[-4000:])
 

@@ -21,6 +21,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -54,7 +55,7 @@ class JobAnalysisServiceTests {
         analysisPort.response = sampleAnalysisResponse();
 
         JobAnalysisService.AnalyzeJobLinkResult result = service.analyzeJobLink(new AnalyzeJobLinkRequest(
-                "https://Example.test/jobs/123#details"
+                "https://Example.test/jobs/123?token=secret-value&utm_source=email#details"
         ));
 
         assertEquals("analysis_ready", result.status());
@@ -66,6 +67,10 @@ class JobAnalysisServiceTests {
         assertNotNull(result.analysisRunId());
         JobAnalysisRun stored = analysisRepository.saved.get(result.analysisRunId());
         assertEquals("link", stored.sourceType());
+        assertEquals("https://example.test/jobs/123", stored.originalUrl());
+        assertEquals("https://example.test/jobs/123", stored.normalizedUrl());
+        assertEquals("https://Example.test/jobs/123?token=secret-value&utm_source=email#details", fetcher.lastUrl);
+        assertFalse(stored.inputJson().toString().contains("secret-value"));
         assertEquals("FETCHED", stored.fetchStatus());
         assertEquals(200, stored.httpStatus());
         assertEquals("Platform Engineer", stored.hermesResponseJson().get("title"));
@@ -606,9 +611,11 @@ class JobAnalysisServiceTests {
                 "Fetched public page text for a platform engineering role using Java and Kubernetes.",
                 200
         );
+        private String lastUrl;
 
         @Override
         public JobLinkFetchResult fetch(String url) {
+            lastUrl = url;
             return result;
         }
     }

@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
+import org.apache.pdfbox.pdmodel.PDDocument;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.springframework.ai.document.Document;
@@ -14,7 +15,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -110,7 +110,6 @@ public class PdfTextExtractionService {
         return allowedPath;
     }
 
-    @lombok.Generated
     private static void validateFileSize(Path path) {
         try {
             validateFileSize(Files.size(path));
@@ -125,15 +124,9 @@ public class PdfTextExtractionService {
         }
     }
 
-    @lombok.Generated
     private static boolean hasPdfHeader(Path path) {
-        byte[] header = new byte[PDF_MAGIC.length];
-        try (InputStream inputStream = Files.newInputStream(path)) {
-            int read = inputStream.readNBytes(header, 0, header.length);
-            if (read != header.length) {
-                return false;
-            }
-            return hasPdfHeader(header);
+        try {
+            return hasPdfHeader(Files.readAllBytes(path));
         } catch (IOException exception) {
             throw validation("path", "file is not readable");
         }
@@ -250,6 +243,14 @@ public class PdfTextExtractionService {
         );
     }
 
+    private static void closeDocument(PDDocument document) {
+        try {
+            document.close();
+        } catch (IOException exception) {
+            throw new IllegalStateException("PDF document could not be closed", exception);
+        }
+    }
+
     public record PdfTextExtractionRequest(String path, Integer maxCharacters, Boolean includePages) {
     }
 
@@ -273,13 +274,8 @@ public class PdfTextExtractionService {
         }
 
         @Override
-        @lombok.Generated
         public void close() {
-            try {
-                document.close();
-            } catch (IOException exception) {
-                throw new IllegalStateException("PDF document could not be closed", exception);
-            }
+            closeDocument(document);
         }
 
         private int pageCount() {

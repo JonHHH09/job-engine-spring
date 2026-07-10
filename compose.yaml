@@ -29,7 +29,6 @@ services:
       JOB_ENGINE_POSTGRES_USER: ${JOB_ENGINE_POSTGRES_USER:-postgres}
       JOB_ENGINE_POSTGRES_PASSWORD: ${JOB_ENGINE_POSTGRES_PASSWORD:-postgres}
       JOB_ENGINE_DOCUMENT_IMPORT_ROOT: /app/tmp/imports
-      JOB_ENGINE_JOB_ALLOWED_HOSTS: ${JOB_ENGINE_JOB_ALLOWED_HOSTS:-}
     volumes:
       - ./tmp/imports:/app/tmp/imports:ro
       - ./tmp/generated-pdfs:/app/tmp/generated-pdfs

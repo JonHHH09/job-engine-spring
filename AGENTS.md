@@ -53,12 +53,13 @@ Use Conventional Commits, matching existing history examples such as
 
 Pull requests should summarize the behavior change, call out database
 migrations or configuration changes, and include the exact verification command
-and result. GitHub Actions runs fast validation and unit tests on pull requests
-to `development`. Trusted pushes to `development` and manual CI runs add
-Docker-backed integration tests and a containerized MCP STDIO smoke test. Plain
-pushes to `master` run a lightweight promotion guard instead of repeating the
-heavy `development` checks. Tag releases verify and publish one jar artifact,
-then build the release image from that same verified jar.
+and result. Feature/fix pull requests may target `master`; those candidates run
+pipeline validation, unit tests, Docker-backed integration/coverage, a
+containerized MCP STDIO smoke test, and Qodana. Pull requests promoting
+`development` to `master` additionally require an identical candidate tree.
+Trusted pushes to `development` and manual CI runs retain the heavy integration
+and container smoke gates. Tag releases verify and publish the exact
+smoke-tested image and verified jar artifacts.
 
 ## Security & Configuration Tips
 

@@ -33,7 +33,6 @@ import java.util.regex.Pattern;
  * <p>This intentionally extracts only obvious fields. It treats source text as untrusted data and never
  * interprets instructions embedded in the document.</p>
  */
-@lombok.Generated
 @Component
 public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
 
@@ -403,10 +402,9 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
     }
 
     private static String summary(String text, String summarySectionText) {
-        if (summarySectionText != null && !summarySectionText.isBlank()) {
+        if (!summarySectionText.isBlank()) {
             return truncate(summarySectionText.lines()
                     .map(String::strip)
-                    .filter(line -> !line.isBlank())
                     .findFirst()
                     .orElse(null));
         }
@@ -506,13 +504,14 @@ public class DeterministicProfileTextExtractor implements ProfileTextExtractor {
     }
 
     private static String titleCase(String value) {
+        if (value.isBlank()) {
+            return "";
+        }
         StringBuilder builder = new StringBuilder();
         for (String part : value.split("\\s+")) {
-            if (!part.isBlank()) {
-                builder.append(Character.toUpperCase(part.charAt(0)))
-                        .append(part.length() > 1 ? part.substring(1).toLowerCase(Locale.ROOT) : "")
-                        .append(' ');
-            }
+            builder.append(Character.toUpperCase(part.charAt(0)))
+                    .append(part.length() > 1 ? part.substring(1).toLowerCase(Locale.ROOT) : "")
+                    .append(' ');
         }
         return builder.toString().strip();
     }

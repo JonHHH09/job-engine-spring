@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
+import org.apache.commons.codec.digest.DigestUtils;
 import lombok.NonNull;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
@@ -17,11 +18,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -195,7 +193,6 @@ public class DocumentStorageService {
         return mediaType.strip().toLowerCase();
     }
 
-    @lombok.Generated
     private static byte[] readContent(Path path) {
         try {
             return Files.readAllBytes(path);
@@ -224,19 +221,8 @@ public class DocumentStorageService {
         }
     }
 
-    @lombok.Generated
     private static String sha256(byte[] content) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(content));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new ApplicationException(
-                    ApplicationErrorCode.INTERNAL_ERROR,
-                    ApplicationErrorCode.INTERNAL_ERROR.defaultMessage(),
-                    Map.of(),
-                    exception
-            );
-        }
+        return DigestUtils.sha256Hex(content);
     }
 
     private static ApplicationException validation(String field, String reason) {

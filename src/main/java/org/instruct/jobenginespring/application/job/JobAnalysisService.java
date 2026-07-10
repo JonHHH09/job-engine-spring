@@ -1,7 +1,7 @@
 package org.instruct.jobenginespring.application.job;
 
+import org.apache.commons.codec.digest.DigestUtils;
 import lombok.NonNull;
-import lombok.SneakyThrows;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.JobService.AddJobFromAnalyzedLinkRequest;
@@ -16,20 +16,19 @@ import org.instruct.jobenginespring.domain.job.JobAnalysisRun;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -87,7 +86,7 @@ public class JobAnalysisService {
         String originalUrl = clean(safeRequest.url());
         String normalizedUrl = normalizeUrl(originalUrl);
         JobLinkFetchResult fetched = linkContentFetcher.fetch(originalUrl);
-        Map<String, Object> inputJson = analysisInput(originalUrl, normalizedUrl, fetched);
+        Map<String, Object> inputJson = analysisInput(normalizedUrl, normalizedUrl, fetched);
         Instant now = clock.instant();
         UUID analysisRunId = UUID.randomUUID();
         FetchValidation fetchValidation = validateFetchedContentForAnalysis(fetched);
@@ -95,7 +94,7 @@ public class JobAnalysisService {
             JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                     analysisRunId,
                     SOURCE_TYPE_LINK,
-                    originalUrl,
+                    normalizedUrl,
                     normalizedUrl,
                     fetchValidation.fetchStatus(),
                     fetched == null ? null : fetched.httpStatus(),
@@ -121,7 +120,7 @@ public class JobAnalysisService {
             JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                     analysisRunId,
                     SOURCE_TYPE_LINK,
-                    originalUrl,
+                    normalizedUrl,
                     normalizedUrl,
                     FETCH_STATUS_FETCHED,
                     fetched.httpStatus(),
@@ -145,7 +144,7 @@ public class JobAnalysisService {
         JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                 analysisRunId,
                 SOURCE_TYPE_LINK,
-                originalUrl,
+                normalizedUrl,
                 normalizedUrl,
                 FETCH_STATUS_FETCHED,
                 fetched.httpStatus(),
@@ -231,14 +230,13 @@ public class JobAnalysisService {
         );
     }
 
-    @lombok.Generated
     private static Map<String, Object> analysisInput(String originalUrl, String normalizedUrl, JobLinkFetchResult fetched) {
         Map<String, Object> input = new LinkedHashMap<>();
         input.put("sourceMethod", SOURCE_TYPE_LINK);
         input.put("originalUrl", originalUrl);
         input.put("normalizedUrl", normalizedUrl);
-        if (fetched != null && fetched.httpStatus() != null) {
-            input.put("httpStatus", fetched.httpStatus());
+        if (fetched != null) {
+            putIfPresent(input, "httpStatus", fetched.httpStatus());
         }
         putIfPresent(input, "fetchedTitle", fetched == null ? null : cleanToNull(fetched.title()));
         putIfPresent(input, "boundedVisibleText", fetched == null ? null : cleanToNull(fetched.description()));
@@ -303,7 +301,6 @@ public class JobAnalysisService {
         return List.copyOf(errors);
     }
 
-    @lombok.Generated
     private static FetchValidation validateFetchedContentForAnalysis(JobLinkFetchResult fetched) {
         if (fetched == null) {
             return new FetchValidation(false, FETCH_STATUS_FAILED, List.of("job page fetch returned no content; provide pasted job text or a usable description"));
@@ -316,7 +313,6 @@ public class JobAnalysisService {
         );
     }
 
-    @lombok.Generated
     private static List<String> validateFetchProvenance(String fetchStatus, Integer httpStatus, String title, String description) {
         List<String> errors = new ArrayList<>();
         String normalizedFetchStatus = cleanToNull(fetchStatus);
@@ -343,7 +339,6 @@ public class JobAnalysisService {
         return errors.stream().distinct().toList();
     }
 
-    @lombok.Generated
     private static String fetchStatusFor(Integer httpStatus, String title, String description) {
         if (httpStatus != null && httpStatus >= 400) {
             return FETCH_STATUS_FAILED;
@@ -356,7 +351,6 @@ public class JobAnalysisService {
         return blockedStatus == null ? FETCH_STATUS_FETCHED : blockedStatus;
     }
 
-    @lombok.Generated
     private static String blockedContentFetchStatus(String value) {
         String lower = value == null ? "" : value.toLowerCase(Locale.ROOT);
         if (lower.contains("request blocked")
@@ -401,7 +395,6 @@ public class JobAnalysisService {
         return sha256(canonicalValue(value));
     }
 
-    @lombok.Generated
     private static Instant parseInstant(String value) {
         if (value == null) {
             return null;
@@ -424,7 +417,6 @@ public class JobAnalysisService {
         return value instanceof String text ? cleanToNull(text) : null;
     }
 
-    @lombok.Generated
     private static List<String> stringList(Object value) {
         if (!(value instanceof List<?> list)) {
             return List.of();
@@ -437,13 +429,11 @@ public class JobAnalysisService {
                 .toList();
     }
 
-    @lombok.Generated
     private static boolean looksLikeUrl(String value) {
         String lower = value.toLowerCase(Locale.ROOT);
         return lower.startsWith("http://") || lower.startsWith("https://");
     }
 
-    @lombok.Generated
     private static boolean looksLikeBotCheckOrJavaScriptShell(String value) {
         String lower = value.toLowerCase(Locale.ROOT);
         return lower.contains("enable javascript")
@@ -456,20 +446,22 @@ public class JobAnalysisService {
                 || lower.contains("cloudflare");
     }
 
-    @lombok.Generated
     private static String normalizeUrl(String rawUrl) {
         try {
             URI uri = new URI(clean(rawUrl));
             String scheme = uri.getScheme();
             String host = uri.getHost();
-            if (scheme == null || host == null || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
+            if (scheme == null || host == null) {
                 throw validation("url", "must be an absolute http(s) URL");
             }
-            String path = uri.getRawPath() == null || uri.getRawPath().isBlank() ? "/" : uri.getRawPath();
+            if (!Set.of("http", "https").contains(scheme.toLowerCase(Locale.ROOT))) {
+                throw validation("url", "must be an absolute http(s) URL");
+            }
+            String path = uri.getRawPath().isBlank() ? "/" : uri.getRawPath();
             if (path.length() > 1 && path.endsWith("/")) {
                 path = path.substring(0, path.length() - 1);
             }
-            URI normalized = new URI(scheme.toLowerCase(Locale.ROOT), uri.getRawUserInfo(), host.toLowerCase(Locale.ROOT), uri.getPort(), path, uri.getRawQuery(), null);
+            URI normalized = new URI(scheme.toLowerCase(Locale.ROOT), null, host.toLowerCase(Locale.ROOT), uri.getPort(), path, null, null);
             return normalized.toString();
         } catch (URISyntaxException exception) {
             throw validation("url", "must be a valid absolute http(s) URL");
@@ -500,11 +492,8 @@ public class JobAnalysisService {
         return String.valueOf(value);
     }
 
-    @SneakyThrows
-    @lombok.Generated
     private static String sha256(String value) {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
+        return DigestUtils.sha256Hex(value);
     }
 
     private static ApplicationException validation(String field, String reason) {
@@ -545,7 +534,6 @@ public class JobAnalysisService {
         }
     }
 
-    @lombok.Generated
     private record FetchValidation(boolean valid, String fetchStatus, List<String> validationErrors) {
         private FetchValidation {
             validationErrors = validationErrors == null ? List.of() : List.copyOf(validationErrors);
