@@ -218,7 +218,7 @@ public class PostgresJobRepository implements JobRepository {
                         .addValue("sourceTitle", link.sourceTitle())
                         .addValue("linkCreatedAt", Timestamp.from(link.createdAt())),
                 Integer.class);
-        return inserted > 0;
+        return Objects.requireNonNull(inserted, "insert count must not be null") > 0;
     }
 
     private boolean insertJobWithTextProvenance(JobPosting job, JobTextIngestion text) {
@@ -264,7 +264,7 @@ public class PostgresJobRepository implements JobRepository {
                         .addValue("inputTextHash", text.inputTextHash())
                         .addValue("textCreatedAt", Timestamp.from(text.createdAt())),
                 Integer.class);
-        return inserted > 0;
+        return Objects.requireNonNull(inserted, "insert count must not be null") > 0;
     }
 
     private void replaceSkills(UUID jobId, List<JobSkill> skills) {
