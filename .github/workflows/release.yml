@@ -268,6 +268,11 @@ jobs:
           RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
           IMAGE_REF: ${{ steps.publish_image.outputs.image_ref }}
         run: |
+          runtime_base_ref="$(python3 -c 'import pathlib,re; text=pathlib.Path("Dockerfile.release").read_text(); match=re.search(r"^FROM\s+([^\s@]+)@sha256:([0-9a-f]{64})\s*$", text, re.MULTILINE); assert match, "Dockerfile.release must pin its runtime base by sha256 digest"; print(f"{match.group(1)}@sha256:{match.group(2)}")')"
+          runtime_base_image="${runtime_base_ref%@sha256:*}"
+          runtime_base_digest="${runtime_base_ref##*@sha256:}"
+          runtime_base_purl="pkg:docker/${runtime_base_image/:/@}"
+
           cat > provenance-predicate.json <<EOF
           {
             "buildDefinition": {
@@ -290,9 +295,9 @@ jobs:
                   }
                 },
                 {
-                  "uri": "pkg:docker/eclipse-temurin@25-jre",
+                  "uri": "${runtime_base_purl}",
                   "digest": {
-                    "sha256": "d0eb1b9018b3044da1b7346f39e945f71095749853d69a3aa16b8c99dad9bb45"
+                    "sha256": "${runtime_base_digest}"
                   }
                 },
                 {
