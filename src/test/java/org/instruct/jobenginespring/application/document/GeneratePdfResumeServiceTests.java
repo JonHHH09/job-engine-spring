@@ -598,6 +598,11 @@ class GeneratePdfResumeServiceTests {
             return extraction;
         }
 
+        @Override
+        public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
+            return extraction;
+        }
+
         private int fileCount() {
             return files.size();
         }

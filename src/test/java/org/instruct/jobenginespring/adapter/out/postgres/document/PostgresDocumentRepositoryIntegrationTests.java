@@ -1,6 +1,10 @@
 package org.instruct.jobenginespring.adapter.out.postgres.document;
 
 import org.flywaydb.core.Flyway;
+import org.instruct.jobenginespring.application.document.DocumentStorageService;
+import org.instruct.jobenginespring.application.document.DocumentStorageService.ExtractStoredPdfTextRequest;
+import org.instruct.jobenginespring.application.document.PdfTextExtractionService;
+import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
@@ -23,6 +27,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @Testcontainers
 class PostgresDocumentRepositoryIntegrationTests {
@@ -150,6 +160,63 @@ class PostgresDocumentRepositoryIntegrationTests {
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
         jdbc.update("DELETE FROM document.documents WHERE id = ?", FILE_ID);
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
+    }
+
+    @Test
+    void updatesPdfExtractionInPlace() {
+        repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
+        repository.savePdfExtraction(new PdfExtractionRecord(
+                EXTRACTION_ID, FILE_ID, "legacy", 5, 1, true, "short", NOW
+        ));
+        Instant refreshedAt = NOW.plusSeconds(60);
+        PdfExtractionRecord canonical = new PdfExtractionRecord(
+                EXTRACTION_ID,
+                FILE_ID,
+                "spring-ai-page-pdf-document-reader:canonical-250000-v1",
+                11,
+                1,
+                false,
+                "sample text",
+                refreshedAt
+        );
+
+        PdfExtractionRecord updated = repository.updatePdfExtraction(canonical);
+
+        assertEquals(canonical, updated);
+        assertEquals(canonical, repository.findPdfExtractionByFileId(FILE_ID).orElseThrow());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
+    }
+
+    @Test
+    void persistedCanonicalExtractionIsNotConstrainedByFirstRequestLimit() {
+        repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
+        PdfTextExtractionService extractionService = mock(PdfTextExtractionService.class);
+        PdfTextExtractionResult canonical = new PdfTextExtractionResult(
+                "sample.pdf",
+                1,
+                20,
+                false,
+                "0123456789abcdefghij",
+                List.of()
+        );
+        when(extractionService.extractText(
+                any(byte[].class),
+                eq("sample.pdf"),
+                eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
+                eq(true)
+        )).thenReturn(canonical);
+        DocumentStorageService service = new DocumentStorageService(repository, extractionService, "/tmp");
+
+        var first = service.extractStoredPdfText(new ExtractStoredPdfTextRequest(FILE_ID, 5, false, true));
+        var second = service.extractStoredPdfText(new ExtractStoredPdfTextRequest(FILE_ID, 15, false, true));
+
+        assertEquals("01234", first.extraction().text());
+        assertEquals("0123456789abcde", second.extraction().text());
+        assertEquals(first.extractionId(), second.extractionId());
+        PdfExtractionRecord persisted = repository.findPdfExtractionByFileId(FILE_ID).orElseThrow();
+        assertEquals(20, persisted.characterCount());
+        assertEquals("0123456789abcdefghij", persisted.extractedText());
+        verify(extractionService, times(1)).extractText(any(byte[].class), any(), any(), any());
     }
 
     @Test

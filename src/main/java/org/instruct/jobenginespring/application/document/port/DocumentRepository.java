@@ -20,4 +20,6 @@ public interface DocumentRepository {
     Optional<PdfExtractionRecord> findPdfExtractionByFileId(UUID fileId);
 
     PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction);
+
+    PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction);
 }

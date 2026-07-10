@@ -62,6 +62,24 @@ public class PdfTextExtractionService {
         return extractText(new NamedByteArrayResource(pdfContent, safeFileName), safeFileName, maxCharacters, includePages);
     }
 
+    static PdfTextExtractionResult applyRequestView(
+            PdfTextExtractionResult canonical,
+            Integer maxCharactersValue,
+            Boolean includePagesValue
+    ) {
+        Objects.requireNonNull(canonical, "canonical must not be null");
+        int maxCharacters = resolveMaxCharacters(maxCharactersValue);
+        boolean includePages = includePagesValue == null || includePagesValue;
+        return new PdfTextExtractionResult(
+                canonical.fileName(),
+                canonical.pageCount(),
+                canonical.characterCount(),
+                canonical.characterCount() > maxCharacters,
+                truncate(canonical.text(), maxCharacters),
+                includePages ? truncatePages(canonical.pages(), maxCharacters) : List.of()
+        );
+    }
+
     private PdfTextExtractionResult extractText(Resource pdfResource, String fileName, Integer maxCharactersValue, Boolean includePagesValue) {
         int maxCharacters = resolveMaxCharacters(maxCharactersValue);
         boolean includePages = includePagesValue == null || includePagesValue;

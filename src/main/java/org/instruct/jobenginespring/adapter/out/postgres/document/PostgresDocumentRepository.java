@@ -135,12 +135,32 @@ public class PostgresDocumentRepository implements DocumentRepository {
                     :id, :fileId, :extractor, :characterCount, :pageCount, :truncated, :extractedText, :createdAt
                 )
                 """, extractionParameters(extraction));
+        return findExtractionById(extraction.id());
+    }
+
+    @Override
+    public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
+        Objects.requireNonNull(extraction, "extraction must not be null");
+        namedJdbc.update("""
+                UPDATE document.pdf_extractions
+                SET extractor = :extractor,
+                    character_count = :characterCount,
+                    page_count = :pageCount,
+                    truncated = :truncated,
+                    extracted_text = :extractedText,
+                    created_at = :createdAt
+                WHERE id = :id AND file_id = :fileId
+                """, extractionParameters(extraction));
+        return findExtractionById(extraction.id());
+    }
+
+    private PdfExtractionRecord findExtractionById(UUID extractionId) {
         return jdbc.sql("""
                         SELECT id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
                         FROM document.pdf_extractions
                         WHERE id = :id
                         """)
-                .param("id", extraction.id())
+                .param("id", extractionId)
                 .query(EXTRACTION_MAPPER)
                 .single();
     }
