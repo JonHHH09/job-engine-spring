@@ -116,8 +116,8 @@ class PostgresJobRepositoryIntegrationTests {
                 new JobLinkIngestion(
                         UUID.fromString("12121212-1212-1212-1212-121212121212"),
                         JOB_ID,
-                        "https://example.test/jobs/1#details",
                         "https://example.test/jobs/1",
+                        "https://example.test/jobs/1?jk=job-1",
                         NOW,
                         200,
                         "Platform Engineer",
@@ -128,10 +128,10 @@ class PostgresJobRepositoryIntegrationTests {
 
         JobAggregate saved = repository.saveJobAggregate(aggregate);
 
-        Optional<JobAggregate> found = repository.findByNormalizedSourceUrl("https://example.test/jobs/1");
+        Optional<JobAggregate> found = repository.findByNormalizedSourceUrl("https://example.test/jobs/1?jk=job-1");
         assertTrue(found.isPresent());
         assertEquals(saved.job().id(), found.orElseThrow().job().id());
-        assertEquals("https://example.test/jobs/1", saved.linkIngestion().normalizedUrl());
+        assertEquals("https://example.test/jobs/1?jk=job-1", saved.linkIngestion().normalizedUrl());
     }
 
     @Test
@@ -140,8 +140,8 @@ class PostgresJobRepositoryIntegrationTests {
         JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                 analysisRunId,
                 "link",
-                "https://example.test/jobs/1#details",
                 "https://example.test/jobs/1",
+                "https://example.test/jobs/1?jk=job-1",
                 "FETCHED",
                 200,
                 "Platform Engineer",
@@ -170,8 +170,8 @@ class PostgresJobRepositoryIntegrationTests {
                 new JobLinkIngestion(
                         UUID.fromString("23232323-2323-2323-2323-232323232323"),
                         JOB_ID,
-                        "https://example.test/jobs/1#details",
                         "https://example.test/jobs/1",
+                        "https://example.test/jobs/1?jk=job-1",
                         NOW,
                         200,
                         "Platform Engineer",
@@ -271,14 +271,14 @@ class PostgresJobRepositoryIntegrationTests {
                 JOB_ID,
                 UUID.fromString("12121212-1212-1212-1212-121212121212"),
                 "fingerprint-one",
-                "https://example.test/jobs/1"
+                "https://example.test/jobs/1?jk=job-1"
         ));
 
         JobAggregate duplicateUrl = linkAggregate(
                 UUID.fromString("99999999-2222-3333-4444-555555555555"),
                 UUID.fromString("88888888-2222-3333-4444-555555555555"),
                 "fingerprint-two",
-                "https://example.test/jobs/1"
+                "https://example.test/jobs/1?jk=job-1"
         );
 
         JobAggregate reused = repository.saveJobAggregate(duplicateUrl);
@@ -286,7 +286,30 @@ class PostgresJobRepositoryIntegrationTests {
         assertEquals(JOB_ID, reused.job().id());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM job_schema.jobs", Integer.class));
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_link_ingestions", Integer.class));
-        assertTrue(repository.findByNormalizedSourceUrl("https://example.test/jobs/1").isPresent());
+        assertTrue(repository.findByNormalizedSourceUrl("https://example.test/jobs/1?jk=job-1").isPresent());
+    }
+
+    @Test
+    void saveJobAggregateDoesNotReuseExistingJobForDistinctCanonicalIdentityQueryParameters() {
+        repository.saveJobAggregate(linkAggregate(
+                JOB_ID,
+                UUID.fromString("12121212-1212-1212-1212-121212121212"),
+                "fingerprint-one",
+                "https://example.test/jobs/1?jk=job-1"
+        ));
+
+        JobAggregate distinctIdentity = linkAggregate(
+                UUID.fromString("99999999-2222-3333-4444-555555555555"),
+                UUID.fromString("88888888-2222-3333-4444-555555555555"),
+                "fingerprint-two",
+                "https://example.test/jobs/1?jk=job-2"
+        );
+
+        JobAggregate saved = repository.saveJobAggregate(distinctIdentity);
+
+        assertEquals(distinctIdentity.job().id(), saved.job().id());
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM job_schema.jobs", Integer.class));
+        assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_link_ingestions", Integer.class));
     }
 
     @Test
@@ -403,7 +426,7 @@ class PostgresJobRepositoryIntegrationTests {
                 new JobLinkIngestion(
                         linkIngestionId,
                         jobId,
-                        normalizedUrl + "#details",
+                        "https://example.test/jobs/1",
                         normalizedUrl,
                         NOW,
                         200,

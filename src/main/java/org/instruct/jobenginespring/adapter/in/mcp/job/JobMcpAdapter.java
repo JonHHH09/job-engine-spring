@@ -92,7 +92,7 @@ public class JobMcpAdapter {
 
     @McpTool(
             name = "add_job_from_link",
-            description = "Insert a job from a URL by fetching the link and combining extracted page text with optional structured fields."
+            description = "Insert a job from a URL by fetching the link and combining extracted page text with optional structured fields. The full retrieval URL is used only for the fetch; persisted and MCP-visible provenance is redacted."
     )
     public CallToolResult addJobFromLink(
             @McpToolParam(required = true, description = "Job URL plus optional normalized fields")
@@ -103,7 +103,7 @@ public class JobMcpAdapter {
 
     @McpTool(
             name = "analyze_job_link",
-            description = "Fetch a job URL, run configured Hermes analysis, persist the structured Hermes response, and return an analysis-run report without creating a job."
+            description = "Fetch a job URL, run configured Hermes analysis, persist only redacted provenance plus the structured Hermes response, and return an analysis-run report without creating a job."
     )
     public CallToolResult analyzeJobLink(
             @McpToolParam(required = true, description = "Job URL analysis request")

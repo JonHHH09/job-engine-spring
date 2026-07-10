@@ -17,8 +17,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -28,7 +26,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -83,10 +80,11 @@ public class JobAnalysisService {
     @Transactional
     public AnalyzeJobLinkResult analyzeJobLink(AnalyzeJobLinkRequest request) {
         AnalyzeJobLinkRequest safeRequest = validateAnalyzeRequest(request);
-        String originalUrl = clean(safeRequest.url());
-        String normalizedUrl = normalizeUrl(originalUrl);
-        JobLinkFetchResult fetched = linkContentFetcher.fetch(originalUrl);
-        Map<String, Object> inputJson = analysisInput(normalizedUrl, normalizedUrl, fetched);
+        String retrievalUrl = clean(safeRequest.url());
+        String originalUrl = safeDisplayUrl(retrievalUrl);
+        String normalizedUrl = normalizeUrl(retrievalUrl);
+        JobLinkFetchResult fetched = linkContentFetcher.fetch(retrievalUrl);
+        Map<String, Object> inputJson = analysisInput(originalUrl, normalizedUrl, fetched);
         Instant now = clock.instant();
         UUID analysisRunId = UUID.randomUUID();
         FetchValidation fetchValidation = validateFetchedContentForAnalysis(fetched);
@@ -94,7 +92,7 @@ public class JobAnalysisService {
             JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                     analysisRunId,
                     SOURCE_TYPE_LINK,
-                    normalizedUrl,
+                    originalUrl,
                     normalizedUrl,
                     fetchValidation.fetchStatus(),
                     fetched == null ? null : fetched.httpStatus(),
@@ -120,7 +118,7 @@ public class JobAnalysisService {
             JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                     analysisRunId,
                     SOURCE_TYPE_LINK,
-                    normalizedUrl,
+                    originalUrl,
                     normalizedUrl,
                     FETCH_STATUS_FETCHED,
                     fetched.httpStatus(),
@@ -144,7 +142,7 @@ public class JobAnalysisService {
         JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
                 analysisRunId,
                 SOURCE_TYPE_LINK,
-                normalizedUrl,
+                originalUrl,
                 normalizedUrl,
                 FETCH_STATUS_FETCHED,
                 fetched.httpStatus(),
@@ -447,25 +445,11 @@ public class JobAnalysisService {
     }
 
     private static String normalizeUrl(String rawUrl) {
-        try {
-            URI uri = new URI(clean(rawUrl));
-            String scheme = uri.getScheme();
-            String host = uri.getHost();
-            if (scheme == null || host == null) {
-                throw validation("url", "must be an absolute http(s) URL");
-            }
-            if (!Set.of("http", "https").contains(scheme.toLowerCase(Locale.ROOT))) {
-                throw validation("url", "must be an absolute http(s) URL");
-            }
-            String path = uri.getRawPath().isBlank() ? "/" : uri.getRawPath();
-            if (path.length() > 1 && path.endsWith("/")) {
-                path = path.substring(0, path.length() - 1);
-            }
-            URI normalized = new URI(scheme.toLowerCase(Locale.ROOT), null, host.toLowerCase(Locale.ROOT), uri.getPort(), path, null, null);
-            return normalized.toString();
-        } catch (URISyntaxException exception) {
-            throw validation("url", "must be a valid absolute http(s) URL");
-        }
+        return JobUrlPolicy.canonicalSourceUrl(rawUrl);
+    }
+
+    private static String safeDisplayUrl(String rawUrl) {
+        return JobUrlPolicy.safeDisplayUrl(rawUrl);
     }
 
     private static String clean(String value) {

@@ -175,13 +175,13 @@ class JobServiceTests {
     @Test
     void addJobFromLinkFetchesPageContentAndReusesNormalizedUrl() {
         fetcher.result = new JobLinkContentFetcher.JobLinkFetchResult(
-                "https://Example.test/jobs/123?ref=abc",
+                "https://WWW.Indeed.com/jobs/123?jk=job-123&utm_source=email",
                 "Platform Engineer",
                 "Build cloud systems. Skills: Kubernetes, Java",
                 200
         );
         AddJobFromLinkRequest request = new AddJobFromLinkRequest(
-                "https://Example.test/jobs/123?ref=abc#section",
+                "https://WWW.Indeed.com/jobs/123?jk=job-123&utm_source=email#section",
                 "Example ATS",
                 null,
                 "Example Corp",
@@ -201,10 +201,64 @@ class JobServiceTests {
         assertEquals("reused_existing_job", second.status());
         assertEquals("link", first.job().job().sourceMethod());
         assertEquals("Platform Engineer", first.job().job().title());
-        assertEquals("https://example.test/jobs/123", first.job().linkIngestion().url());
-        assertEquals("https://example.test/jobs/123", first.job().linkIngestion().normalizedUrl());
+        assertEquals("https://www.indeed.com/jobs/123", first.job().linkIngestion().url());
+        assertEquals("https://www.indeed.com/jobs/123?jk=job-123", first.job().linkIngestion().normalizedUrl());
         assertEquals(200, first.job().linkIngestion().httpStatus());
         assertEquals(List.of("kubernetes", "java"), first.job().skills().stream().map(skill -> skill.normalizedSkill()).toList());
+    }
+
+    @Test
+    void addJobFromLinkDoesNotCollapseDifferentSafeIdentityQueryParameters() {
+        fetcher.result = new JobLinkContentFetcher.JobLinkFetchResult(
+                "https://www.indeed.com/jobs/view?jk=job-123&utm_source=email",
+                "Platform Engineer",
+                "Build cloud systems. Skills: Kubernetes, Java",
+                200
+        );
+
+        AddJobResult first = service.addJobFromLink(new AddJobFromLinkRequest(
+                "https://www.indeed.com/jobs/view?jk=job-123&utm_source=email&token=secret-one",
+                "Example ATS",
+                null,
+                "Example Corp",
+                "Remote",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        fetcher.result = new JobLinkContentFetcher.JobLinkFetchResult(
+                "https://www.indeed.com/jobs/view?jk=job-456&utm_source=email",
+                "Platform Engineer",
+                "Build cloud systems. Skills: Kubernetes, Java",
+                200
+        );
+
+        AddJobResult second = service.addJobFromLink(new AddJobFromLinkRequest(
+                "https://www.indeed.com/jobs/view?jk=job-456&utm_source=email&token=secret-two",
+                "Example ATS",
+                null,
+                "Example Corp",
+                "Remote",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        assertEquals("created_job", first.status());
+        assertEquals("created_job", second.status());
+        assertFalse(first.job().job().id().equals(second.job().job().id()));
+        assertEquals("https://www.indeed.com/jobs/view", first.job().linkIngestion().url());
+        assertEquals("https://www.indeed.com/jobs/view", second.job().linkIngestion().url());
+        assertEquals("https://www.indeed.com/jobs/view?jk=job-123", first.job().linkIngestion().normalizedUrl());
+        assertEquals("https://www.indeed.com/jobs/view?jk=job-456", second.job().linkIngestion().normalizedUrl());
+        assertEquals(2, repository.listJobs().size());
     }
 
     @Test
@@ -294,8 +348,8 @@ class JobServiceTests {
     @Test
     void addJobFromAnalyzedLinkUsesStoredAnalysisFieldsWithoutFetching() {
         AddJobResult result = service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://Example.test/jobs/456?token=secret-value#details",
-                "https://example.test/jobs/456",
+                "https://Boards.Greenhouse.io/example/jobs/456?gh_jid=job-456&token=secret-value#details",
+                "https://boards.greenhouse.io/example/jobs/456?gh_jid=job-456",
                 "Hermes analysis",
                 "Platform Engineer",
                 "Example Corp",
@@ -313,16 +367,16 @@ class JobServiceTests {
         assertEquals("created_job", result.status());
         assertEquals("Platform Engineer", result.job().job().title());
         assertEquals("Hermes analysis", result.job().job().sourceLabel());
-        assertEquals("https://example.test/jobs/456", result.job().linkIngestion().url());
-        assertEquals("https://example.test/jobs/456", result.job().linkIngestion().normalizedUrl());
+        assertEquals("https://boards.greenhouse.io/example/jobs/456", result.job().linkIngestion().url());
+        assertEquals("https://boards.greenhouse.io/example/jobs/456?gh_jid=job-456", result.job().linkIngestion().normalizedUrl());
         assertEquals("Fetched Title", result.job().linkIngestion().sourceTitle());
         assertEquals(200, result.job().linkIngestion().httpStatus());
         assertEquals(List.of("kubernetes", "java"), result.job().skills().stream().map(JobSkill::normalizedSkill).toList());
         assertEquals(0, fetcher.calls);
 
         AddJobResult reused = service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://Example.test/jobs/456?token=secret-value#details",
-                "https://example.test/jobs/456",
+                "https://Boards.Greenhouse.io/example/jobs/456?gh_jid=job-456&token=secret-value#details",
+                "https://boards.greenhouse.io/example/jobs/456?gh_jid=job-456",
                 "Hermes analysis",
                 "Platform Engineer",
                 "Example Corp",
@@ -539,6 +593,44 @@ class JobServiceTests {
     }
 
     @Test
+    void updateJobPreservesLinkIdentityInCanonicalFingerprint() {
+        AddJobResult created = service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
+                "https://www.indeed.com/jobs/789?jk=job-789&token=secret",
+                "https://www.indeed.com/jobs/789?jk=job-789",
+                "Hermes analysis",
+                "Platform Engineer",
+                "Example Corp",
+                "Remote",
+                "Build cloud platforms for internal developer teams.",
+                List.of("Kubernetes", "Java"),
+                "4+ years",
+                "Full-time",
+                "Senior",
+                NOW,
+                200,
+                "Fetched Title"
+        ));
+        String fingerprint = created.job().job().canonicalFingerprint();
+
+        JobAggregate updated = service.updateJob(new UpdateJobRequest(
+                created.job().job().id(),
+                "refined source",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        assertEquals("refined source", updated.job().sourceLabel());
+        assertEquals(fingerprint, updated.job().canonicalFingerprint());
+    }
+
+    @Test
     void updateJobRejectsInvalidRequestsAndMissingJobs() {
         assertInvalidUpdateRequest(null, "request", "must not be null");
         assertInvalidUpdateRequest(new UpdateJobRequest(null, null, null, null, null, null, null, null, null, null, null), "jobId", "must not be null");
@@ -666,42 +758,46 @@ class JobServiceTests {
                 "https://exa mple.test/jobs", null, null, null, null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "url", "reason", "must be a valid absolute http(s) URL"), uriSyntaxException.details());
+        ApplicationException userInfoException = assertThrows(ApplicationException.class, () -> service.addJobFromLink(new AddJobFromLinkRequest(
+                "https://user:secret@www.indeed.com/jobs/123", null, null, null, null, null, null, null, null, null, null
+        )));
+        assertEquals(Map.of("field", "url", "reason", "must not include userinfo"), userInfoException.details());
         ApplicationException nullAnalyzedRequest = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(null));
         assertEquals(Map.of("field", "request", "reason", "must not be null"), nullAnalyzedRequest.details());
         ApplicationException nullAnalyzedUrl = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                null, "https://example.test/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
+                null, "https://www.indeed.com/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "url", "reason", "must not be blank"), nullAnalyzedUrl.details());
         ApplicationException blankAnalyzedUrl = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                " ", "https://example.test/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
+                " ", "https://www.indeed.com/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "url", "reason", "must not be blank"), blankAnalyzedUrl.details());
         ApplicationException nullNormalizedUrl = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", null, null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", null, null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "normalizedUrl", "reason", "must not be blank"), nullNormalizedUrl.details());
         ApplicationException blankNormalizedUrl = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", " ", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", " ", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "normalizedUrl", "reason", "must not be blank"), blankNormalizedUrl.details());
         ApplicationException blankAnalyzedTitle = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", "https://example.test/jobs/1", null, " ", null, null, "Description long enough", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", "https://www.indeed.com/jobs/1", null, " ", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "title", "reason", "must not be blank"), blankAnalyzedTitle.details());
         ApplicationException nullAnalyzedTitle = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", "https://example.test/jobs/1", null, null, null, null, "Description long enough", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", "https://www.indeed.com/jobs/1", null, null, null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "title", "reason", "must not be blank"), nullAnalyzedTitle.details());
         ApplicationException blankAnalyzedDescription = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", "https://example.test/jobs/1", null, "Title", null, null, " ", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", "https://www.indeed.com/jobs/1", null, "Title", null, null, " ", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "description", "reason", "must not be blank"), blankAnalyzedDescription.details());
         ApplicationException nullAnalyzedDescription = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", "https://example.test/jobs/1", null, "Title", null, null, null, null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", "https://www.indeed.com/jobs/1", null, "Title", null, null, null, null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "description", "reason", "must not be blank"), nullAnalyzedDescription.details());
         ApplicationException badAnalyzedNormalizedUrl = assertThrows(ApplicationException.class, () -> service.addJobFromAnalyzedLink(new JobService.AddJobFromAnalyzedLinkRequest(
-                "https://example.test/jobs/1", "ftp://example.test/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
+                "https://www.indeed.com/jobs/1", "ftp://www.indeed.com/jobs/1", null, "Title", null, null, "Description long enough", null, null, null, null, null, null, null
         )));
         assertEquals(Map.of("field", "url", "reason", "must be an absolute http(s) URL"), badAnalyzedNormalizedUrl.details());
         ApplicationException nullSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(null));
@@ -723,14 +819,14 @@ class JobServiceTests {
     @Test
     void normalizesUrlByRemovingTrailingPathSlashAndFragment() {
         fetcher.result = new JobLinkContentFetcher.JobLinkFetchResult(
-                "https://example.test/jobs/123/",
+                "https://www.indeed.com/jobs/123/?jk=job-123&utm_source=email",
                 "Platform Engineer",
                 "Build platforms",
                 200
         );
 
         AddJobResult result = service.addJobFromLink(new AddJobFromLinkRequest(
-                "https://example.test/jobs/123/#details",
+                "https://www.indeed.com/jobs/123/?jk=job-123&utm_source=email#details",
                 null,
                 null,
                 null,
@@ -743,7 +839,7 @@ class JobServiceTests {
                 null
         ));
 
-        assertEquals("https://example.test/jobs/123", result.job().linkIngestion().normalizedUrl());
+        assertEquals("https://www.indeed.com/jobs/123?jk=job-123", result.job().linkIngestion().normalizedUrl());
     }
 
 
@@ -759,7 +855,7 @@ class JobServiceTests {
                 UUID.randomUUID(), UUID.randomUUID(), "Java", "java", true, -1, NOW
         ));
         assertThrows(IllegalArgumentException.class, () -> new JobLinkIngestion(
-                UUID.randomUUID(), UUID.randomUUID(), " ", "https://example.test", NOW, 200, null, NOW
+                UUID.randomUUID(), UUID.randomUUID(), " ", "https://www.indeed.com", NOW, 200, null, NOW
         ));
         assertThrows(IllegalArgumentException.class, () -> new JobTextIngestion(
                 UUID.randomUUID(), UUID.randomUUID(), null, " ", NOW
@@ -771,7 +867,7 @@ class JobServiceTests {
                 UUID.randomUUID(), UUID.randomUUID(), "Java", null, true, 0, NOW
         ));
         assertThrows(IllegalArgumentException.class, () -> new JobLinkIngestion(
-                UUID.randomUUID(), UUID.randomUUID(), "https://example.test", null, NOW, 200, null, NOW
+                UUID.randomUUID(), UUID.randomUUID(), "https://www.indeed.com", null, NOW, 200, null, NOW
         ));
         assertThrows(IllegalArgumentException.class, () -> new JobTextIngestion(
                 UUID.randomUUID(), UUID.randomUUID(), null, null, NOW
@@ -831,14 +927,14 @@ class JobServiceTests {
         assertEquals(0, scoreText.invoke(null, List.of("java"), "field", null, 2, matchedFields));
         assertEquals(2, scoreText.invoke(null, List.of("java"), "field", "javascript", 2, matchedFields));
         assertEquals(2, scoreText.invoke(null, List.of("javascript"), "field", "java", 2, matchedFields));
-        assertEquals("https://example.test/", normalizeUrl.invoke(null, "HTTPS://EXAMPLE.TEST"));
-        assertEquals("http://example.test/jobs", normalizeUrl.invoke(null, "HTTP://EXAMPLE.TEST/jobs/"));
-        assertEquals("https://example.test/jobs", normalizeUrl.invoke(null, "https://example.test/jobs?ref=1#frag"));
+        assertEquals("https://www.indeed.com/", normalizeUrl.invoke(null, "HTTPS://WWW.INDEED.COM"));
+        assertEquals("http://www.indeed.com/jobs", normalizeUrl.invoke(null, "HTTP://WWW.INDEED.COM/jobs/"));
+        assertEquals("https://www.indeed.com/jobs?jk=job-123", normalizeUrl.invoke(null, "https://www.indeed.com/jobs?jk=job-123&ref=1#frag"));
         assertThrows(ApplicationException.class, () -> service.addJobFromLink(new AddJobFromLinkRequest(
-                "example.test/job", null, null, null, null, null, null, null, null, null, null
+                "www.indeed.com/job", null, null, null, null, null, null, null, null, null, null
         )));
         assertThrows(ApplicationException.class, () -> service.addJobFromLink(new AddJobFromLinkRequest(
-                "ftp://example.test/job", null, null, null, null, null, null, null, null, null, null
+                "ftp://www.indeed.com/job", null, null, null, null, null, null, null, null, null, null
         )));
         assertThrows(ApplicationException.class, () -> service.addJobFromLink(new AddJobFromLinkRequest(
                 "https:/missing-host", null, null, null, null, null, null, null, null, null, null
@@ -888,7 +984,7 @@ class JobServiceTests {
     }
 
     private static final class FakeJobLinkContentFetcher implements JobLinkContentFetcher {
-        private JobLinkFetchResult result = new JobLinkFetchResult("https://example.test", "Fetched Job", "Fetched description", 200);
+        private JobLinkFetchResult result = new JobLinkFetchResult("https://www.indeed.com", "Fetched Job", "Fetched description", 200);
         private int calls;
 
         @Override
