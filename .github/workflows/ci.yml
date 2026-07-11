@@ -37,10 +37,14 @@ jobs:
         with:
           scandir: scripts
 
-      - name: Check and test Python smoke helper
+      - name: Check and test Python operational helpers
         run: |
-          python3 -m py_compile scripts/smoke-mcp-stdio.py scripts/test-smoke-mcp-stdio.py
+          python3 -m py_compile scripts/smoke-mcp-stdio.py scripts/test-smoke-mcp-stdio.py scripts/verify-mcp-restored-data.py scripts/tests/test-verify-mcp-restored-data.py
           python3 scripts/test-smoke-mcp-stdio.py
+          python3 scripts/tests/test-verify-mcp-restored-data.py
+
+      - name: Test PostgreSQL operational scripts
+        run: bash scripts/tests/run-postgres-ops-tests.sh
 
       - name: Validate Docker Compose configuration
         run: docker compose config >/tmp/job-engine-compose-config.yaml
@@ -151,6 +155,9 @@ jobs:
 
       - name: Smoke-test MCP over container STDIO
         run: MCP_IMAGE=job-engine-spring:ci MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
+
+      - name: Docker-backed disposable PostgreSQL backup/restore acceptance
+        run: POSTGRES_OPS_TEST_MODE=1 MCP_IMAGE=job-engine-spring:ci bash scripts/tests/postgres-ops-integration.sh
 
       - name: Compose cleanup
         if: always()
