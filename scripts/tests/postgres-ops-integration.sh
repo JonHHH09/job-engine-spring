@@ -19,17 +19,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 (cd "$ROOT_DIR" && COMPOSE_PROJECT_NAME="$primary_project" docker compose up -d --wait postgres >/dev/null)
-# Run the MCP long enough for Flyway against the disposable source, then remove only that run container.
-mcp_container="$(cd "$ROOT_DIR" && MCP_IMAGE="$immutable_mcp_image" COMPOSE_PROJECT_NAME="$primary_project" docker compose --profile manual-mcp -p "$primary_project" run -d -T mcp)"
+# Complete MCP initialization so Flyway is settled before capturing the source backup.
+(cd "$ROOT_DIR" && MCP_IMAGE="$immutable_mcp_image" COMPOSE_PROJECT_NAME="$primary_project" \
+  python3 "$ROOT_DIR/scripts/smoke-mcp-stdio.py" --timeout 120 -- \
+  docker compose --profile manual-mcp -p "$primary_project" run --rm -T mcp)
 source_container="$(cd "$ROOT_DIR" && COMPOSE_PROJECT_NAME="$primary_project" docker compose ps -q postgres)"
-for _ in $(seq 1 60); do
-  if docker exec -i -u postgres "$source_container" psql -X -At -d "${JOB_ENGINE_POSTGRES_DB:-job_engine}" -c "SELECT to_regclass('profile.flyway_schema_history') IS NOT NULL" 2>/dev/null | grep -qx t; then
-    break
-  fi
-  sleep 1
-done
-docker exec -i -u postgres "$source_container" psql -X -At -d "${JOB_ENGINE_POSTGRES_DB:-job_engine}" -c "SELECT to_regclass('profile.flyway_schema_history') IS NOT NULL" | grep -qx t || { printf 'disposable source schema was not initialized\n' >&2; exit 1; }
-docker rm -f "$mcp_container" >/dev/null
 docker exec -i -u postgres "$source_container" psql -X -v ON_ERROR_STOP=1 -d "${JOB_ENGINE_POSTGRES_DB:-job_engine}" >/dev/null <<'SQL'
 BEGIN;
 INSERT INTO profile.profiles (id, full_name, email, summary, created_at, updated_at)
