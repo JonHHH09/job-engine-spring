@@ -122,6 +122,45 @@ Stop the local database and remove its development volume when you intentionally
 docker compose down -v
 ```
 
+## PostgreSQL backup and recovery
+
+Host-side scripts create private PostgreSQL custom-format backup sets outside Docker volumes. Scheduling is deliberately disabled: run these commands explicitly from a trusted host. Backup data and metadata remain under the ignored `backups/postgres/` boundary by default.
+
+Create an atomic transaction-consistent backup:
+
+```bash
+./scripts/postgres-backup.sh
+```
+
+Verify a backup only with a released immutable MCP image. Verification creates and removes a uniquely labelled disposable Compose project; it never restores into the primary volume:
+
+```bash
+./scripts/postgres-verify-backup.sh \
+  --backup-set backups/postgres/<timestamped-set> \
+  --image registry.example/job-engine@sha256:<64-hex-digest>
+```
+
+Emergency restore is intentionally explicit and destructive only for a separately started, non-primary Compose project/volume. The command verifies the checksum and Compose/Docker labels before mutation; there is no primary-target bypass:
+
+```bash
+./scripts/postgres-restore.sh \
+  --backup-set backups/postgres/<timestamped-set> \
+  --target-project <disposable-project> \
+  --target-volume <disposable-project>_postgres-data \
+  --database job_engine \
+  --confirm RESTORE --confirm-existing OVERWRITE
+```
+
+Preview retention before deletion; pruning considers only checksum-valid, released-image-verified sets and always keeps the newest verified set:
+
+```bash
+./scripts/postgres-backup-prune.sh --daily 7 --weekly 4 --monthly 12
+./scripts/postgres-backup-prune.sh --daily 7 --weekly 4 --monthly 12 --confirm PRUNE
+./scripts/postgres-diagnostics.sh
+```
+
+For a disposable Docker acceptance check, run `bash scripts/tests/postgres-ops-integration.sh`. Set `MCP_IMAGE` to an immutable digest reference to include isolated MCP verification.
+
 ## Document storage and extraction contract
 
 `extract_pdf_text` accepts a local PDF path and returns extracted text with optional page-level text. PDF content is treated as untrusted user data: the server returns the extracted content but does not persist it, execute it, or follow instructions embedded in the document. Invalid paths, non-PDF files, unreadable files, and extraction failures are returned as sanitized validation errors.
