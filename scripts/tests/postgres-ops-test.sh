@@ -47,6 +47,22 @@ require_confirmation "DELETE" "DELETE"
 assert_fails "mutable image is rejected" require_digest_image "job-engine:latest"
 require_digest_image "registry.example/job-engine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+if grep -q 'dump\.read_bytes()' "$ROOT_DIR/scripts/postgres-backup-prune.sh"; then
+  printf 'FAIL: prune checksum validation reads the complete dump into memory\n' >&2
+  failures=$((failures + 1))
+fi
+
+pending_report="$work_dir/verification.pending.json"
+final_report="$work_dir/verification-released.json"
+printf '%s\n' '{"format":1,"status":"mcp-verified"}' >"$pending_report"
+baseline='{"tables":{"profiles":1},"flyway":{"applied":true}}'
+changed='{"tables":{"profiles":2},"flyway":{"applied":true}}'
+assert_fails "protected-state mismatch rejects verification report" finalize_verification_report "$pending_report" "$final_report" "$baseline" "$changed"
+if [[ -e "$pending_report" || -e "$final_report" ]]; then
+  printf 'FAIL: failed verification left a pending or trusted report\n' >&2
+  failures=$((failures + 1))
+fi
+
 safe_log "backup_created"
 if safe_log 'sensitive value'; then
   printf 'FAIL: dynamic log category was accepted\n' >&2

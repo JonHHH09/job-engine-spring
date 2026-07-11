@@ -40,7 +40,11 @@ for child in root.iterdir():
     try:
         data = json.loads(metadata.read_text(encoding="utf-8"))
         check = data["dump"]["sha256"]
-        if not isinstance(check, str) or hashlib.sha256(dump.read_bytes()).hexdigest() != check:
+        digest = hashlib.sha256()
+        with dump.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        if not isinstance(check, str) or digest.hexdigest() != check:
             continue
         report = json.loads(verification.read_text(encoding="utf-8"))
         image = report.get("image")

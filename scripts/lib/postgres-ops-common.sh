@@ -191,3 +191,49 @@ safe_set_path() {
   }
   printf '%s\n' "$canonical_candidate"
 }
+
+finalize_verification_report() {
+  local pending="$1" final="$2" baseline="$3" after="$4"
+  if ! python3 - "$pending" "$baseline" "$after" <<'PY'
+import json
+import os
+import sys
+import tempfile
+
+path, baseline_json, after_json = sys.argv[1:]
+before, after = json.loads(baseline_json), json.loads(after_json)
+if before != after:
+    before_tables, after_tables = before.get("tables", {}), after.get("tables", {})
+    changed_tables = sorted(key for key in set(before_tables) | set(after_tables) if before_tables.get(key) != after_tables.get(key))
+    flyway_changed = before.get("flyway") != after.get("flyway")
+    detail = ",".join(changed_tables) if changed_tables else "none"
+    raise SystemExit(f"protected state changed during verification: tables={detail} flyway={str(flyway_changed).lower()}")
+with open(path, encoding="utf-8") as handle:
+    report = json.load(handle)
+if report.get("status") != "mcp-verified":
+    raise SystemExit("MCP verification report has an invalid intermediate status")
+report["status"] = "verified"
+fd, temporary = tempfile.mkstemp(prefix=".verification-final.", dir=os.path.dirname(path))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(report, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+except BaseException:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+  then
+    rm -f -- "$pending"
+    return 1
+  fi
+  if ! ln "$pending" "$final"; then
+    rm -f -- "$pending"
+    return 1
+  fi
+  rm -f -- "$pending"
+}

@@ -45,7 +45,12 @@ verify_project="job-engine-backup-verify-$(date -u +%s)-$RANDOM"
 verify_volume="${verify_project}_postgres-data"
 database="${JOB_ENGINE_POSTGRES_DB:-job_engine}"
 cleaned=false
+pending_report=""
 cleanup() {
+  if [[ -n "$pending_report" ]]; then
+    rm -f -- "$pending_report"
+    pending_report=""
+  fi
   if [[ "$cleaned" == false && "$verify_project" == job-engine-backup-verify-* ]]; then
     (cd "$ROOT_DIR" && COMPOSE_PROJECT_NAME="$verify_project" docker compose --profile manual-mcp down -v --remove-orphans >/dev/null 2>&1) || true
     cleaned=true
@@ -65,23 +70,18 @@ if json.loads(sys.argv[1]) != json.loads(sys.argv[2]):
 PY
 document_id="$(docker exec -i -u postgres "$container" psql -X -At -v ON_ERROR_STOP=1 -d "$database" -c 'SELECT id FROM document.documents ORDER BY id LIMIT 1' 2>/dev/null || true)"
 run_image_verification() {
-  local subject_image="$1" report_name="$2" after
+  local subject_image="$1" report_name="$2" final_report after
+  final_report="$backup_set/$report_name"
+  pending_report="$backup_set/.${report_name}.pending.$$.$RANDOM"
+  [[ ! -e "$final_report" && ! -L "$final_report" ]] || { printf 'verification report already exists\n' >&2; return 1; }
   if [[ "$document_id" =~ ^[0-9a-fA-F-]{36}$ ]]; then
-    MCP_IMAGE="$subject_image" COMPOSE_PROJECT_NAME="$verify_project" python3 "$ROOT_DIR/scripts/verify-mcp-restored-data.py" --report "$backup_set/$report_name" --image "$subject_image" --backup-sha256 "$backup_checksum" --document-id "$document_id" -- docker compose --profile manual-mcp -p "$verify_project" run --rm -T mcp
+    MCP_IMAGE="$subject_image" COMPOSE_PROJECT_NAME="$verify_project" python3 "$ROOT_DIR/scripts/verify-mcp-restored-data.py" --report "$pending_report" --image "$subject_image" --backup-sha256 "$backup_checksum" --document-id "$document_id" -- docker compose --profile manual-mcp -p "$verify_project" run --rm -T mcp
   else
-    MCP_IMAGE="$subject_image" COMPOSE_PROJECT_NAME="$verify_project" python3 "$ROOT_DIR/scripts/verify-mcp-restored-data.py" --report "$backup_set/$report_name" --image "$subject_image" --backup-sha256 "$backup_checksum" -- docker compose --profile manual-mcp -p "$verify_project" run --rm -T mcp
+    MCP_IMAGE="$subject_image" COMPOSE_PROJECT_NAME="$verify_project" python3 "$ROOT_DIR/scripts/verify-mcp-restored-data.py" --report "$pending_report" --image "$subject_image" --backup-sha256 "$backup_checksum" -- docker compose --profile manual-mcp -p "$verify_project" run --rm -T mcp
   fi
   after="$(docker exec -i -u postgres "$container" psql -X -At -v ON_ERROR_STOP=1 -d "$database" -c "$protected_query")"
-  python3 - "$baseline" "$after" <<'PY'
-import json, sys
-before, after = json.loads(sys.argv[1]), json.loads(sys.argv[2])
-if before != after:
-    before_tables, after_tables = before.get("tables", {}), after.get("tables", {})
-    changed_tables = sorted(key for key in set(before_tables) | set(after_tables) if before_tables.get(key) != after_tables.get(key))
-    flyway_changed = before.get("flyway") != after.get("flyway")
-    detail = ",".join(changed_tables) if changed_tables else "none"
-    raise SystemExit(f"protected state changed during verification: tables={detail} flyway={str(flyway_changed).lower()}")
-PY
+  finalize_verification_report "$pending_report" "$final_report" "$baseline" "$after"
+  pending_report=""
 }
 run_image_verification "$image" "verification-released.json"
 if [[ -n "$candidate_image" ]]; then

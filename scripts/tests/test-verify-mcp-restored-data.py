@@ -37,7 +37,7 @@ class VerifyMcpRestoredDataTests(unittest.TestCase):
             completed = subprocess.run([sys.executable, str(VERIFY), "--report", str(report), "--image", DIGEST, "--backup-sha256", "b" * 64, "--document-id", "00000000-0000-0000-0000-000000000000", "--", sys.executable, str(fake)], capture_output=True, text=True, timeout=30, check=False)
             self.assertEqual(0, completed.returncode, completed.stderr)
             result = json.loads(report.read_text(encoding="utf-8"))
-        self.assertEqual("verified", result["status"])
+        self.assertEqual("mcp-verified", result["status"])
         self.assertTrue(result["mcp"]["documentMetadataChecked"])
         self.assertNotIn(str(root), json.dumps(result))
 

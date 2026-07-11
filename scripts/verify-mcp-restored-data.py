@@ -82,7 +82,7 @@ def main() -> int:
         if args.document_id:
             call(process, selector, 5, "get_document_metadata", {"documentId": args.document_id})
             document_checked = True
-        report = {"format": 1, "status": "verified", "image": args.image, "backupSha256": args.backup_sha256, "mcp": {"health": bool(health), "profilesReturned": collection_size(profiles, "profiles"), "jobsReturned": collection_size(jobs, "jobs"), "documentMetadataChecked": document_checked}}
+        report = {"format": 1, "status": "mcp-verified", "image": args.image, "backupSha256": args.backup_sha256, "mcp": {"health": bool(health), "profilesReturned": collection_size(profiles, "profiles"), "jobsReturned": collection_size(jobs, "jobs"), "documentMetadataChecked": document_checked}}
         args.report.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with args.report.open("x", encoding="utf-8") as handle:
             json.dump(report, handle, sort_keys=True, separators=(",", ":"))
