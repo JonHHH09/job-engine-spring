@@ -63,6 +63,16 @@ if [[ -e "$pending_report" || -e "$final_report" ]]; then
   failures=$((failures + 1))
 fi
 
+integration_script="$ROOT_DIR/scripts/tests/postgres-ops-integration.sh"
+if ! grep -Fq 'scripts/smoke-mcp-stdio.py' "$integration_script"; then
+  printf 'FAIL: acceptance does not use MCP readiness smoke\n' >&2
+  failures=$((failures + 1))
+fi
+if grep -Fq "to_regclass('profile.flyway_schema_history')" "$integration_script"; then
+  printf 'FAIL: acceptance still uses Flyway table existence as readiness\n' >&2
+  failures=$((failures + 1))
+fi
+
 safe_log "backup_created"
 if safe_log 'sensitive value'; then
   printf 'FAIL: dynamic log category was accepted\n' >&2
