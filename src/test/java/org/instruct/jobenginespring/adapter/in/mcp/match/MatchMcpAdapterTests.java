@@ -147,6 +147,24 @@ class MatchMcpAdapterTests {
     }
 
     @Test
+    void omittedRequiredReviewFieldsReturnStructuredValidationErrors() {
+        var service = mock(MatchAnalysisService.class);
+        var adapter = new MatchMcpAdapter(service);
+        var reportId = UUID.randomUUID();
+        var withoutScore = new MatchMcpAdapter.ReviewRequest(reportId, "human", "provider-neutral", "v1", null,
+                MatchOutcome.PARTIAL_MATCH, false, List.of(), List.of(), "score_adjustment");
+        var withoutBlocker = new MatchMcpAdapter.ReviewRequest(reportId, "human", "provider-neutral", "v1", 50,
+                MatchOutcome.PARTIAL_MATCH, null, List.of(), List.of(), "score_adjustment");
+
+        for (var result : List.of(adapter.submitReview(withoutScore), adapter.submitReview(withoutBlocker))) {
+            assertTrue(result.isError());
+            assertEquals("validation_error", assertInstanceOf(ApplicationErrorResponse.class,
+                    result.structuredContent()).code());
+        }
+        verifyNoInteractions(service);
+    }
+
+    @Test
     void responseRecordsDefensivelyCopyTheirLists() {
         assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Reports(null));
         assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Reviews(null));

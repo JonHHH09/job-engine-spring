@@ -37,8 +37,13 @@ public class MatchMcpAdapter {
     }
     @McpTool(name="submit_match_review", description="Persist a separate advisory review and create a deduplicated disagreement when divergence policy v1 triggers.")
     public CallToolResult submitReview(@McpToolParam(required=true,description="Advisory review") ReviewRequest request) {
-        return call(() -> { var r=require(request); return service.submitReview(new MatchAnalysisService.ReviewDraft(r.reportId(),r.reviewer(),r.model(),
-                r.reviewVersion(),r.overallScore(),r.outcome(),r.blockerMismatch(),r.components(),r.evidence(),r.summary())); });
+        return call(() -> {
+            var r = require(request);
+            if (r.overallScore() == null || r.blockerMismatch() == null)
+                throw new IllegalArgumentException("overallScore and blockerMismatch are required");
+            return service.submitReview(new MatchAnalysisService.ReviewDraft(r.reportId(),r.reviewer(),r.model(),
+                    r.reviewVersion(),r.overallScore(),r.outcome(),r.blockerMismatch(),r.components(),r.evidence(),r.summary()));
+        });
     }
     @McpTool(name="get_match_review", description="Get one advisory review.")
     public CallToolResult getReview(@McpToolParam(required=true,description="Review ID") IdRequest request){return call(() -> service.getReview(require(request).id()));}
@@ -58,8 +63,8 @@ public class MatchMcpAdapter {
     public record ReportRequest(UUID reportId){} public record ReportFilter(UUID profileId,UUID jobId){} public record DisagreementFilter(UUID reportId){}
     public record AcknowledgeRequest(UUID disagreementId,String linearIssueId){}
     public record LinkRequest(UUID disagreementId,String linearIssueId){}
-    public record ReviewRequest(UUID reportId,String reviewer,String model,String reviewVersion,int overallScore,MatchOutcome outcome,
-                                boolean blockerMismatch,List<ComponentScore> components,List<MatchEvidence> evidence,String summary){}
+    public record ReviewRequest(UUID reportId,String reviewer,String model,String reviewVersion,Integer overallScore,MatchOutcome outcome,
+                                Boolean blockerMismatch,List<ComponentScore> components,List<MatchEvidence> evidence,String summary){}
     public record Reports(List<MatchAnalysisService.ReportView> reports){public Reports{reports=List.copyOf(reports);}}
     public record Reviews(List<MatchReview> reviews){public Reviews{reviews=List.copyOf(reviews);}}
     public record Disagreements(List<MatchDisagreement> disagreements){public Disagreements{disagreements=List.copyOf(disagreements);}}
