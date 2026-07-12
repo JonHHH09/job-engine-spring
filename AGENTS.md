@@ -20,6 +20,7 @@ business concepts, `application` holds use cases and orchestration, and
 - `./mvnw spring-boot:run` starts the application locally.
 - `docker compose build mcp` builds the local container image for the persistent Streamable HTTP MCP server.
 - `docker compose up -d --wait postgres mcp` starts PostgreSQL privately and publishes MCP only on host loopback; `python3 scripts/smoke-mcp-http.py` verifies initialize, discovery, and `health`.
+- `./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:vX.Y.Z` is the guarded release-only deployment path; it refuses local/`latest` images and recreates the service without building.
 - `./scripts/run-local-mcp-container.sh` is the explicit STDIO CI/package-verification launcher. It activates the `stdio` profile and must not be used for normal Hermes tool calls.
 - `./scripts/run-mcp-stdio-diag.sh` launches a unique-named diagnostic MCP STDIO container so engineering smoke/diagnosis cannot kill an active Hermes session.
 - `python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh` verifies the containerized MCP `initialize` + `tools/list` STDIO contract for the default instance. Prefer `./scripts/run-mcp-stdio-diag.sh` when Hermes may already be connected.

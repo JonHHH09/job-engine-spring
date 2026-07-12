@@ -116,11 +116,10 @@ mcp_servers:
     connect_timeout: 60
 ```
 
-For a published release, set `MCP_IMAGE` to the immutable release tag or digest, pull it, and explicitly recreate the service:
+For a published release, use the guarded deployment helper with a version tag or immutable digest. It refuses local images and `latest`, pulls the package, and explicitly recreates the persistent service without building:
 
 ```bash
-MCP_IMAGE=ghcr.io/jonhhh09/job-engine-spring:vX.Y.Z docker compose pull mcp
-MCP_IMAGE=ghcr.io/jonhhh09/job-engine-spring:vX.Y.Z docker compose up -d --no-build --force-recreate --wait postgres mcp
+./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:vX.Y.Z
 python3 scripts/smoke-mcp-http.py
 ```
 
