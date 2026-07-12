@@ -143,8 +143,12 @@ jobs:
             -t job-engine-spring:release-candidate-amd64 \
             .
 
-      - name: Smoke-test linux/amd64 release image
-        run: MCP_IMAGE=job-engine-spring:release-candidate-amd64 MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
+      - name: Smoke-test linux/amd64 release image over Streamable HTTP and STDIO
+        run: |
+          MCP_IMAGE=job-engine-spring:release-candidate-amd64 docker compose up -d --wait postgres mcp
+          python3 scripts/smoke-mcp-http.py --timeout 120
+          docker compose stop mcp
+          MCP_IMAGE=job-engine-spring:release-candidate-amd64 MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-mcp-stdio-diag.sh
 
       - name: Build linux/arm64 release container image from verified jar
         run: |
@@ -161,8 +165,12 @@ jobs:
             -t job-engine-spring:release-candidate-arm64 \
             .
 
-      - name: Smoke-test linux/arm64 release image
-        run: MCP_IMAGE=job-engine-spring:release-candidate-arm64 MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
+      - name: Smoke-test linux/arm64 release image over Streamable HTTP and STDIO
+        run: |
+          MCP_IMAGE=job-engine-spring:release-candidate-arm64 docker compose up -d --wait postgres mcp
+          python3 scripts/smoke-mcp-http.py --timeout 120
+          docker compose stop mcp
+          MCP_IMAGE=job-engine-spring:release-candidate-arm64 MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-mcp-stdio-diag.sh
 
       - name: Record and export smoke-tested platform images
         run: |

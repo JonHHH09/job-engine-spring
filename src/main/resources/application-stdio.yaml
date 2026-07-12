@@ -1,0 +1,13 @@
+spring:
+  main:
+    web-application-type: none
+  ai:
+    mcp:
+      server:
+        protocol: STREAMABLE
+        stdio: true
+
+job-engine:
+  mcp:
+    transport: stdio
+    containerized: false
