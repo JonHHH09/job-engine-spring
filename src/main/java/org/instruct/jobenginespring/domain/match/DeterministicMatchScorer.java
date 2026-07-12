@@ -20,8 +20,8 @@ public final class DeterministicMatchScorer {
         var components = new ArrayList<ComponentScore>();
         components.add(scoreTechnical(profile, job, evidence));
         components.add(unknownOrExperience(profile, job, evidence));
-        components.add(textComponent(MatchComponent.DOMAIN, job.job().description(), profile, evidence));
-        components.add(textComponent(MatchComponent.DELIVERY, job.job().description(), profile, evidence));
+        components.add(textComponent(MatchComponent.DOMAIN));
+        components.add(textComponent(MatchComponent.DELIVERY));
         components.add(new ComponentScore(MatchComponent.HARD_REQUIREMENTS, 0, 10, EvidenceStatus.UNKNOWN));
         return MatchReport.create(profile.profile().id(), job.job().id(), profile.profile().updatedAt(),
                 job.job().updatedAt(), ALGORITHM_VERSION, components, evidence, now);
@@ -51,11 +51,7 @@ public final class DeterministicMatchScorer {
         return new ComponentScore(MatchComponent.EXPERIENCE_SENIORITY, 13, 25, EvidenceStatus.PARTIAL);
     }
 
-    private ComponentScore textComponent(MatchComponent component, String requirement, ProfileAggregate profile,
-                                         List<MatchEvidence> evidence) {
-        if (requirement == null || requirement.isBlank()) return new ComponentScore(component, 0, component.availablePoints(), EvidenceStatus.UNKNOWN);
-        var profileText = profile.experiences().stream().map(e -> String.valueOf(e.description())).collect(java.util.stream.Collectors.joining(" "));
-        if (profileText.isBlank()) return new ComponentScore(component, 0, component.availablePoints(), EvidenceStatus.UNKNOWN);
+    private ComponentScore textComponent(MatchComponent component) {
         return new ComponentScore(component, 0, component.availablePoints(), EvidenceStatus.UNKNOWN);
     }
 
