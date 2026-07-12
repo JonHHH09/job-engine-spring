@@ -14,9 +14,7 @@ LABEL org.opencontainers.image.title="job-engine-spring" \
       org.instruct.job-engine.jar-sha256="${JAR_SHA256}"
 
 ENV SPRING_DOCKER_COMPOSE_ENABLED=false \
-    JOB_ENGINE_DOCUMENT_IMPORT_ROOT=/app/tmp/imports \
-    JOB_ENGINE_MCP_BIND_ADDRESS=0.0.0.0 \
-    JOB_ENGINE_MCP_CONTAINERIZED=true
+    JOB_ENGINE_DOCUMENT_IMPORT_ROOT=/app/tmp/imports
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends curl \

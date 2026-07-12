@@ -17,9 +17,7 @@ RUN ./mvnw --no-transfer-progress -DskipTests package
 FROM eclipse-temurin:25-jre@sha256:d0eb1b9018b3044da1b7346f39e945f71095749853d69a3aa16b8c99dad9bb45
 
 ENV SPRING_DOCKER_COMPOSE_ENABLED=false \
-    JOB_ENGINE_DOCUMENT_IMPORT_ROOT=/app/tmp/imports \
-    JOB_ENGINE_MCP_BIND_ADDRESS=0.0.0.0 \
-    JOB_ENGINE_MCP_CONTAINERIZED=true
+    JOB_ENGINE_DOCUMENT_IMPORT_ROOT=/app/tmp/imports
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends curl \
