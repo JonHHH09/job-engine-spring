@@ -20,7 +20,9 @@ if [[ -z "${MCP_CONTAINER_NAME:-}" || "$MCP_CONTAINER_NAME" == "$DEFAULT_MCP_CON
     printf 'WARNING: MCP_DIAG_ALLOW_DEFAULT=1 keeps the Hermes default MCP container name; this will kill an active Hermes STDIO session.\n' >&2
     export MCP_CONTAINER_NAME="$DEFAULT_MCP_CONTAINER_NAME"
   else
-    export MCP_CONTAINER_NAME="job-engine-spring-mcp-diag-$$-$(date +%s)"
+    # Assign then export so shellcheck does not warn about masking return values (SC2155).
+    MCP_CONTAINER_NAME="job-engine-spring-mcp-diag-$$-$(date +%s)"
+    export MCP_CONTAINER_NAME
   fi
 fi
 

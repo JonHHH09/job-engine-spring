@@ -72,6 +72,7 @@ remove_stale_mcp_containers() {
 
 # Allow focused unit tests to source helper functions without launching Docker.
 if [[ "${MCP_CONTAINER_SOURCE_ONLY:-0}" == "1" ]]; then
+  # shellcheck disable=SC2317 # Reached when tests source this file with MCP_CONTAINER_SOURCE_ONLY=1.
   return 0 2>/dev/null || exit 0
 fi
 

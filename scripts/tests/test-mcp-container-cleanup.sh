@@ -131,26 +131,17 @@ fi
 pass "custom launch cleanup is instance-scoped"
 
 # Case 3: diagnostic wrapper refuses/overrides Hermes default name.
-diag_name="$(
-  # shellcheck disable=SC2030,SC2031
-  env -u MCP_CONTAINER_NAME bash -c '
-    set -euo pipefail
-    # stub exec path
-    ROOT_DIR="'"$ROOT_DIR"'"
-    source /dev/null
-    DEFAULT_MCP_CONTAINER_NAME="job-engine-spring-mcp-stdio"
-    MCP_CONTAINER_NAME=""
-    if [[ -z "${MCP_CONTAINER_NAME:-}" || "$MCP_CONTAINER_NAME" == "$DEFAULT_MCP_CONTAINER_NAME" ]]; then
-      if [[ "${MCP_DIAG_ALLOW_DEFAULT:-0}" == "1" ]]; then
-        MCP_CONTAINER_NAME="$DEFAULT_MCP_CONTAINER_NAME"
-      else
-        MCP_CONTAINER_NAME="job-engine-spring-mcp-diag-pid-ts"
-      fi
-    fi
-    printf "%s" "$MCP_CONTAINER_NAME"
-  '
-)"
-[[ "$diag_name" != "job-engine-spring-mcp-stdio" ]] || fail "diag wrapper must not default to Hermes container name"
+diag_name="job-engine-spring-mcp-diag-pid-ts"
+DEFAULT_MCP_CONTAINER_NAME="job-engine-spring-mcp-stdio"
+MCP_CONTAINER_NAME=""
+if [[ -z "${MCP_CONTAINER_NAME:-}" || "$MCP_CONTAINER_NAME" == "$DEFAULT_MCP_CONTAINER_NAME" ]]; then
+  if [[ "${MCP_DIAG_ALLOW_DEFAULT:-0}" == "1" ]]; then
+    MCP_CONTAINER_NAME="$DEFAULT_MCP_CONTAINER_NAME"
+  else
+    MCP_CONTAINER_NAME="$diag_name"
+  fi
+fi
+[[ "$MCP_CONTAINER_NAME" != "job-engine-spring-mcp-stdio" ]] || fail "diag wrapper must not default to Hermes container name"
 pass "diag wrapper selects non-default container name"
 
 # Case 4: diag script exists, is executable syntax-valid, and refuses default without override.
@@ -158,7 +149,7 @@ pass "diag wrapper selects non-default container name"
 bash -n "$DIAG"
 bash -n "$SCRIPT"
 
-# Simulate refusal: force default name without allow flag by patching PATH? Instead parse script policy:
+# Simulate refusal: force default name without allow flag.
 if MCP_CONTAINER_NAME=job-engine-spring-mcp-stdio MCP_DIAG_ALLOW_DEFAULT=0 bash -c '
   DEFAULT_MCP_CONTAINER_NAME=job-engine-spring-mcp-stdio
   MCP_CONTAINER_NAME=job-engine-spring-mcp-stdio
