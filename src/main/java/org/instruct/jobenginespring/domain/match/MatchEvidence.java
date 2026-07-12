@@ -8,7 +8,7 @@ public record MatchEvidence(MatchComponent component, EvidenceStatus status, Str
         Objects.requireNonNull(component, "component must not be null");
         Objects.requireNonNull(status, "status must not be null");
         sourceType = MatchPrivacy.label(sourceType, "sourceType");
-        fact = MatchPrivacy.text(fact, "fact", 500, false);
+        fact = MatchPrivacy.evidenceFact(fact, sourceType);
     }
 
 }

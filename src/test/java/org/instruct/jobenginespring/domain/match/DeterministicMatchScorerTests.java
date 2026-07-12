@@ -65,6 +65,19 @@ class DeterministicMatchScorerTests {
     }
 
     @Test
+    void dottedTechnologySkillsRemainValidPrivacySafeEvidence() {
+        var report = new DeterministicMatchScorer().score(
+                profile(List.of("asp.net", "socket.io"), List.of()),
+                job(List.of("asp.net", "socket.io"), null, null, "Build software"),
+                NOW);
+
+        assertEquals(40, report.component(MatchComponent.TECHNICAL).earnedPoints());
+        assertTrue(report.evidence().stream().map(MatchEvidence::fact).toList()
+                .containsAll(List.of("asp.net", "socket.io")));
+        assertEquals(MatchOutcome.STRONG_MATCH, report.outcome());
+    }
+
+    @Test
     void evidenceAndComponentsAreDefensivelyCopiedAndScoresAreValidated() {
         var evidence = new ArrayList<>(List.of(new MatchEvidence(
                 MatchComponent.TECHNICAL, EvidenceStatus.MATCH, "profile_skill", "java", false)));
@@ -108,6 +121,16 @@ class DeterministicMatchScorerTests {
                 "raw resume text follows", NOW));
         assertThrows(IllegalArgumentException.class, () -> new MatchEvidence(MatchComponent.TECHNICAL,
                 EvidenceStatus.MATCH, "normalized_skill", "http://127.0.0.1/private", false));
+        assertThrows(IllegalArgumentException.class, () -> new MatchEvidence(MatchComponent.TECHNICAL,
+                EvidenceStatus.MATCH, "normalized_skill", "prompt", false));
+        assertThrows(IllegalArgumentException.class, () -> new MatchEvidence(MatchComponent.TECHNICAL,
+                EvidenceStatus.MATCH, "normalized_skill", null, false));
+        assertThrows(IllegalArgumentException.class, () -> new MatchEvidence(MatchComponent.TECHNICAL,
+                EvidenceStatus.MATCH, "normalized_skill", "bad@skill", false));
+        assertThrows(IllegalArgumentException.class, () -> new MatchEvidence(MatchComponent.TECHNICAL,
+                EvidenceStatus.MATCH, "normalized_skill", "127.0.0.1", false));
+        assertThrows(IllegalArgumentException.class, () -> new MatchEvidence(MatchComponent.TECHNICAL,
+                EvidenceStatus.MATCH, "source", null, false));
         assertThrows(IllegalArgumentException.class, () -> new MatchEvidence(MatchComponent.TECHNICAL,
                 EvidenceStatus.MATCH, "prompt", "java", false));
     }
