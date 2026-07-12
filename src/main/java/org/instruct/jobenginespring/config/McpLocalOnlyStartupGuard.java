@@ -1,28 +1,26 @@
 package org.instruct.jobenginespring.config;
 
-import org.springframework.boot.ApplicationArguments;
-import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.EnvironmentPostProcessor;
+import org.springframework.boot.SpringApplication;
+import org.springframework.core.Ordered;
+import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.Environment;
-import org.springframework.stereotype.Component;
 
 import java.util.Locale;
-import java.util.Objects;
 
 /**
  * Fails closed unless MCP uses the supported local STDIO or Streamable HTTP runtime.
  */
-@Component
-public class McpLocalOnlyStartupGuard implements ApplicationRunner {
+public class McpLocalOnlyStartupGuard implements EnvironmentPostProcessor, Ordered {
 
-    private final Environment environment;
-
-    public McpLocalOnlyStartupGuard(Environment environment) {
-        this.environment = Objects.requireNonNull(environment, "environment must not be null");
+    @Override
+    public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
+        validate(environment);
     }
 
     @Override
-    public void run(ApplicationArguments args) {
-        validate(environment);
+    public int getOrder() {
+        return Ordered.LOWEST_PRECEDENCE;
     }
 
     static void validate(Environment environment) {
@@ -36,6 +34,8 @@ public class McpLocalOnlyStartupGuard implements ApplicationRunner {
             requireEquals(environment, "spring.ai.mcp.server.stdio", "false");
             requireEquals(environment, "spring.ai.mcp.server.protocol", "streamable");
             requireEquals(environment, "spring.main.web-application-type", "servlet");
+            requireExact(environment, "spring.ai.mcp.server.streamable-http.mcp-endpoint", "/mcp");
+            requireValidPort(environment);
             requireSafeHttpBind(environment);
             return;
         }
@@ -63,6 +63,26 @@ public class McpLocalOnlyStartupGuard implements ApplicationRunner {
         if (!expected.equals(actual)) {
             throw localOnlyConfigurationException(property, expected, actual);
         }
+    }
+
+    private static void requireExact(Environment environment, String property, String expected) {
+        String actual = environment.getProperty(property);
+        if (!expected.equals(actual)) {
+            throw localOnlyConfigurationException(property, expected, actual);
+        }
+    }
+
+    private static void requireValidPort(Environment environment) {
+        String actual = environment.getProperty("server.port");
+        try {
+            int port = Integer.parseInt(actual);
+            if (port >= 1 && port <= 65_535) {
+                return;
+            }
+        } catch (NumberFormatException ignored) {
+            // Report the same fail-closed configuration error for absent and non-numeric values.
+        }
+        throw localOnlyConfigurationException("server.port", "an integer from 1 through 65535", actual);
     }
 
     private static String normalize(String value) {

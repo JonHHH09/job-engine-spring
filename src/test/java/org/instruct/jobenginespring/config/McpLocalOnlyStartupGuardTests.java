@@ -1,9 +1,11 @@
 package org.instruct.jobenginespring.config;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.core.Ordered;
 import org.springframework.mock.env.MockEnvironment;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,7 +19,15 @@ class McpLocalOnlyStartupGuardTests {
                 .withProperty("spring.main.web-application-type", "none");
 
         assertDoesNotThrow(() -> McpLocalOnlyStartupGuard.validate(environment));
-        assertDoesNotThrow(() -> new McpLocalOnlyStartupGuard(environment).run(null));
+    }
+
+    @Test
+    void validatesAsTheLastEnvironmentPostProcessorBeforeContextCreation() {
+        McpLocalOnlyStartupGuard guard = new McpLocalOnlyStartupGuard();
+        MockEnvironment environment = streamableHttpEnvironment("127.0.0.1", "false");
+
+        assertDoesNotThrow(() -> guard.postProcessEnvironment(environment, null));
+        assertEquals(Ordered.LOWEST_PRECEDENCE, guard.getOrder());
     }
 
     @Test
@@ -30,13 +40,7 @@ class McpLocalOnlyStartupGuardTests {
                 IllegalStateException.class,
                 () -> McpLocalOnlyStartupGuard.validate(missingStdio)
         );
-        NullPointerException nullEnvironment = assertThrows(
-                NullPointerException.class,
-                () -> new McpLocalOnlyStartupGuard(null)
-        );
-
         assertTrue(missingException.getMessage().contains("<unset>"));
-        assertTrue(nullEnvironment.getMessage().contains("environment"));
     }
 
     @Test
@@ -80,6 +84,14 @@ class McpLocalOnlyStartupGuardTests {
                 .withProperty("spring.ai.mcp.server.protocol", "sse");
         MockEnvironment stdioEnabled = streamableHttpEnvironment("127.0.0.1", "false")
                 .withProperty("spring.ai.mcp.server.stdio", "true");
+        MockEnvironment wrongEndpoint = streamableHttpEnvironment("127.0.0.1", "false")
+                .withProperty("spring.ai.mcp.server.streamable-http.mcp-endpoint", "/other");
+        MockEnvironment invalidPort = streamableHttpEnvironment("127.0.0.1", "false")
+                .withProperty("server.port", "70000");
+        MockEnvironment zeroPort = streamableHttpEnvironment("127.0.0.1", "false")
+                .withProperty("server.port", "0");
+        MockEnvironment nonNumericPort = streamableHttpEnvironment("127.0.0.1", "false")
+                .withProperty("server.port", "http");
 
         assertTrue(assertThrows(IllegalStateException.class,
                 () -> McpLocalOnlyStartupGuard.validate(publicHost)).getMessage().contains("server.address"));
@@ -89,6 +101,14 @@ class McpLocalOnlyStartupGuardTests {
                 () -> McpLocalOnlyStartupGuard.validate(wrongProtocol)).getMessage().contains("protocol"));
         assertTrue(assertThrows(IllegalStateException.class,
                 () -> McpLocalOnlyStartupGuard.validate(stdioEnabled)).getMessage().contains("stdio"));
+        assertTrue(assertThrows(IllegalStateException.class,
+                () -> McpLocalOnlyStartupGuard.validate(wrongEndpoint)).getMessage().contains("mcp-endpoint"));
+        assertTrue(assertThrows(IllegalStateException.class,
+                () -> McpLocalOnlyStartupGuard.validate(invalidPort)).getMessage().contains("server.port"));
+        assertTrue(assertThrows(IllegalStateException.class,
+                () -> McpLocalOnlyStartupGuard.validate(zeroPort)).getMessage().contains("server.port"));
+        assertTrue(assertThrows(IllegalStateException.class,
+                () -> McpLocalOnlyStartupGuard.validate(nonNumericPort)).getMessage().contains("server.port"));
     }
 
     @Test
@@ -110,7 +130,9 @@ class McpLocalOnlyStartupGuardTests {
                 .withProperty("job-engine.mcp.containerized", containerized)
                 .withProperty("spring.ai.mcp.server.stdio", "false")
                 .withProperty("spring.ai.mcp.server.protocol", "streamable")
+                .withProperty("spring.ai.mcp.server.streamable-http.mcp-endpoint", "/mcp")
                 .withProperty("spring.main.web-application-type", "servlet")
+                .withProperty("server.port", "8080")
                 .withProperty("server.address", address);
     }
 }
