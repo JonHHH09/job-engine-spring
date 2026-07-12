@@ -9,7 +9,7 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * Fails closed when the MCP server is configured as anything other than a local STDIO subprocess.
+ * Fails closed unless MCP uses the supported local STDIO or Streamable HTTP runtime.
  */
 @Component
 public class McpLocalOnlyStartupGuard implements ApplicationRunner {
@@ -26,15 +26,36 @@ public class McpLocalOnlyStartupGuard implements ApplicationRunner {
     }
 
     static void validate(Environment environment) {
-        requireTrue(environment, "spring.ai.mcp.server.stdio", "true");
-        requireEquals(environment, "spring.main.web-application-type", "none");
+        String transport = normalize(environment.getProperty("job-engine.mcp.transport"));
+        if ("stdio".equals(transport)) {
+            requireEquals(environment, "spring.ai.mcp.server.stdio", "true");
+            requireEquals(environment, "spring.main.web-application-type", "none");
+            return;
+        }
+        if ("streamable-http".equals(transport)) {
+            requireEquals(environment, "spring.ai.mcp.server.stdio", "false");
+            requireEquals(environment, "spring.ai.mcp.server.protocol", "streamable");
+            requireEquals(environment, "spring.main.web-application-type", "servlet");
+            requireSafeHttpBind(environment);
+            return;
+        }
+        throw localOnlyConfigurationException(
+                "job-engine.mcp.transport", "stdio or streamable-http", transport
+        );
     }
 
-    private static void requireTrue(Environment environment, String property, String expected) {
-        String actual = normalize(environment.getProperty(property));
-        if (!expected.equals(actual)) {
-            throw localOnlyConfigurationException(property, expected, actual);
+    private static void requireSafeHttpBind(Environment environment) {
+        String address = normalize(environment.getProperty("server.address"));
+        if ("127.0.0.1".equals(address) || "localhost".equals(address) || "::1".equals(address)) {
+            return;
         }
+        String containerized = normalize(environment.getProperty("job-engine.mcp.containerized"));
+        if ("0.0.0.0".equals(address) && "true".equals(containerized)) {
+            return;
+        }
+        throw localOnlyConfigurationException(
+                "server.address", "a loopback address (or 0.0.0.0 only in the guarded container runtime)", address
+        );
     }
 
     private static void requireEquals(Environment environment, String property, String expected) {

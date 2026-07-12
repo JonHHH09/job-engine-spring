@@ -22,7 +22,7 @@ trap cleanup EXIT INT TERM
 # Complete MCP initialization so Flyway is settled before capturing the source backup.
 (cd "$ROOT_DIR" && MCP_IMAGE="$immutable_mcp_image" COMPOSE_PROJECT_NAME="$primary_project" \
   python3 "$ROOT_DIR/scripts/smoke-mcp-stdio.py" --timeout 120 -- \
-  docker compose --profile manual-mcp -p "$primary_project" run --rm -T mcp)
+  docker compose --profile stdio -p "$primary_project" run --rm -T mcp-stdio)
 source_container="$(cd "$ROOT_DIR" && COMPOSE_PROJECT_NAME="$primary_project" docker compose ps -q postgres)"
 docker exec -i -u postgres "$source_container" psql -X -v ON_ERROR_STOP=1 -d "${JOB_ENGINE_POSTGRES_DB:-job_engine}" >/dev/null <<'SQL'
 BEGIN;

@@ -52,7 +52,7 @@ cleanup() {
     pending_report=""
   fi
   if [[ "$cleaned" == false && "$verify_project" == job-engine-backup-verify-* ]]; then
-    (cd "$ROOT_DIR" && COMPOSE_PROJECT_NAME="$verify_project" docker compose --profile manual-mcp down -v --remove-orphans >/dev/null 2>&1) || true
+    (cd "$ROOT_DIR" && COMPOSE_PROJECT_NAME="$verify_project" docker compose --profile stdio down -v --remove-orphans >/dev/null 2>&1) || true
     cleaned=true
   fi
 }
@@ -75,9 +75,9 @@ run_image_verification() {
   pending_report="$backup_set/.${report_name}.pending.$$.$RANDOM"
   [[ ! -e "$final_report" && ! -L "$final_report" ]] || { printf 'verification report already exists\n' >&2; return 1; }
   if [[ "$document_id" =~ ^[0-9a-fA-F-]{36}$ ]]; then
-    MCP_IMAGE="$subject_image" COMPOSE_PROJECT_NAME="$verify_project" python3 "$ROOT_DIR/scripts/verify-mcp-restored-data.py" --report "$pending_report" --image "$subject_image" --backup-sha256 "$backup_checksum" --document-id "$document_id" -- docker compose --profile manual-mcp -p "$verify_project" run --rm -T mcp
+    MCP_IMAGE="$subject_image" COMPOSE_PROJECT_NAME="$verify_project" python3 "$ROOT_DIR/scripts/verify-mcp-restored-data.py" --report "$pending_report" --image "$subject_image" --backup-sha256 "$backup_checksum" --document-id "$document_id" -- docker compose --profile stdio -p "$verify_project" run --rm -T mcp-stdio
   else
-    MCP_IMAGE="$subject_image" COMPOSE_PROJECT_NAME="$verify_project" python3 "$ROOT_DIR/scripts/verify-mcp-restored-data.py" --report "$pending_report" --image "$subject_image" --backup-sha256 "$backup_checksum" -- docker compose --profile manual-mcp -p "$verify_project" run --rm -T mcp
+    MCP_IMAGE="$subject_image" COMPOSE_PROJECT_NAME="$verify_project" python3 "$ROOT_DIR/scripts/verify-mcp-restored-data.py" --report "$pending_report" --image "$subject_image" --backup-sha256 "$backup_checksum" -- docker compose --profile stdio -p "$verify_project" run --rm -T mcp-stdio
   fi
   after="$(docker exec -i -u postgres "$container" psql -X -At -v ON_ERROR_STOP=1 -d "$database" -c "$protected_query")"
   finalize_verification_report "$pending_report" "$final_report" "$baseline" "$after"

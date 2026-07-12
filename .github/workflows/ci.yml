@@ -39,7 +39,7 @@ jobs:
 
       - name: Check and test Python operational helpers
         run: |
-          python3 -m py_compile scripts/smoke-mcp-stdio.py scripts/test-smoke-mcp-stdio.py scripts/verify-mcp-restored-data.py scripts/tests/test-verify-mcp-restored-data.py
+          python3 -m py_compile scripts/smoke-mcp-http.py scripts/smoke-mcp-stdio.py scripts/test-smoke-mcp-stdio.py scripts/verify-mcp-restored-data.py scripts/tests/test-verify-mcp-restored-data.py
           python3 scripts/test-smoke-mcp-stdio.py
           python3 scripts/tests/test-verify-mcp-restored-data.py
 
@@ -133,7 +133,7 @@ jobs:
           if-no-files-found: ignore
 
   container-mcp-smoke:
-    name: Container MCP STDIO smoke
+    name: Container MCP transport smoke
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -153,8 +153,13 @@ jobs:
       - name: Build MCP image
         run: docker build -t job-engine-spring:ci .
 
+      - name: Smoke-test persistent MCP over Streamable HTTP
+        run: |
+          MCP_IMAGE=job-engine-spring:ci docker compose up -d --wait postgres mcp
+          python3 scripts/smoke-mcp-http.py --timeout 120
+
       - name: Smoke-test MCP over container STDIO
-        run: MCP_IMAGE=job-engine-spring:ci MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-local-mcp-container.sh
+        run: MCP_IMAGE=job-engine-spring:ci MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py --timeout 120 -- ./scripts/run-mcp-stdio-diag.sh
 
       - name: Docker-backed disposable PostgreSQL backup/restore acceptance
         run: POSTGRES_OPS_TEST_MODE=1 MCP_IMAGE=job-engine-spring:ci bash scripts/tests/postgres-ops-integration.sh

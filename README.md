@@ -64,13 +64,13 @@ job-engine:
 
 Never commit real credentials, private resume data, API keys, production connection details, or machine-local absolute paths. Configuration paths must not be hardcoded; use environment placeholders, documented safe relative defaults, or caller-supplied runtime settings.
 
-MCP is local-only. The server is configured as an STDIO subprocess (`spring.ai.mcp.server.stdio=true`) with `spring.main.web-application-type=none`, and `McpLocalOnlyStartupGuard` fails startup if either local-only invariant is changed. Tool schemas do not carry per-call access tokens; the security boundary is the absence of any network listener plus the local OS/process boundary of the MCP client that launches the jar. Local file imports for PDF extraction/storage are restricted to `job-engine.document.import-root` by default; generated resume PDFs bypass that import-root check because they are produced internally under `tmp/generated-pdfs/`. Job URL fetching is SSRF-hardened: redirects are not followed, local/private/metadata/userinfo targets are rejected before send, and only public IP-literal hosts are accepted so the validated address is the address used by the connection. Hostname allow-list configuration was intentionally removed because resolving a hostname before `HttpClient` connects does not prevent DNS-rebinding/TOCTOU attacks.
+MCP is local-only. Normal operation uses a persistent Streamable HTTP MCP container published only on the host loopback interface. `McpLocalOnlyStartupGuard` accepts loopback HTTP and the explicitly marked container runtime while rejecting unsafe transport/bind combinations. Tool schemas do not carry per-call access tokens; the security boundary is the loopback-only Docker publication plus the local OS boundary. STDIO remains available only through the `stdio` Spring profile for CI, release verification, and isolated engineering diagnosis. Local file imports for PDF extraction/storage are restricted to `job-engine.document.import-root` by default; generated resume PDFs bypass that import-root check because they are produced internally under `tmp/generated-pdfs/`. Job URL fetching is SSRF-hardened: redirects are not followed, local/private/metadata/userinfo targets are rejected before send, and only public IP-literal hosts are accepted so the validated address is the address used by the connection. Hostname allow-list configuration was intentionally removed because resolving a hostname before `HttpClient` connects does not prevent DNS-rebinding/TOCTOU attacks.
 
 For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not polluted.
 
-## Local STDIO MCP deployment
+## Local persistent MCP deployment
 
-The default local deployment is a packaged Spring Boot jar launched by an MCP client over STDIO. The application is not a standalone HTTP daemon in this mode: Hermes or another MCP client starts `java -jar ...`, keeps stdin/stdout open, and discovers tools from that live subprocess.
+The normal local deployment is a persistent Spring Boot Streamable HTTP MCP container. Docker owns the application lifecycle and Hermes connects to `http://127.0.0.1:8080/mcp`, so reconnecting the client does not replace the application container.
 
 Build and verify the local jar with:
 
@@ -84,13 +84,13 @@ The script runs `./mvnw test`, packages `target/job-engine-spring-0.0.1-SNAPSHOT
 RUN_TESTS=false ./scripts/rebuild-local-mcp-jar.sh
 ```
 
-Rebuilding the jar updates the file on disk only. Any already-running Hermes MCP connection keeps using the old Java process until it reconnects. After rebuilding, run `/reload-mcp` in the active Hermes session. If tool names, argument schemas, prompts, or resources changed, start a fresh Hermes session with `/reset` after reloading so the tool schema in the agent context is current.
+Rebuilding a jar or pulling an image updates an artifact on disk only. Recreate the persistent service to deploy it, then run `/reload-mcp` in the active Hermes session. If tool names, argument schemas, prompts, or resources changed, start a fresh Hermes session with `/reset` after reloading so the tool schema in the agent context is current.
 
 `scripts/restart-local-mcp-server.sh` is kept as a local maintenance helper because it stops stale matching local jar subprocesses, rebuilds the jar without recursively running the MCP smoke test, and optionally runs the server in foreground STDIO mode. It remains local-only and does not expose an HTTP daemon.
 
 ## Local containerized MCP deployment
 
-The local container deployment keeps the same STDIO MCP contract: the MCP server still has no published HTTP port, and the MCP client talks to the container through Docker stdin/stdout. `compose.yaml` starts a private PostgreSQL service with no host port binding, and `scripts/run-local-mcp-container.sh` starts the database, removes any stale local MCP STDIO container for this project, joins the MCP container to the Compose network, and then execs the MCP server container with clean stdout for JSON-RPC.
+`compose.yaml` starts private PostgreSQL plus the persistent MCP service. PostgreSQL has no host port. MCP publishes container port 8080 only as `127.0.0.1:${JOB_ENGINE_MCP_PORT:-8080}` and uses `restart: unless-stopped`.
 
 Build the local image when application code changes:
 
@@ -98,19 +98,37 @@ Build the local image when application code changes:
 docker compose build mcp
 ```
 
-Run the containerized MCP server over STDIO:
+Run and verify the persistent MCP service:
 
 ```bash
-./scripts/run-local-mcp-container.sh
+docker compose up -d --wait postgres mcp
+python3 scripts/smoke-mcp-http.py
 ```
 
-For Hermes, configure the MCP command to invoke the script above instead of `java -jar ...`. The script writes Docker lifecycle output to stderr and reserves stdout for the MCP JSON-RPC transport. Use `MCP_CONTAINER_BUILD=always ./scripts/run-local-mcp-container.sh` when you want the script to rebuild the image before launching, or keep the default image-missing-only behavior for faster MCP client startup.
+For Hermes, configure an HTTP MCP server URL instead of a launch command:
 
-The script gives the MCP subprocess container a stable name, `job-engine-spring-mcp-stdio` by default, and removes stale containers for that selected name before launching a new one. The default instance also cleans up older project MCP containers from pre-single-instance runs. Override the name with `MCP_CONTAINER_NAME=...` only when you intentionally need an isolated local MCP instance; custom-name cleanup is scoped to that instance so parallel isolated sessions do not kill each other. The Compose-managed `mcp` service is behind the `manual-mcp` profile, so plain `docker compose up -d` starts only the default services such as PostgreSQL; use `docker compose --profile manual-mcp up mcp` only for direct Compose debugging.
+```yaml
+mcp_servers:
+  job-engine-spring:
+    url: http://127.0.0.1:8080/mcp
+    enabled: true
+    timeout: 120
+    connect_timeout: 60
+```
 
-### Hermes ownership of the default MCP container name
+For a published release, set `MCP_IMAGE` to the immutable release tag or digest, pull it, and explicitly recreate the service:
 
-Hermes (or any long-lived MCP client) should own the default instance name `job-engine-spring-mcp-stdio`. Starting a second default-named STDIO client force-removes that container and produces Hermes transport failures such as `ClosedResourceError` and temporary MCP circuit-breaker cooldowns. PostgreSQL stays healthy in that failure mode; only the STDIO session is disrupted.
+```bash
+MCP_IMAGE=ghcr.io/jonhhh09/job-engine-spring:vX.Y.Z docker compose pull mcp
+MCP_IMAGE=ghcr.io/jonhhh09/job-engine-spring:vX.Y.Z docker compose up -d --no-build --force-recreate --wait postgres mcp
+python3 scripts/smoke-mcp-http.py
+```
+
+After changing the deployed image, run `/reload-mcp`. Pulling alone never changes a running container.
+
+### Isolated STDIO verification
+
+The legacy `scripts/run-local-mcp-container.sh` launcher explicitly activates the `stdio` profile. It is retained for CI and release-package checks. Interactive diagnosis must use the unique-name launcher below so it cannot remove the persistent Compose `mcp` service.
 
 For diagnosis or parallel smoke while Hermes is connected, use the safe diagnostic launcher (unique container name by default):
 
@@ -121,20 +139,20 @@ MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-mc
 
 Recovery when Hermes reports MCP unreachable:
 
-1. Stop ad-hoc scripts that launch the default MCP container name.
-2. Run `/reload-mcp` once, or wait for the client circuit-breaker cooldown.
-3. Call native `health` before CRUD tools.
-4. Prefer native Hermes MCP tools for normal operations; use `run-mcp-stdio-diag.sh` only for engineering diagnosis.
+1. Check `docker compose ps mcp postgres` and the persistent service health.
+2. Run `python3 scripts/smoke-mcp-http.py` to verify the transport independently.
+3. Run `/reload-mcp` once and call native `health` before CRUD tools.
+4. Use `run-mcp-stdio-diag.sh` only for release/engineering diagnosis.
 
-Host-visible local file imports are mounted from `tmp/imports/` into the container as read-only files, and generated PDFs are mounted through `tmp/generated-pdfs/`. Paths outside that import root (for example Hermes document cache under `~/.hermes/cache/documents/`) are not visible inside the MCP container; copy files into `tmp/imports/` before `store_document_file`. Do not publish the MCP container or database ports unless the local-only architecture is intentionally changed.
+Host-visible local file imports are mounted from `tmp/imports/` into the container as read-only files, and generated PDFs are mounted through `tmp/generated-pdfs/`. Paths outside that import root (for example Hermes document cache under `~/.hermes/cache/documents/`) are not visible inside the MCP container; copy files into `tmp/imports/` before `store_document_file`. Never change the MCP host bind from loopback or publish the database port without a separate authenticated-network architecture decision.
 
 Smoke-test the containerized MCP transport with:
 
 ```bash
-# CI / exclusive local use of the default instance name:
-MCP_CONTAINER_BUILD=always python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh
+# Normal persistent transport:
+python3 scripts/smoke-mcp-http.py
 
-# While Hermes may already own the default instance:
+# Explicit isolated STDIO verification:
 MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-mcp-stdio-diag.sh
 ```
 
