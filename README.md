@@ -1,5 +1,13 @@
 # job-engine-spring
 
+## Persistent match analysis
+
+The service persists immutable, explainable profile-to-job match reports in the `match` PostgreSQL schema. The deterministic `deterministic-v1` baseline uses technical (40), experience/seniority (25), domain (15), delivery (10), and hard-requirement (10) components. Missing structured evidence is `UNKNOWN`, reduces confidence, and is never replaced with unstructured domain or delivery inference. Scores are normalized over known evidence, so known evidence can produce `STRONG_MATCH` while confidence remains lower. A job skill's `required` flag alone is not blocker provenance.
+
+Advisory reviews are stored separately and never replace the baseline. Review summaries use only `review_consistent`, `score_adjustment`, `outcome_adjustment`, or `evidence_defect_identified`; free-form summaries are rejected. Advisory evidence must exactly reuse a fact from the deterministic baseline or use one of `structured_evidence_missing`, `structured_evidence_incorrect`, `requirement_provenance_missing`, or `outcome_calibration_issue`. Divergence policy `divergence-v1` creates a deduplicated disagreement for an overall delta of at least 15, an outcome or blocker mismatch, a component delta of at least 40% of available points, or an explicit outcome-changing evidence defect. Its fingerprint uses the report, persisted policy version, sorted reason classification, and canonical outcome-changing defect codes—not review identity, reviewer, model, or summary. Disagreements support `PENDING_ESCALATION`, acknowledgement, and linkage to an existing Linear issue ID; this application has no Linear provider integration or credentials.
+
+MCP tools: `analyze_job_match`, `analyze_all_job_matches`, `get_match_report`, `list_match_reports`, `submit_match_review`, `get_match_review`, `list_match_reviews`, `list_match_disagreements`, `acknowledge_match_disagreement`, and `link_match_disagreement`. Requests are object-shaped. Acknowledgement and linkage can record an existing Linear issue ID but never call Linear or use provider credentials. Responses contain normalized evidence only and exclude contacts, resume documents/text, prompts, reasoning traces, secrets, provider transcripts, and private URLs.
+
 `job-engine-spring` is a Spring Boot / Spring AI MCP server that is replacing the legacy Python Job-Engine runtime with a Java/Spring implementation.
 
 ## Current scope
