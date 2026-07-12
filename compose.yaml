@@ -16,7 +16,29 @@ services:
       - postgres-data:/var/lib/postgresql
 
   mcp:
-    profiles: ["manual-mcp"]
+    image: ${MCP_IMAGE:-job-engine-spring:local}
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DOCKER_COMPOSE_ENABLED: "false"
+      JOB_ENGINE_POSTGRES_URL: jdbc:postgresql://postgres:5432/${JOB_ENGINE_POSTGRES_DB:-job_engine}
+      JOB_ENGINE_POSTGRES_USER: ${JOB_ENGINE_POSTGRES_USER:-postgres}
+      JOB_ENGINE_POSTGRES_PASSWORD: ${JOB_ENGINE_POSTGRES_PASSWORD:-postgres}
+      JOB_ENGINE_DOCUMENT_IMPORT_ROOT: /app/tmp/imports
+      JOB_ENGINE_MCP_BIND_ADDRESS: 0.0.0.0
+      JOB_ENGINE_MCP_CONTAINERIZED: "true"
+    ports:
+      - "127.0.0.1:${JOB_ENGINE_MCP_PORT:-8080}:8080"
+    volumes:
+      - ./tmp/imports:/app/tmp/imports:ro
+      - ./tmp/generated-pdfs:/app/tmp/generated-pdfs
+
+  mcp-stdio:
+    profiles: ["stdio"]
     image: ${MCP_IMAGE:-job-engine-spring:local}
     build:
       context: .
@@ -27,6 +49,7 @@ services:
         condition: service_healthy
     environment:
       SPRING_DOCKER_COMPOSE_ENABLED: "false"
+      SPRING_PROFILES_ACTIVE: stdio
       JOB_ENGINE_POSTGRES_URL: jdbc:postgresql://postgres:5432/${JOB_ENGINE_POSTGRES_DB:-job_engine}
       JOB_ENGINE_POSTGRES_USER: ${JOB_ENGINE_POSTGRES_USER:-postgres}
       JOB_ENGINE_POSTGRES_PASSWORD: ${JOB_ENGINE_POSTGRES_PASSWORD:-postgres}

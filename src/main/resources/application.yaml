@@ -3,14 +3,17 @@ spring:
     name: job-engine-spring
   main:
     banner-mode: off
-    web-application-type: none
+    web-application-type: servlet
   ai:
     mcp:
       server:
         name: job-engine-spring
         version: "@project.version@"
         type: SYNC
-        stdio: true
+        protocol: STREAMABLE
+        stdio: false
+        streamable-http:
+          mcp-endpoint: /mcp
         annotation-scanner:
           enabled: true
   datasource:
@@ -34,6 +37,13 @@ logging:
   level:
     root: OFF
 
+server:
+  address: ${JOB_ENGINE_MCP_BIND_ADDRESS:127.0.0.1}
+  port: ${JOB_ENGINE_MCP_PORT:8080}
+
 job-engine:
+  mcp:
+    transport: streamable-http
+    containerized: ${JOB_ENGINE_MCP_CONTAINERIZED:false}
   document:
     import-root: ${JOB_ENGINE_DOCUMENT_IMPORT_ROOT:tmp/imports}

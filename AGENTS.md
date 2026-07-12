@@ -18,8 +18,10 @@ business concepts, `application` holds use cases and orchestration, and
 - `./mvnw test` runs the unit test suite through Surefire.
 - `./mvnw verify -Pintegration-tests` runs integration tests through Failsafe.
 - `./mvnw spring-boot:run` starts the application locally.
-- `docker compose build mcp` builds the local container image for the STDIO MCP server.
-- `./scripts/run-local-mcp-container.sh` runs the local MCP server in a Docker container over stdin/stdout, with PostgreSQL started by Compose and no published MCP port. It enforces one local MCP STDIO container per default project/name by removing stale matching containers before launch. Hermes owns the default name `job-engine-spring-mcp-stdio`.
+- `docker compose build mcp` builds the local container image for the persistent Streamable HTTP MCP server.
+- `docker compose up -d --wait postgres mcp` starts PostgreSQL privately and publishes MCP only on host loopback; `python3 scripts/smoke-mcp-http.py` verifies initialize, discovery, and `health`.
+- `./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:vX.Y.Z` is the guarded release-only deployment path; it refuses local/`latest` images and recreates the service without building.
+- `./scripts/run-local-mcp-container.sh` is the explicit STDIO CI/package-verification launcher. It activates the `stdio` profile and must not be used for normal Hermes tool calls.
 - `./scripts/run-mcp-stdio-diag.sh` launches a unique-named diagnostic MCP STDIO container so engineering smoke/diagnosis cannot kill an active Hermes session.
 - `python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh` verifies the containerized MCP `initialize` + `tools/list` STDIO contract for the default instance. Prefer `./scripts/run-mcp-stdio-diag.sh` when Hermes may already be connected.
 - `scripts/tests/test-mcp-container-cleanup.sh` is a Docker-free regression for cleanup ownership (preserve custom instances; remove default/legacy only for default launches).
@@ -72,9 +74,8 @@ hardcode paths in configuration; use environment placeholders, project-relative
 safe defaults, generated runtime directories, or documented caller-supplied
 settings instead of machine-local absolute paths.
 
-The containerized MCP runtime must remain local-only: do not publish the MCP
-container or PostgreSQL ports unless the architecture is intentionally changed.
-Keep Docker lifecycle output off stdout for MCP launch scripts because stdout is
-reserved for JSON-RPC messages. The Compose `mcp` service is profile-gated for
-manual debugging; default Compose startup should not launch MCP as a persistent
-service.
+The containerized MCP runtime must remain local-only: publish MCP only on host
+loopback and never publish PostgreSQL. Normal Hermes use goes through the
+persistent Streamable HTTP service; STDIO is reserved for isolated CI and
+diagnostics. Keep Docker lifecycle output off stdout for STDIO launch scripts
+because stdout is reserved for JSON-RPC messages.

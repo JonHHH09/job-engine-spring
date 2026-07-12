@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Diagnostic / ad-hoc STDIO MCP launcher that never uses Hermes' default container name.
 #
-# Why: Hermes owns `job-engine-spring-mcp-stdio`. Launching another default-named
-# STDIO client force-removes that container and causes Hermes `ClosedResourceError`.
+# Why: the default STDIO name is reserved for exclusive CI/package verification.
+# A unique diagnostic name prevents concurrent STDIO checks from killing each other
+# and remains isolated from the persistent Streamable HTTP Compose service.
 #
 # Usage:
 #   ./scripts/run-mcp-stdio-diag.sh

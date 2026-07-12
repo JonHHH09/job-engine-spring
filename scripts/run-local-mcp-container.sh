@@ -64,9 +64,6 @@ remove_stale_mcp_containers() {
 
   if [[ "$MCP_CONTAINER_NAME" == "$DEFAULT_MCP_CONTAINER_NAME" ]]; then
     remove_containers_for_current_or_legacy_instance --filter "label=$MCP_CONTAINER_LABEL"
-    remove_containers_for_current_or_legacy_instance \
-      --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-      --filter "label=com.docker.compose.service=mcp"
   fi
 }
 
@@ -115,9 +112,10 @@ exec docker run --rm -i \
   --label "$MCP_CONTAINER_LABEL" \
   --label "$MCP_CONTAINER_INSTANCE_LABEL" \
   --label "com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-  --label "com.docker.compose.service=mcp" \
+  --label "com.docker.compose.service=mcp-stdio" \
   --network "$NETWORK_NAME" \
   --env SPRING_DOCKER_COMPOSE_ENABLED=false \
+  --env SPRING_PROFILES_ACTIVE=stdio \
   --env JOB_ENGINE_POSTGRES_URL="jdbc:postgresql://$POSTGRES_HOST:5432/$POSTGRES_DB" \
   --env JOB_ENGINE_POSTGRES_USER="$POSTGRES_USER" \
   --env JOB_ENGINE_POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
