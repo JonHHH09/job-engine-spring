@@ -19,8 +19,10 @@ business concepts, `application` holds use cases and orchestration, and
 - `./mvnw verify -Pintegration-tests` runs integration tests through Failsafe.
 - `./mvnw spring-boot:run` starts the application locally.
 - `docker compose build mcp` builds the local container image for the STDIO MCP server.
-- `./scripts/run-local-mcp-container.sh` runs the local MCP server in a Docker container over stdin/stdout, with PostgreSQL started by Compose and no published MCP port. It enforces one local MCP STDIO container per default project/name by removing stale matching containers before launch.
-- `python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh` verifies the containerized MCP `initialize` + `tools/list` STDIO contract.
+- `./scripts/run-local-mcp-container.sh` runs the local MCP server in a Docker container over stdin/stdout, with PostgreSQL started by Compose and no published MCP port. It enforces one local MCP STDIO container per default project/name by removing stale matching containers before launch. Hermes owns the default name `job-engine-spring-mcp-stdio`.
+- `./scripts/run-mcp-stdio-diag.sh` launches a unique-named diagnostic MCP STDIO container so engineering smoke/diagnosis cannot kill an active Hermes session.
+- `python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh` verifies the containerized MCP `initialize` + `tools/list` STDIO contract for the default instance. Prefer `./scripts/run-mcp-stdio-diag.sh` when Hermes may already be connected.
+- `scripts/tests/test-mcp-container-cleanup.sh` is a Docker-free regression for cleanup ownership (preserve custom instances; remove default/legacy only for default launches).
 
 Surefire excludes `*IntegrationTests`; the integration profile enables Failsafe
 and includes those tests.
