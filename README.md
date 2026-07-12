@@ -108,12 +108,34 @@ For Hermes, configure the MCP command to invoke the script above instead of `jav
 
 The script gives the MCP subprocess container a stable name, `job-engine-spring-mcp-stdio` by default, and removes stale containers for that selected name before launching a new one. The default instance also cleans up older project MCP containers from pre-single-instance runs. Override the name with `MCP_CONTAINER_NAME=...` only when you intentionally need an isolated local MCP instance; custom-name cleanup is scoped to that instance so parallel isolated sessions do not kill each other. The Compose-managed `mcp` service is behind the `manual-mcp` profile, so plain `docker compose up -d` starts only the default services such as PostgreSQL; use `docker compose --profile manual-mcp up mcp` only for direct Compose debugging.
 
-Host-visible local file imports are mounted from `tmp/imports/` into the container as read-only files, and generated PDFs are mounted through `tmp/generated-pdfs/`. Do not publish the MCP container or database ports unless the local-only architecture is intentionally changed.
+### Hermes ownership of the default MCP container name
+
+Hermes (or any long-lived MCP client) should own the default instance name `job-engine-spring-mcp-stdio`. Starting a second default-named STDIO client force-removes that container and produces Hermes transport failures such as `ClosedResourceError` and temporary MCP circuit-breaker cooldowns. PostgreSQL stays healthy in that failure mode; only the STDIO session is disrupted.
+
+For diagnosis or parallel smoke while Hermes is connected, use the safe diagnostic launcher (unique container name by default):
+
+```bash
+./scripts/run-mcp-stdio-diag.sh
+MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-mcp-stdio-diag.sh
+```
+
+Recovery when Hermes reports MCP unreachable:
+
+1. Stop ad-hoc scripts that launch the default MCP container name.
+2. Run `/reload-mcp` once, or wait for the client circuit-breaker cooldown.
+3. Call native `health` before CRUD tools.
+4. Prefer native Hermes MCP tools for normal operations; use `run-mcp-stdio-diag.sh` only for engineering diagnosis.
+
+Host-visible local file imports are mounted from `tmp/imports/` into the container as read-only files, and generated PDFs are mounted through `tmp/generated-pdfs/`. Paths outside that import root (for example Hermes document cache under `~/.hermes/cache/documents/`) are not visible inside the MCP container; copy files into `tmp/imports/` before `store_document_file`. Do not publish the MCP container or database ports unless the local-only architecture is intentionally changed.
 
 Smoke-test the containerized MCP transport with:
 
 ```bash
+# CI / exclusive local use of the default instance name:
 MCP_CONTAINER_BUILD=always python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-local-mcp-container.sh
+
+# While Hermes may already own the default instance:
+MCP_CONTAINER_BUILD=never python3 scripts/smoke-mcp-stdio.py -- ./scripts/run-mcp-stdio-diag.sh
 ```
 
 Stop the local database and remove its development volume when you intentionally want a clean local container database:
