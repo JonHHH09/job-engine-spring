@@ -1,0 +1,72 @@
+name: Bug report
+description: Report reproducible incorrect behavior using synthetic data only
+title: "bug: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Search existing issues first.
+        Do not include real resumes, profiles, applications, backups, credentials, private keys, tokens, or production logs. Report security vulnerabilities privately through SECURITY.md.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I reproduced this with synthetic data and removed private or secret values.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Published release tag, immutable image digest, or commit SHA.
+      placeholder: vX.Y.Z or sha256:...
+    validations:
+      required: true
+  - type: dropdown
+    id: transport
+    attributes:
+      label: Deployment mode
+      options:
+        - Streamable HTTP with Docker Compose
+        - Isolated STDIO verification
+        - Host JVM
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, CPU architecture, Java version, Docker/Compose versions, and MCP client.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal ordered steps and exact sanitized commands using synthetic data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Include sanitized error text only. Do not paste private documents, credentials, connection strings, or full production logs.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification attempted
+      description: Tests, health checks, or workarounds already attempted and their exact results.
