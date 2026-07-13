@@ -28,7 +28,7 @@ The current verified MCP surface is intentionally small:
 - `generate_pdf_file` — generates a PDF file under `tmp/generated-pdfs/` and returns file metadata.
 - `generate_pdf_resume` — generates a master resume PDF from a normalized profile, stores it as a document, and links it uniquely to that profile as the `master_resume` variant.
 - `generate_canadian_pdf_resume` — generates a Canadian-format resume PDF from the same normalized profile, stores it as a document, and links it uniquely to that profile as the `canadian_resume` variant.
-- `generate_german_tailored_resume` — generates a Germany-format tailored Lebenslauf for one profile + job as bilingual EN+DE structured content and PDFs, linked under one `resume.resumes` parent (`format=germany`). Uses offline pure-Java translation; optional personal details (`dateOfBirth`, `nationality`, `photoDocumentId`) when present.
+- `generate_german_tailored_resume` — generates a Germany-format tailored Lebenslauf for one profile + job as bilingual EN+DE structured content and PDFs, linked under one `resume.resumes` parent (`format=germany`). Uses offline pure-Java translation; projects are omitted unless `includeProjects=true`; content is reviewed before PDF generation; PDF filenames use `germany_{candidate}_{number}_{lang}_{id}.pdf`.
 - `ingest_profile_from_stored_pdf` — populates the normalized profile schema from a stored PDF extraction and links the profile to that extraction.
 - `get_profile_pdf_source` — returns the one-to-one PDF extraction source link for a profile.
 - `list_jobs` — lists stored job postings without returning source ingestion raw text.
