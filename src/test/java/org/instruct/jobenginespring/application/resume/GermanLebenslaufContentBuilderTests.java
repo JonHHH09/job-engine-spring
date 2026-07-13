@@ -48,11 +48,16 @@ class GermanLebenslaufContentBuilderTests {
 
         String rendered = GermanLebenslaufBodyRenderer.render(content);
         assertFalse(rendered.toLowerCase().contains("summary"));
-        assertTrue(rendered.contains("PERSONAL DATA"));
+        assertFalse(rendered.toUpperCase().contains("PERSONAL DATA"));
+        assertTrue(rendered.contains("Email:"));
         assertTrue(rendered.contains("Date of birth"));
         assertTrue(rendered.contains("PROFESSIONAL EXPERIENCE"));
         assertTrue(rendered.contains("Java Application Developer"));
         assertTrue(content.experiences().getFirst().bullets().size() <= 5);
+        assertTrue(content.additional().isEmpty());
+
+        StructuredResumeContent withProjects = GermanLebenslaufContentBuilder.buildEnglish(profile, job, personal, true);
+        assertFalse(withProjects.additional().isEmpty());
     }
 
     @Test
@@ -61,7 +66,7 @@ class GermanLebenslaufContentBuilderTests {
         StructuredResumeContent german = new OfflineGermanResumeTranslator().toGerman(english);
         String rendered = GermanLebenslaufBodyRenderer.render(german);
 
-        assertTrue(rendered.contains("PERSÖNLICHE DATEN") || rendered.contains("PERS"));
+        assertFalse(rendered.toUpperCase().contains("PERSÖNLICHE DATEN"));
         assertTrue(rendered.contains("BERUFSERFAHRUNG"));
         assertTrue(rendered.contains("AUSBILDUNG"));
         assertTrue(german.language().equals("de"));

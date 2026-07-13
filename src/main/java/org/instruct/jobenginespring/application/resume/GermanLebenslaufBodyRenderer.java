@@ -8,7 +8,10 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
-/** Renders structured Lebenslauf content into PDF body text (no summary section). */
+/**
+ * Renders structured Lebenslauf content into PDF body text (no summary section).
+ * Contact lines sit under the name without a PERSONAL DATA section header.
+ */
 public final class GermanLebenslaufBodyRenderer {
 
     private static final DateTimeFormatter MONTH = DateTimeFormatter.ofPattern("MM/yyyy");
@@ -21,10 +24,10 @@ public final class GermanLebenslaufBodyRenderer {
         boolean german = ResumeVariant.LANGUAGE_DE.equals(safe.language());
         StringBuilder body = new StringBuilder();
         appendLine(body, safe.fullName());
-        appendBlank(body);
-
-        appendSection(body, german ? "PERSÖNLICHE DATEN" : "PERSONAL DATA");
-        safe.personalFields().forEach(field -> appendLine(body, field.label() + ": " + field.value()));
+        if (!safe.personalFields().isEmpty()) {
+            // Compact contact block under the name — no PERSONAL DATA header for tailored resumes.
+            safe.personalFields().forEach(field -> appendLine(body, field.label() + ": " + field.value()));
+        }
         appendBlank(body);
 
         if (!safe.experiences().isEmpty()) {
@@ -67,7 +70,7 @@ public final class GermanLebenslaufBodyRenderer {
         }
 
         if (!safe.additional().isEmpty()) {
-            appendSection(body, german ? "WEITERE QUALIFIKATIONEN" : "ADDITIONAL QUALIFICATIONS");
+            appendSection(body, german ? "PROJEKTE" : "PROJECTS");
             safe.additional().forEach(item -> {
                 String header = item.title();
                 if (hasText(item.organization())) {

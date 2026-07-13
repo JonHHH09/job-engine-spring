@@ -217,10 +217,12 @@ public class PdfGenerationService {
     }
 
     private static boolean isResumeDateLine(String line) {
-        return line != null && (line.startsWith("Dates not provided")
-                || line.startsWith("Unknown - ")
-                || line.matches("^\\d{4}-\\d{2} - .+"));
-    }
+            return line != null && (line.startsWith("Dates not provided")
+                    || line.startsWith("Unknown - ")
+                    || line.startsWith("unbekannt - ")
+                    || line.matches("^\\d{2}/\\d{4} - .+")
+                    || line.matches("^\\d{4}-\\d{2} - .+"));
+        }
 
     private static void writePage(
             PDDocument document,

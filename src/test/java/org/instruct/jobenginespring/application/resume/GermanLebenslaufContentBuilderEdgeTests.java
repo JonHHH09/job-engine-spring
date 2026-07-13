@@ -108,4 +108,21 @@ class GermanLebenslaufContentBuilderEdgeTests {
         assertTrue(GermanLebenslaufContentBuilder.isEmailLike(emailTypeOnly));
         assertFalse(GermanLebenslaufContentBuilder.isEmailLike(phone));
     }
+
+    @Test
+    void includesProjectsWithoutDescriptionOrTechnologiesWhenRequested() {
+        ProfileAggregate profile = new ProfileAggregate(
+                new UserProfile(PROFILE_ID, "Name", "n@example.test", null, null, NOW, NOW),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(new ProfileProject(UUID.randomUUID(), PROFILE_ID, "Bare Project", null, null, List.of(), 0, NOW)),
+                List.of()
+        );
+        JobAggregate job = new JobAggregate(
+                new JobPosting(JOB_ID, "text", "L", "Title", "Company", "Loc", "description text", null, null, null, null, "fp-proj", NOW, NOW),
+                List.of(), null, new JobTextIngestion(UUID.randomUUID(), JOB_ID, "l", "hash-proj", NOW)
+        );
+        StructuredResumeContent content = GermanLebenslaufContentBuilder.buildEnglish(profile, job, null, true);
+        assertEquals(1, content.additional().size());
+        assertTrue(content.additional().getFirst().bullets().isEmpty());
+    }
 }
