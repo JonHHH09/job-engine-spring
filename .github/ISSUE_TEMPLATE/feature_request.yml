@@ -1,0 +1,59 @@
+name: Feature request
+description: Propose a focused improvement to the local MCP server
+title: "feat: "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user problem before prescribing an implementation. Use synthetic examples only and do not include private career data or credentials.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and did not find the same request.
+          required: true
+        - label: This request preserves the local-only MCP security boundary or explicitly identifies why an architecture decision is needed.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who is affected, what workflow is blocked, and why current behavior is insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe externally observable behavior, not only an implementation choice.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and data impact
+      description: MCP tool schemas, persisted data/Flyway, configuration, migration, or release implications.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Privacy and security impact
+      description: Untrusted inputs, local file access, network exposure, SSRF, credentials, private data, logs, backup/restore, or supply-chain implications.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete tests or observable results that would prove the request complete.
+    validations:
+      required: true

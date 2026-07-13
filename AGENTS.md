@@ -57,13 +57,13 @@ Use Conventional Commits, matching existing history examples such as
 
 Pull requests should summarize the behavior change, call out database
 migrations or configuration changes, and include the exact verification command
-and result. Feature/fix pull requests may target `master`; those candidates run
-pipeline validation, unit tests, Docker-backed integration/coverage, a
-containerized MCP STDIO smoke test, and Qodana. Pull requests promoting
-`development` to `master` additionally require an identical candidate tree.
-Trusted pushes to `development` and manual CI runs retain the heavy integration
-and container smoke gates. Tag releases verify and publish the exact
-smoke-tested image and verified jar artifacts.
+and result. Normal feature/fix pull requests target `development`; those
+candidates run pipeline validation, unit tests, and Qodana. Pull requests
+promoting `development` to `master` additionally require an identical candidate
+tree and run the Docker-backed integration/coverage and container MCP smoke
+gates. Trusted pushes to `development` and manual CI runs retain the heavy
+integration and container smoke gates. Tag releases verify and publish the
+exact smoke-tested image and verified jar artifacts.
 
 ## Security & Configuration Tips
 
