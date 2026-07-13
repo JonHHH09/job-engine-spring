@@ -182,6 +182,16 @@ public class PostgresDocumentRepository implements DocumentRepository {
                           )
                           AND NOT EXISTS (
                               SELECT 1
+                              FROM resume.resume_variants resume_variant
+                              WHERE resume_variant.document_id = stored_document.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM profile.profile_personal_details personal_details
+                              WHERE personal_details.photo_document_id = stored_document.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1
                               FROM document.pdf_extractions extraction
                               JOIN profile.profile_pdf_sources source
                                 ON source.pdf_extraction_id = extraction.id
