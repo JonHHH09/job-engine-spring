@@ -206,7 +206,7 @@ public class GenerateGermanTailoredResumeService {
     ) {
         String fileName = buildFileName(profile.profile().fullName(), profile.profile().id(), language);
         String title = content.fullName() + (ResumeVariant.LANGUAGE_DE.equals(language) ? " - Lebenslauf" : " - CV");
-        GeneratedPdfFileResult generatedFile = new PdfGenerationService(outputDirectory).generatePdfFile(
+        GeneratedPdfFileResult generatedFile = new PdfGenerationService(outputDirectory).generateCompactResumePdfFile(
                 new PdfGenerationService.GeneratePdfFileRequest(fileName, title, GermanLebenslaufBodyRenderer.render(content))
         );
         transactionLifecycle.afterRollback(() -> fileRepository.deleteIfExists(generatedFile.path()));

@@ -47,8 +47,36 @@ public class OfflineGermanResumeTranslator {
     );
 
     private static final List<Map.Entry<String, String>> PHRASES = List.of(
-            Map.entry("full-stack developer", "Full-Stack-Entwickler"),
+            Map.entry("migrated the company website from WordPress to a maintainable custom stack and took ownership of delivery through deployment.",
+                    "Migrierte die Unternehmenswebsite von WordPress auf einen wartbaren individuellen Technologie-Stack und verantwortete die Umsetzung bis zur Produktivsetzung."),
+            Map.entry("developed a desktop business application with Electron and Spring Boot plus SwiftUI-based mobile support.",
+                    "Entwickelte eine Desktop-Geschäftsanwendung mit Electron und Spring Boot sowie mobile Unterstützung mit SwiftUI."),
+            Map.entry("built internal business workflows for invoices, quotes, statements, and document generation.",
+                    "Entwickelte interne Geschäftsprozesse für Rechnungen, Angebote, Abrechnungen und Dokumentenerstellung."),
+            Map.entry("integrated Supabase for PostgreSQL data, authentication, and real-time operational workflows.",
+                    "Integrierte Supabase für PostgreSQL-Datenhaltung, Authentifizierung und operative Echtzeit-Workflows."),
+            Map.entry("managed cloud and deployment setup across Supabase, Vercel, and AWS.",
+                    "Verantwortete die Cloud- und Deployment-Infrastruktur auf Basis von Supabase, Vercel und AWS."),
+            Map.entry("integrated Visa Direct APIs and collaborated with technical and business stakeholders on delivery.",
+                    "Integrierte Visa-Direct-APIs und arbeitete bei der Umsetzung mit technischen und fachlichen Stakeholdern zusammen."),
+            Map.entry("automated financial processes using Spring Boot and Hibernate in a regulated banking environment.",
+                    "Automatisierte Finanzprozesse mit Spring Boot und Hibernate in einem regulierten Bankenumfeld."),
+            Map.entry("worked on systems handling data for more than 100,000 customers.",
+                    "Arbeitete an Systemen zur Verarbeitung von Daten für mehr als 100.000 Kund:innen."),
+            Map.entry("implemented JWT-based authentication in production-facing systems.",
+                    "Implementierte JWT-basierte Authentifizierung in produktiven Systemen."),
+            Map.entry("supported deployment, configuration, and production issue diagnosis for card-management workflows.",
+                    "Unterstützte Deployment, Konfiguration und Produktionsfehleranalyse für Kartenmanagement-Workflows."),
+            Map.entry("developed reusable frontend components and contributed to responsive website delivery across devices.",
+                    "Entwickelte wiederverwendbare Frontend-Komponenten und trug zur responsiven Bereitstellung von Websites auf verschiedenen Endgeräten bei."),
+            Map.entry("helped improve consistency and maintainability in user-facing implementation work.",
+                    "Verbesserte Konsistenz und Wartbarkeit der Benutzeroberfläche."),
+            Map.entry("diagnosed and resolved software, hardware, and connectivity issues for remote users.",
+                    "Diagnostizierte und behob Software-, Hardware- und Verbindungsprobleme für Remote-Benutzer:innen."),
+            Map.entry("provided end-user support for AutoCAD and Trimble GPS software used in mapping-related work.",
+                    "Unterstützte Endanwender:innen bei AutoCAD und Trimble-GPS-Software für Kartierungsarbeiten."),
             Map.entry("freelance full-stack developer", "Freiberuflicher Full-Stack-Entwickler"),
+            Map.entry("full-stack developer", "Full-Stack-Entwickler"),
             Map.entry("java application developer", "Java-Anwendungsentwickler"),
             Map.entry("front-end developer", "Frontend-Entwickler"),
             Map.entry("it support technician", "IT-Support-Techniker"),
@@ -177,12 +205,15 @@ public class OfflineGermanResumeTranslator {
                 source.fullName(),
                 ResumeVariant.LANGUAGE_DE,
                 source.personalFields().stream()
-                        .map(field -> new StructuredResumeContent.PersonalField(translateLabel(field.label()), translateText(field.value())))
+                        .map(field -> new StructuredResumeContent.PersonalField(
+                                translateLabel(field.label()),
+                                translatePersonalFieldValue(field.label(), field.value())
+                        ))
                         .toList(),
                 source.experiences().stream()
                         .map(entry -> new StructuredResumeContent.ExperienceEntry(
                                 translateText(entry.title()),
-                                translateText(entry.company()),
+                                entry.company(),
                                 translateText(entry.location()),
                                 entry.startDate(),
                                 entry.endDate(),
@@ -192,7 +223,7 @@ public class OfflineGermanResumeTranslator {
                 source.education().stream()
                         .map(entry -> new StructuredResumeContent.EducationEntry(
                                 translateText(entry.degree()),
-                                translateText(entry.institution()),
+                                entry.institution(),
                                 translateText(entry.location()),
                                 entry.startDate(),
                                 entry.endDate(),
@@ -238,6 +269,11 @@ public class OfflineGermanResumeTranslator {
         }
         String translated = text.strip();
         for (Map.Entry<String, String> phrase : PHRASES) {
+            if (translated.equalsIgnoreCase(phrase.getKey())) {
+                return phrase.getValue();
+            }
+        }
+        for (Map.Entry<String, String> phrase : PHRASES) {
             translated = replaceIgnoreCase(translated, phrase.getKey(), phrase.getValue());
         }
         Matcher matcher = WORD_PATTERN.matcher(translated);
@@ -255,6 +291,17 @@ public class OfflineGermanResumeTranslator {
         }
         matcher.appendTail(rebuilt);
         return rebuilt.toString().replaceAll("\\s{2,}", " ").strip();
+    }
+
+    String translatePersonalFieldValue(String label, String value) {
+        if (label == null || label.isBlank()) {
+            return value;
+        }
+        String key = label.strip().toLowerCase(Locale.ROOT);
+        return switch (key) {
+            case "address", "location", "nationality" -> translateText(value);
+            default -> value;
+        };
     }
 
     private static String replaceIgnoreCase(String source, String target, String replacement) {

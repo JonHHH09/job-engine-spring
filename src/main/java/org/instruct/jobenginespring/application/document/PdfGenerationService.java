@@ -34,6 +34,7 @@ public class PdfGenerationService {
     private static final float SECTION_FONT_SIZE = 10;
     private static final float BODY_FONT_SIZE = 9.5f;
     private static final float LEADING = 13.5f;
+    private static final float COMPACT_RESUME_LEADING = 10.75f;
     private static final int BODY_WRAP_CHARACTERS = 104;
     private static final float HEADER_HEIGHT = 30;
     private static final float FOOTER_HEIGHT = 24;
@@ -64,6 +65,14 @@ public class PdfGenerationService {
     }
 
     public GeneratedPdfFileResult generatePdfFile(GeneratePdfFileRequest request) {
+        return generatePdfFile(request, LEADING);
+    }
+
+    public GeneratedPdfFileResult generateCompactResumePdfFile(GeneratePdfFileRequest request) {
+        return generatePdfFile(request, COMPACT_RESUME_LEADING);
+    }
+
+    private GeneratedPdfFileResult generatePdfFile(GeneratePdfFileRequest request, float leading) {
         GeneratePdfFileRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
         String body = validateBody(safeRequest.body());
         String fileName = sanitizeFileName(safeRequest.fileName());
@@ -75,7 +84,7 @@ public class PdfGenerationService {
 
         try {
             Files.createDirectories(outputDirectory);
-            int pageCount = writePdf(outputPath, title, body);
+            int pageCount = writePdf(outputPath, title, body, leading);
             return new GeneratedPdfFileResult(
                     fileName,
                     outputPath.toString(),
@@ -146,17 +155,17 @@ public class PdfGenerationService {
         return sanitized;
     }
 
-    private static int writePdf(Path outputPath, String title, String body) throws IOException {
+    private static int writePdf(Path outputPath, String title, String body, float leading) throws IOException {
         try (PDDocument document = new PDDocument()) {
             List<String> lines = bodyLines(title, body);
             PDType1Font titleFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
             PDType1Font bodyFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
             PDType1Font chromeFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
-            List<PageLines> pages = paginate(lines);
+            List<PageLines> pages = paginate(lines, leading);
 
             for (int pageIndex = 0; pageIndex < pages.size(); pageIndex++) {
                 PDPage page = addPage(document);
-                writePage(document, page, pages.get(pageIndex), pageIndex + 1, pages.size(), titleFont, bodyFont, chromeFont);
+                writePage(document, page, pages.get(pageIndex), pageIndex + 1, pages.size(), titleFont, bodyFont, chromeFont, leading);
             }
             document.save(outputPath.toFile());
             return document.getNumberOfPages();
@@ -170,7 +179,11 @@ public class PdfGenerationService {
     }
 
     private static List<PageLines> paginate(List<String> lines) {
-        int linesPerPage = Math.max(1, (int) Math.floor((bodyStartY() - bodyEndY()) / LEADING) + 1);
+        return paginate(lines, LEADING);
+    }
+
+    private static List<PageLines> paginate(List<String> lines, float leading) {
+        int linesPerPage = Math.max(1, (int) Math.floor((bodyStartY() - bodyEndY()) / leading) + 1);
         List<PageLines> pages = new ArrayList<>();
         List<String> pageLines = new ArrayList<>();
         int pageStartIndex = 0;
@@ -232,12 +245,13 @@ public class PdfGenerationService {
             int pageCount,
             PDType1Font titleFont,
             PDType1Font bodyFont,
-            PDType1Font chromeFont
+            PDType1Font chromeFont,
+            float leading
     ) throws IOException {
         try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
             drawBackground(contentStream, page);
             drawChrome(contentStream, page, chromeFont, pageNumber, pageCount);
-            drawBody(contentStream, pageLines, titleFont, bodyFont, chromeFont);
+            drawBody(contentStream, pageLines, titleFont, bodyFont, chromeFont, leading);
         }
     }
 
@@ -270,10 +284,17 @@ public class PdfGenerationService {
                 box.getWidth() - MARGIN, 10, chromeText);
     }
 
-    private static void drawBody(PDPageContentStream contentStream, PageLines pageLines, PDType1Font titleFont, PDType1Font bodyFont, PDType1Font chromeFont) throws IOException {
+    private static void drawBody(
+            PDPageContentStream contentStream,
+            PageLines pageLines,
+            PDType1Font titleFont,
+            PDType1Font bodyFont,
+            PDType1Font chromeFont,
+            float leading
+    ) throws IOException {
         for (int index = 0; index < pageLines.lines().size(); index++) {
             int globalIndex = pageLines.startIndex() + index;
-            float y = bodyStartY() - (index * LEADING);
+            float y = bodyStartY() - (index * leading);
             String line = pageLines.lines().get(index);
             if (globalIndex == 0) {
                 drawText(contentStream, titleFont, TITLE_FONT_SIZE, TITLE_COLOR, MARGIN, y, line);
