@@ -36,6 +36,22 @@ build/
 /.hermes/plans/
 /.hermes/
 /plans/
+
+### Local secrets and credentials ###
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+### Local private inputs and OS metadata ###
+/tmp/imports/
+.DS_Store
+
 /tmp/generated-pdfs/*
 !/tmp/generated-pdfs/.gitkeep
 !/tmp/generated-pdfs/master-resume/

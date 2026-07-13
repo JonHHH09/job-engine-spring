@@ -6,7 +6,7 @@ Use `README.md` for the current MCP tool surface, configuration, runtime, storag
 
 ## Hermes-specific operating notes
 
-- Target repository: `/Users/jh/IdeaProjects/job-engine-spring`.
+- The repository root is the directory containing `pom.xml`, `AGENTS.md`, and this file; do not encode maintainer-specific absolute paths in tracked files.
 - This is a Java 25 / Spring Boot 4.1 / Spring AI 2.0 local-only MCP server. Normal runtime is persistent loopback-only Streamable HTTP; STDIO is retained only for CI/package verification and isolated diagnostics.
 - Preserve the hexagonal boundaries: pure domain records, application use cases/ports, thin inbound MCP adapters, and JDBC/PostgreSQL outbound adapters.
 - Keep STDIO stdout clean for JSON-RPC. The approved network surface is only the loopback-published `/mcp` Streamable HTTP endpoint; do not introduce REST controllers or a non-loopback listener.
@@ -20,7 +20,7 @@ Use `README.md` for the current MCP tool surface, configuration, runtime, storag
 
 1. Inspect `git status --short --branch` and read `AGENTS.md`.
 2. Fast-forward `development` from `origin/development` before creating a Linear-keyed feature branch.
-3. Keep the relevant Linear issue and Obsidian notes under `/Users/jh/jonh/02_Projects/Job-Engine/` current.
+3. Keep the relevant tracker issue current. Maintainer-only project notes are optional and are not a contributor prerequisite.
 4. Run focused tests first, then `./mvnw test`; use `./mvnw -Pintegration-tests verify` for persistence, Flyway, runtime, security, or coverage-sensitive changes.
 5. For pipeline/container changes, also run `actionlint`, `shellcheck`, Compose validation, image build, and the real STDIO MCP smoke test.
 6. Before finalizing, run `git diff --check`, inspect the full diff and status, and remove generated artifacts.
