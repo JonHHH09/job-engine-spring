@@ -132,7 +132,7 @@ class PostgresResumeRepositoryIntegrationTests {
     private ResumeAggregateWrite write(Resume resume, UUID enDoc, UUID deDoc, String label) {
         ResumeVariant en = new ResumeVariant(UUID.randomUUID(), resume.id(), "en", enDoc, "tmp/" + label + "-en.pdf", NOW, NOW);
         ResumeVariant de = new ResumeVariant(UUID.randomUUID(), resume.id(), "de", deDoc, "tmp/" + label + "-de.pdf", NOW, NOW);
-        return new ResumeAggregateWrite(resume, List.of(variant(en, "Personal Data"), variant(de, "Persönliche Daten")));
+        return new ResumeAggregateWrite(resume, List.of(variant(en, "Contact"), variant(de, "Kontakt")));
     }
 
     private VariantWrite variant(ResumeVariant variant, String personalTitle) {

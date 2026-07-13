@@ -20,7 +20,7 @@ public class GermanTailoredResumeMcp {
 
     @McpTool(
             name = "generate_german_tailored_resume",
-            description = "Generate a Germany-format tailored Lebenslauf for one profile and job as bilingual EN+DE structured content and PDFs, linked under one resume parent row."
+            description = "Generate a Germany-format tailored Lebenslauf for one profile and job as bilingual EN+DE structured content and PDFs, linked under one resume parent row. Projects are omitted unless includeProjects=true. Content is reviewed before PDF generation."
     )
     public CallToolResult generateGermanTailoredResume(
             @McpToolParam(required = true, description = "German tailored resume generation request")

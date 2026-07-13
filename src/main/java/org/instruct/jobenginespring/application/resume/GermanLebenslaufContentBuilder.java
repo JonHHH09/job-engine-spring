@@ -43,6 +43,15 @@ public final class GermanLebenslaufContentBuilder {
             JobAggregate job,
             ProfilePersonalDetails personalDetails
     ) {
+        return buildEnglish(profile, job, personalDetails, false);
+    }
+
+    public static StructuredResumeContent buildEnglish(
+            ProfileAggregate profile,
+            JobAggregate job,
+            ProfilePersonalDetails personalDetails,
+            boolean includeProjects
+    ) {
         Objects.requireNonNull(profile, "profile must not be null");
         Objects.requireNonNull(job, "job must not be null");
 
@@ -52,7 +61,9 @@ public final class GermanLebenslaufContentBuilder {
         List<StructuredResumeContent.EducationEntry> education = education(profile.education());
         List<StructuredResumeContent.SkillGroup> skills = skillGroups(profile.skills(), jobTokens);
         List<StructuredResumeContent.LanguageEntry> languages = languages(profile.languages());
-        List<StructuredResumeContent.AdditionalEntry> additional = additional(profile.projects(), jobTokens);
+        List<StructuredResumeContent.AdditionalEntry> additional = includeProjects
+                ? additional(profile.projects(), jobTokens)
+                : List.of();
 
         return new StructuredResumeContent(
                 profile.profile().fullName(),
