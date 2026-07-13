@@ -24,6 +24,78 @@ class OfflineGermanResumeTranslatorTests {
     }
 
     @Test
+    void preservesOpaqueContactValuesAndProperNames() {
+        StructuredResumeContent english = new StructuredResumeContent(
+                "Joni Hysaj",
+                "en",
+                List.of(
+                        new StructuredResumeContent.PersonalField("Email", "root@example.test"),
+                        new StructuredResumeContent.PersonalField("Address", "Montreal, QC, Canada"),
+                        new StructuredResumeContent.PersonalField("LinkedIn", "https://linkedin.com/in/joni-hysaj-66a56b285")
+                ),
+                List.of(new StructuredResumeContent.ExperienceEntry(
+                        "Java Application Developer",
+                        "National Bank of Commerce (BKT)",
+                        "Tirana, Albania",
+                        null,
+                        null,
+                        List.of("Worked on systems handling data for more than 100,000 customers.")
+                )),
+                List.of(new StructuredResumeContent.EducationEntry(
+                        "B.A. Computer Science",
+                        "American University in Bulgaria",
+                        "Blagoevgrad, Bulgaria",
+                        null,
+                        null,
+                        List.of()
+                )),
+                List.of(),
+                List.of(),
+                List.of()
+        );
+
+        StructuredResumeContent german = translator.toGerman(english);
+
+        assertEquals("root@example.test", german.personalFields().get(0).value());
+        assertEquals("Montreal, QC, Kanada", german.personalFields().get(1).value());
+        assertEquals("https://linkedin.com/in/joni-hysaj-66a56b285", german.personalFields().get(2).value());
+        assertEquals("National Bank of Commerce (BKT)", german.experiences().getFirst().company());
+        assertEquals("American University in Bulgaria", german.education().getFirst().institution());
+        assertEquals("unchanged", translator.translatePersonalFieldValue(null, "unchanged"));
+        assertEquals("unchanged", translator.translatePersonalFieldValue("   ", "unchanged"));
+        assertEquals("Kanada", translator.translatePersonalFieldValue("Nationality", "Canada"));
+        assertEquals("Tirana, Albanien", translator.translatePersonalFieldValue("Location", "Tirana, Albania"));
+    }
+
+    @Test
+    void translatesKnownExperienceBulletsIntoCompleteProfessionalGerman() {
+        assertEquals(
+                "Migrierte die Unternehmenswebsite von WordPress auf einen wartbaren individuellen Technologie-Stack und verantwortete die Umsetzung bis zur Produktivsetzung.",
+                translator.translateText("Migrated the company website from WordPress to a maintainable custom stack and took ownership of delivery through deployment.")
+        );
+        assertEquals(
+                "Integrierte Visa-Direct-APIs und arbeitete bei der Umsetzung mit technischen und fachlichen Stakeholdern zusammen.",
+                translator.translateText("Integrated Visa Direct APIs and collaborated with technical and business stakeholders on delivery.")
+        );
+        assertEquals(
+                "Arbeitete an Systemen zur Verarbeitung von Daten für mehr als 100.000 Kund:innen.",
+                translator.translateText("Worked on systems handling data for more than 100,000 customers.")
+        );
+        assertEquals(
+                "Entwickelte eine Desktop-Geschäftsanwendung mit Electron und Spring Boot sowie mobile Unterstützung mit SwiftUI.",
+                translator.translateText("Developed a desktop business application with Electron and Spring Boot plus SwiftUI-based mobile support.")
+        );
+        assertEquals(
+                "Entwickelte wiederverwendbare Frontend-Komponenten und trug zur responsiven Bereitstellung von Websites auf verschiedenen Endgeräten bei.",
+                translator.translateText("Developed reusable frontend components and contributed to responsive website delivery across devices.")
+        );
+        assertEquals(
+                "Unterstützte Endanwender:innen bei AutoCAD und Trimble-GPS-Software für Kartierungsarbeiten.",
+                translator.translateText("Provided end-user support for AutoCAD and Trimble GPS software used in mapping-related work.")
+        );
+    }
+
+    @Test
     void coversBlankLabelsUnknownLabelsAndCasePreservation() {
         assertNull(translator.translateText(null));
         assertEquals("   ", translator.translateText("   "));

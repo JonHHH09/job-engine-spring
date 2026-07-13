@@ -162,6 +162,22 @@ class PdfGenerationServiceTests {
     }
 
     @Test
+    void compactResumeLayoutFitsDenseContentOnOnePage() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+        String denseBody = ("Compact resume line\n").repeat(60);
+
+        GeneratedPdfFileResult defaultResult = service.generatePdfFile(new GeneratePdfFileRequest(
+                "default-density.pdf", "Resume", denseBody
+        ));
+        GeneratedPdfFileResult compactResult = service.generateCompactResumePdfFile(new GeneratePdfFileRequest(
+                "compact-density.pdf", "Resume", denseBody
+        ));
+
+        assertEquals(2, defaultResult.pageCount());
+        assertEquals(1, compactResult.pageCount());
+    }
+
+    @Test
     void paginationKeepsSectionHeadingWithFollowingContent() throws Exception {
         int linesPerPage = firstPageLineCountForGeneratedFiller();
         List<String> lines = new java.util.ArrayList<>();
