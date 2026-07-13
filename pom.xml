@@ -12,19 +12,26 @@
     <artifactId>job-engine-spring</artifactId>
     <version>${revision}</version>
     <name>job-engine-spring</name>
-    <description>job-engine-spring</description>
-    <url/>
+    <description>Local-only MCP server for explainable job search, matching, and resume workflows.</description>
+    <url>https://github.com/JonHHH09/job-engine-spring</url>
     <licenses>
-        <license/>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
     </licenses>
     <developers>
-        <developer/>
+        <developer>
+            <name>Joni Hysaj</name>
+            <url>https://github.com/JonHHH09</url>
+        </developer>
     </developers>
     <scm>
-        <connection/>
-        <developerConnection/>
-        <tag/>
-        <url/>
+        <connection>scm:git:https://github.com/JonHHH09/job-engine-spring.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/JonHHH09/job-engine-spring.git</developerConnection>
+        <tag>HEAD</tag>
+        <url>https://github.com/JonHHH09/job-engine-spring</url>
     </scm>
     <properties>
         <revision>0.0.1-SNAPSHOT</revision>
