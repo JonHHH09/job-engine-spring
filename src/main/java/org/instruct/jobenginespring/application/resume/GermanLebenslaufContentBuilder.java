@@ -131,7 +131,7 @@ public final class GermanLebenslaufContentBuilder {
                     if (hasText(item.relevantFocus())) {
                         bullets.add(item.relevantFocus().strip());
                     }
-                    if (hasText(item.location()) && hasText(item.institution())) {
+                    if (hasText(item.location())) {
                         bullets.add("International degree program (" + item.location().strip() + ").");
                     }
                     return new StructuredResumeContent.EducationEntry(
@@ -224,10 +224,7 @@ public final class GermanLebenslaufContentBuilder {
     }
 
     private static Set<String> tokenize(String text) {
-        if (!hasText(text)) {
-            return Set.of();
-        }
-        return java.util.Arrays.stream(text.toLowerCase(Locale.ROOT).split("[^a-z0-9+#./]+"))
+        return java.util.Arrays.stream(Objects.toString(text, "").toLowerCase(Locale.ROOT).split("[^a-z0-9+#./]+"))
                 .filter(token -> token.length() >= 3)
                 .collect(Collectors.toUnmodifiableSet());
     }
@@ -266,12 +263,9 @@ public final class GermanLebenslaufContentBuilder {
         List<String> sentences = new ArrayList<>();
         int start = iterator.first();
         for (int end = iterator.next(); end != BreakIterator.DONE; start = end, end = iterator.next()) {
-            String sentence = text.substring(start, end).strip();
-            if (hasText(sentence)) {
-                sentences.add(sentence);
-            }
+            sentences.add(text.substring(start, end).strip());
         }
-        return sentences;
+        return sentences.stream().filter(GermanLebenslaufContentBuilder::hasText).toList();
     }
 
     private static List<String> prioritizeBullets(List<String> bullets, Set<String> jobTokens, int limit) {
@@ -291,23 +285,25 @@ public final class GermanLebenslaufContentBuilder {
         return LocalDate.MIN;
     }
 
-    private static boolean isEmailLike(ProfileContact contact) {
-        return containsEmailSignal(contact.contactType())
-                || containsEmailSignal(contact.label())
-                || containsEmailSignal(contact.contactValue());
+    static boolean hasText(String text) {
+        return text != null && !text.isBlank();
     }
 
-    private static boolean containsEmailSignal(String text) {
-        if (!hasText(text)) {
+    static boolean isEmailLike(ProfileContact contact) {
+        return containsEmailSignal(contact.contactValue()) || containsEmailSignal(contact.contactType());
+    }
+
+    static boolean containsEmailSignal(String text) {
+        if (text == null || text.isBlank()) {
             return false;
         }
-        String stripped = text.strip();
-        return stripped.toLowerCase(Locale.ROOT).contains("email") || stripped.contains("@");
+        String stripped = text.strip().toLowerCase(Locale.ROOT);
+        return stripped.contains("email") || stripped.contains("@");
     }
 
-    private static String stripBulletPrefix(String text) {
+    static String stripBulletPrefix(String text) {
         String stripped = text.strip();
-        if (stripped.length() >= 2 && (stripped.startsWith("- ") || stripped.startsWith("* ") || stripped.startsWith("• "))) {
+        if (stripped.startsWith("- ") || stripped.startsWith("* ") || stripped.startsWith("• ")) {
             return stripped.substring(2).strip();
         }
         return stripped.replaceFirst("^\\d+[.)]\\s+", "").strip();
@@ -315,9 +311,5 @@ public final class GermanLebenslaufContentBuilder {
 
     private static String defaultText(String text, String fallback) {
         return hasText(text) ? text.strip() : fallback;
-    }
-
-    private static boolean hasText(String text) {
-        return text != null && !text.isBlank();
     }
 }

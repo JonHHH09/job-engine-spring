@@ -262,13 +262,17 @@ public class OfflineGermanResumeTranslator {
         return pattern.matcher(source).replaceAll(Matcher.quoteReplacement(replacement));
     }
 
-    private static String preserveCase(String original, String replacement) {
-        if (original.equals(original.toUpperCase(Locale.ROOT)) && original.length() > 1) {
+    static String preserveCase(String original, String replacement) {
+        if (original.length() > 1 && original.equals(original.toUpperCase(Locale.ROOT))) {
             return replacement.toUpperCase(Locale.ROOT);
         }
-        if (Character.isUpperCase(original.charAt(0))) {
+        if (!original.isEmpty() && Character.isUpperCase(original.charAt(0))) {
             return Character.toUpperCase(replacement.charAt(0)) + replacement.substring(1);
         }
         return replacement;
+    }
+
+    static String preserveCaseForTest(String original, String replacement) {
+        return preserveCase(original, replacement);
     }
 }
