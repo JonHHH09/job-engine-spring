@@ -1,5 +1,107 @@
 # job-engine-spring
 
+`job-engine-spring` is a local-only Model Context Protocol (MCP) server for storing normalized candidate profiles and jobs, producing explainable profile-to-job match reports, and generating resume documents. It is built with Java 25, Spring Boot, Spring AI, PostgreSQL, and Flyway.
+
+The project is an MCP backend, not a hosted service, web UI, public REST API, or job-board scraper. Normal operation uses Streamable HTTP published only on host loopback. PostgreSQL is private to Docker Compose, and isolated STDIO exists only for CI, package verification, and diagnostics.
+
+## Five-minute quickstart
+
+### Prerequisites
+
+- Git
+- Docker Engine or Docker Desktop with Docker Compose v2
+- Python 3 for the bundled MCP smoke client
+- Java 25 only when running Maven directly on the host
+
+Clone and start the source-built service:
+
+```bash
+git clone https://github.com/JonHHH09/job-engine-spring.git
+cd job-engine-spring
+cp .env.example .env
+docker compose up -d --build --wait postgres mcp
+python3 scripts/smoke-mcp-http.py
+```
+
+The smoke command initializes an MCP session, discovers the tool surface, calls `health`, and fails if the database is not ready. The supported endpoint is:
+
+```text
+http://127.0.0.1:8080/mcp
+```
+
+Do not publish the MCP port on a non-loopback host address, and do not publish PostgreSQL. The values in `.env.example` are synthetic local-development defaults; keep the copied `.env` file private and replace its password before using the environment for anything beyond isolated local development.
+
+### Connect an MCP client
+
+Configure a Streamable HTTP MCP server named `job-engine-spring` with the URL above. For Hermes Agent:
+
+```yaml
+mcp_servers:
+  job-engine-spring:
+    url: http://127.0.0.1:8080/mcp
+    enabled: true
+    timeout: 120
+    connect_timeout: 60
+```
+
+Reload the client's MCP connections, then call `health`. A successful response reports database readiness without returning credentials or connection details.
+
+### First useful workflow
+
+Use synthetic text for the first job insertion; ordinary hostname job-board URLs are intentionally unsupported by direct link ingestion because URL fetching is restricted to connection-bound public IP-literal targets.
+
+Call `add_job_from_text` with content similar to:
+
+```text
+Senior Java Engineer at Example Corp in Berlin. Build local backend services
+with Java 25, Spring Boot, PostgreSQL, Docker, and MCP. Five years of backend
+experience required. Full-time.
+```
+
+Optionally provide structured fields such as title, company, location, skills, seniority, and employment type. Then call `list_jobs` or `search_jobs` to read the normalized result. Do not use real resumes, private applications, credentials, or production data while evaluating the project.
+
+### Persistence and lifecycle
+
+PostgreSQL data persists in the Compose-managed `postgres-data` volume.
+
+Stop containers while preserving data:
+
+```bash
+docker compose down
+```
+
+Update a source checkout without deleting the database volume:
+
+```bash
+git pull --ff-only
+docker compose up -d --build --force-recreate --wait postgres mcp
+python3 scripts/smoke-mcp-http.py
+```
+
+Create a transaction-consistent backup before significant upgrades:
+
+```bash
+./scripts/postgres-backup.sh
+```
+
+Destructively uninstall the local containers **and delete the PostgreSQL volume**:
+
+```bash
+docker compose down -v
+```
+
+That final command permanently deletes local application data. See [PostgreSQL backup and recovery](#postgresql-backup-and-recovery) before using it on data you need to keep.
+
+## Project status and non-goals
+
+- The server is under active development; MCP schemas and persisted data contracts may evolve between pre-1.0 releases.
+- Only the latest published release receives security fixes.
+- The supported network model is local-only. Exposing MCP or PostgreSQL to another machine is unsupported.
+- Provider-backed enrichment is optional. Deterministic storage, search, and matching remain independently usable.
+- Direct hostname URL ingestion is deliberately unavailable; use `add_job_from_text` for normal job-board content.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull-request requirements, [SUPPORT.md](SUPPORT.md) for issue routing, [SECURITY.md](SECURITY.md) for private vulnerability reports, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
+
 ## Persistent match analysis
 
 The service persists immutable, explainable profile-to-job match reports in the `match` PostgreSQL schema. The deterministic `deterministic-v1` baseline uses technical (40), experience/seniority (25), domain (15), delivery (10), and hard-requirement (10) components. Missing structured evidence is `UNKNOWN`, reduces confidence, and is never replaced with unstructured domain or delivery inference. Scores are normalized over known evidence, so known evidence can produce `STRONG_MATCH` while confidence remains lower. A job skill's `required` flag alone is not blocker provenance.
@@ -7,8 +109,6 @@ The service persists immutable, explainable profile-to-job match reports in the 
 Advisory reviews are stored separately and never replace the baseline. Review summaries use only `review_consistent`, `score_adjustment`, `outcome_adjustment`, or `evidence_defect_identified`; free-form summaries are rejected. Advisory evidence must exactly reuse a fact from the deterministic baseline or use one of `structured_evidence_missing`, `structured_evidence_incorrect`, `requirement_provenance_missing`, or `outcome_calibration_issue`. Divergence policy `divergence-v1` creates a deduplicated disagreement for an overall delta of at least 15, an outcome or blocker mismatch, a component delta of at least 40% of available points, or an explicit outcome-changing evidence defect. Its fingerprint uses the report, persisted policy version, sorted reason classification, and canonical outcome-changing defect codes—not review identity, reviewer, model, or summary. Disagreements support `PENDING_ESCALATION`, acknowledgement, and linkage to an existing Linear issue ID; this application has no Linear provider integration or credentials.
 
 MCP tools: `analyze_job_match`, `analyze_all_job_matches`, `get_match_report`, `list_match_reports`, `submit_match_review`, `get_match_review`, `list_match_reviews`, `list_match_disagreements`, `acknowledge_match_disagreement`, and `link_match_disagreement`. Requests are object-shaped. Acknowledgement and linkage can record an existing Linear issue ID but never call Linear or use provider credentials. Responses contain normalized evidence only and exclude contacts, resume documents/text, prompts, reasoning traces, secrets, provider transcripts, and private URLs.
-
-`job-engine-spring` is a Spring Boot / Spring AI MCP server that is replacing the legacy Python Job-Engine runtime with a Java/Spring implementation.
 
 ## Current scope
 
@@ -61,7 +161,7 @@ Configure the PostgreSQL connection through environment variables or safe local 
 ```yaml
 spring:
   main:
-    web-application-type: none
+    web-application-type: servlet
   datasource:
     url: ${JOB_ENGINE_POSTGRES_URL:jdbc:postgresql://localhost:5432/job_engine}
     username: ${JOB_ENGINE_POSTGRES_USER:}
