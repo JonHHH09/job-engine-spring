@@ -93,7 +93,7 @@ public final class GermanLebenslaufBodyRenderer {
         return startText + " - " + endText;
     }
 
-    private static boolean hasText(String text) {
+    static boolean hasText(String text) {
         return text != null && !text.isBlank();
     }
 

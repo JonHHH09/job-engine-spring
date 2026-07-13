@@ -27,12 +27,16 @@ public record StructuredResumeContent(
         }
         Objects.requireNonNull(language, "language must not be null");
         language = language.strip().toLowerCase();
-        personalFields = List.copyOf(personalFields == null ? List.of() : personalFields);
-        experiences = List.copyOf(experiences == null ? List.of() : experiences);
-        education = List.copyOf(education == null ? List.of() : education);
-        skillGroups = List.copyOf(skillGroups == null ? List.of() : skillGroups);
-        languages = List.copyOf(languages == null ? List.of() : languages);
-        additional = List.copyOf(additional == null ? List.of() : additional);
+        personalFields = copy(personalFields);
+        experiences = copy(experiences);
+        education = copy(education);
+        skillGroups = copy(skillGroups);
+        languages = copy(languages);
+        additional = copy(additional);
+    }
+
+    private static <T> List<T> copy(List<T> values) {
+        return List.copyOf(values == null ? List.of() : values);
     }
 
     public record PersonalField(String label, String value) {

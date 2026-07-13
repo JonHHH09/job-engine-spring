@@ -209,7 +209,7 @@ public class GenerateGermanTailoredResumeService {
                     DocumentStorageService.PDF_MEDIA_TYPE
             );
             return new GeneratedPdfAssets(document, generatedFile);
-        } catch (RuntimeException | Error failure) {
+        } catch (RuntimeException failure) {
             try {
                 fileRepository.deleteIfExists(generatedFile.path());
             } catch (RuntimeException cleanupFailure) {
@@ -223,7 +223,8 @@ public class GenerateGermanTailoredResumeService {
         List<SectionWrite> sections = new ArrayList<>();
         int sectionOrder = 0;
 
-        if (!content.personalFields().isEmpty()) {
+        // Always present (email at minimum).
+        {
             ResumeSection section = new ResumeSection(
                     UUID.randomUUID(), variant.id(), ResumeSection.PERSONAL,
                     ResumeVariant.LANGUAGE_DE.equals(content.language()) ? "Persönliche Daten" : "Personal Data",
