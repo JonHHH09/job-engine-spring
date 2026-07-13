@@ -322,3 +322,7 @@ sha256sum -c SHA256SUMS
 ```
 
 The Maven Wrapper now records `distributionSha256Sum` for the pinned Apache Maven 3.9.16 distribution. When updating `.mvn/wrapper/maven-wrapper.properties`, download the exact replacement archive from Apache, verify its upstream checksum/signature, compute its SHA-256 locally, and update both `distributionUrl` and `distributionSha256Sum` together.
+
+## License
+
+`job-engine-spring` is licensed under the [Apache License 2.0](LICENSE). Third-party dependencies remain subject to their respective licenses.
