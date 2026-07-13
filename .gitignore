@@ -44,6 +44,9 @@ build/
 !/tmp/generated-pdfs/canadian-resume/
 /tmp/generated-pdfs/canadian-resume/*
 !/tmp/generated-pdfs/canadian-resume/.gitkeep
+!/tmp/generated-pdfs/german-resume/
+/tmp/generated-pdfs/german-resume/*
+!/tmp/generated-pdfs/german-resume/.gitkeep
 /backups/postgres/
 /.worktrees/
 /docs/
