@@ -13,6 +13,7 @@ import org.instruct.jobenginespring.application.profile.port.ProfilePersonalDeta
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.resume.GermanLebenslaufBodyRenderer;
 import org.instruct.jobenginespring.application.resume.GermanLebenslaufContentBuilder;
+import org.instruct.jobenginespring.application.resume.GermanLebenslaufContentReview;
 import org.instruct.jobenginespring.application.resume.OfflineGermanResumeTranslator;
 import org.instruct.jobenginespring.application.resume.StructuredResumeContent;
 import org.instruct.jobenginespring.application.resume.port.ResumeRepository;
@@ -40,6 +41,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -129,14 +131,19 @@ public class GenerateGermanTailoredResumeService {
         JobAggregate job = jobRepository.findJobAggregate(jobId)
                 .orElseThrow(() -> new JobNotFoundException(jobId));
         ProfilePersonalDetails personalDetails = personalDetailsRepository.findByProfileId(profileId).orElse(null);
+        boolean includeProjects = Boolean.TRUE.equals(safe.includeProjects());
 
-        StructuredResumeContent english = GermanLebenslaufContentBuilder.buildEnglish(profile, job, personalDetails);
+        StructuredResumeContent english = GermanLebenslaufContentBuilder.buildEnglish(
+                profile, job, personalDetails, includeProjects
+        );
         StructuredResumeContent german = translator.toGerman(english);
+        GermanLebenslaufContentReview.review(english);
+        GermanLebenslaufContentReview.review(german);
 
-        GeneratedPdfAssets englishPdf = generatePdf(english, profileId, jobId, ResumeVariant.LANGUAGE_EN);
+        GeneratedPdfAssets englishPdf = generatePdf(english, profile, jobId, ResumeVariant.LANGUAGE_EN);
         GeneratedPdfAssets germanPdf = null;
         try {
-            germanPdf = generatePdf(german, profileId, jobId, ResumeVariant.LANGUAGE_DE);
+            germanPdf = generatePdf(german, profile, jobId, ResumeVariant.LANGUAGE_DE);
             Instant now = clock.instant();
             UUID resumeId = UUID.randomUUID();
             Resume resume = new Resume(
@@ -193,11 +200,11 @@ public class GenerateGermanTailoredResumeService {
 
     private GeneratedPdfAssets generatePdf(
             StructuredResumeContent content,
-            UUID profileId,
+            ProfileAggregate profile,
             UUID jobId,
             String language
     ) {
-        String fileName = "german-resume-" + language + "-" + profileId + "-" + jobId + "-" + UUID.randomUUID() + ".pdf";
+        String fileName = buildFileName(profile.profile().fullName(), profile.profile().id(), language);
         String title = content.fullName() + (ResumeVariant.LANGUAGE_DE.equals(language) ? " - Lebenslauf" : " - CV");
         GeneratedPdfFileResult generatedFile = new PdfGenerationService(outputDirectory).generatePdfFile(
                 new PdfGenerationService.GeneratePdfFileRequest(fileName, title, GermanLebenslaufBodyRenderer.render(content))
@@ -223,24 +230,22 @@ public class GenerateGermanTailoredResumeService {
         List<SectionWrite> sections = new ArrayList<>();
         int sectionOrder = 0;
 
-        // Always present (email at minimum).
-        {
-            ResumeSection section = new ResumeSection(
-                    UUID.randomUUID(), variant.id(), ResumeSection.PERSONAL,
-                    ResumeVariant.LANGUAGE_DE.equals(content.language()) ? "Persönliche Daten" : "Personal Data",
-                    sectionOrder++
+        // Contact fields only — no PERSONAL DATA section title on tailored Germany resumes.
+        ResumeSection contactSection = new ResumeSection(
+                UUID.randomUUID(), variant.id(), ResumeSection.PERSONAL,
+                ResumeVariant.LANGUAGE_DE.equals(content.language()) ? "Kontakt" : "Contact",
+                sectionOrder++
+        );
+        List<EntryWrite> contactEntries = new ArrayList<>();
+        int contactOrder = 0;
+        for (StructuredResumeContent.PersonalField field : content.personalFields()) {
+            ResumeEntry entry = new ResumeEntry(
+                    UUID.randomUUID(), contactSection.id(), ResumeEntry.PERSONAL_FIELD, contactOrder++,
+                    field.label(), null, null, null, null, field.value()
             );
-            List<EntryWrite> entries = new ArrayList<>();
-            int entryOrder = 0;
-            for (StructuredResumeContent.PersonalField field : content.personalFields()) {
-                ResumeEntry entry = new ResumeEntry(
-                        UUID.randomUUID(), section.id(), ResumeEntry.PERSONAL_FIELD, entryOrder++,
-                        field.label(), null, null, null, null, field.value()
-                );
-                entries.add(new EntryWrite(entry, List.of()));
-            }
-            sections.add(new SectionWrite(section, entries));
+            contactEntries.add(new EntryWrite(entry, List.of()));
         }
+        sections.add(new SectionWrite(contactSection, contactEntries));
 
         if (!content.experiences().isEmpty()) {
             ResumeSection section = new ResumeSection(
@@ -319,7 +324,7 @@ public class GenerateGermanTailoredResumeService {
         if (!content.additional().isEmpty()) {
             ResumeSection section = new ResumeSection(
                     UUID.randomUUID(), variant.id(), ResumeSection.ADDITIONAL,
-                    ResumeVariant.LANGUAGE_DE.equals(content.language()) ? "Weitere Qualifikationen" : "Additional Qualifications",
+                    ResumeVariant.LANGUAGE_DE.equals(content.language()) ? "Projekte" : "Projects",
                     sectionOrder
             );
             List<EntryWrite> entries = new ArrayList<>();
@@ -380,7 +385,38 @@ public class GenerateGermanTailoredResumeService {
         return id;
     }
 
-    public record GenerateGermanTailoredResumeRequest(UUID profileId, UUID jobId) {
+    /**
+     * Pattern: {@code germany_{candidate-slug}_{number}_{lang}.pdf}
+     * where {@code number} is the first 8 hex chars of the profile UUID and {@code lang} is {@code en}/{@code de}.
+     */
+    static String buildFileName(String fullName, UUID profileId, String language) {
+        String candidate = slugify(fullName);
+        String number = profileId.toString().replace("-", "").substring(0, 8);
+        String lang = ResumeVariant.LANGUAGE_DE.equals(language) ? "de" : "en";
+        String unique = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        return "germany_" + candidate + "_" + number + "_" + lang + "_" + unique + ".pdf";
+    }
+
+    static String slugify(String value) {
+        String raw = value == null ? "candidate" : value.strip().toLowerCase(Locale.ROOT);
+        String slug = raw.replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
+        if (slug.isBlank()) {
+            return "candidate";
+        }
+        if (slug.length() > 40) {
+            return slug.substring(0, 40).replaceAll("-+$", "");
+        }
+        return slug;
+    }
+
+    public record GenerateGermanTailoredResumeRequest(
+            UUID profileId,
+            UUID jobId,
+            Boolean includeProjects
+    ) {
+        public GenerateGermanTailoredResumeRequest(UUID profileId, UUID jobId) {
+            this(profileId, jobId, false);
+        }
     }
 
     public record GenerateGermanTailoredResumeResult(

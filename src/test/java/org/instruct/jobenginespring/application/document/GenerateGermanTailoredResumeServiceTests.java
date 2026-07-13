@@ -130,7 +130,10 @@ class GenerateGermanTailoredResumeServiceTests {
     void generatesSparseProfileWithoutOptionalSections() {
         ProfileAggregate sparse = new ProfileAggregate(
                 new UserProfile(PROFILE_ID, "Sparse Name", "sparse@example.test", null, null, NOW, NOW),
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
+                List.of(), List.of(), List.of(), List.of(),
+                List.of(new Education(UUID.randomUUID(), PROFILE_ID, "Uni", "B.A.", "CS", "City",
+                        LocalDate.of(2019, 1, 1), LocalDate.of(2023, 1, 1), null, NOW)),
+                List.of(), List.of(), List.of()
         );
         when(profileRepository.findProfileAggregate(PROFILE_ID)).thenReturn(Optional.of(sparse));
         when(jobRepository.findJobAggregate(JOB_ID)).thenReturn(Optional.of(job()));
@@ -196,6 +199,60 @@ class GenerateGermanTailoredResumeServiceTests {
         when(profileRepository.findProfileAggregate(PROFILE_ID)).thenReturn(Optional.of(richProfile()));
         when(jobRepository.findJobAggregate(JOB_ID)).thenReturn(Optional.empty());
         assertThrows(JobNotFoundException.class, () -> service.generate(new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)));
+    }
+
+    @Test
+    void buildsFilenameWithFormatCandidateNumberAndLanguageAbbr() {
+        UUID profileId = UUID.fromString("dfdb2806-b130-420a-814b-dac650c3c439");
+        String en = GenerateGermanTailoredResumeService.buildFileName("Joni Hysaj", profileId, "en");
+        String de = GenerateGermanTailoredResumeService.buildFileName("Joni Hysaj", profileId, "de");
+        assertTrue(en.startsWith("germany_joni-hysaj_dfdb2806_en_"));
+        assertTrue(en.endsWith(".pdf"));
+        assertTrue(de.startsWith("germany_joni-hysaj_dfdb2806_de_"));
+        assertEquals("candidate", GenerateGermanTailoredResumeService.slugify("   "));
+        assertEquals("candidate", GenerateGermanTailoredResumeService.slugify(null));
+        String longSlug = GenerateGermanTailoredResumeService.slugify("A".repeat(80));
+        assertTrue(longSlug.length() <= 40);
+        assertTrue(GenerateGermanTailoredResumeService.buildFileName(null, profileId, "en").startsWith("germany_candidate_"));
+    }
+
+    @Test
+    void generatesExperienceOnlyWithoutEducationSection() {
+        ProfileAggregate experienceOnly = new ProfileAggregate(
+                new UserProfile(PROFILE_ID, "Sparse Name", "sparse@example.test", null, null, NOW, NOW),
+                List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(new Experience(UUID.randomUUID(), PROFILE_ID, "Co", "Dev", null,
+                        LocalDate.of(2024, 1, 1), LocalDate.of(2025, 1, 1), "Built systems.", 0, NOW)),
+                List.of(), List.of()
+        );
+        when(profileRepository.findProfileAggregate(PROFILE_ID)).thenReturn(Optional.of(experienceOnly));
+        when(jobRepository.findJobAggregate(JOB_ID)).thenReturn(Optional.of(job()));
+        when(personalDetailsRepository.findByProfileId(PROFILE_ID)).thenReturn(Optional.empty());
+        when(documentStorageService.storeGeneratedDocumentFile(any(), any())).thenAnswer(invocation ->
+                new StoredDocumentMetadata(UUID.randomUUID(), "resume.pdf", DocumentStorageService.PDF_MEDIA_TYPE, 10L, "sha", NOW, NOW));
+        when(resumeRepository.replaceGermanyResume(org.mockito.ArgumentMatchers.any(ResumeRepository.ResumeAggregateWrite.class)))
+                .thenAnswer(invocation -> {
+                    ResumeRepository.ResumeAggregateWrite write = invocation.getArgument(0);
+                    return new ReplaceResult(write.resume(), write.variants().stream().map(ResumeRepository.VariantWrite::variant).toList(), List.of());
+                });
+        assertEquals(2, service.generate(new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)).variants().size());
+    }
+
+    @Test
+    void generatesWithProjectsWhenRequested() {
+        when(profileRepository.findProfileAggregate(PROFILE_ID)).thenReturn(Optional.of(richProfile()));
+        when(jobRepository.findJobAggregate(JOB_ID)).thenReturn(Optional.of(job()));
+        when(personalDetailsRepository.findByProfileId(PROFILE_ID)).thenReturn(Optional.empty());
+        when(documentStorageService.storeGeneratedDocumentFile(any(), any())).thenAnswer(invocation ->
+                new StoredDocumentMetadata(UUID.randomUUID(), "resume.pdf", DocumentStorageService.PDF_MEDIA_TYPE, 10L, "sha", NOW, NOW));
+        when(resumeRepository.replaceGermanyResume(org.mockito.ArgumentMatchers.any(ResumeRepository.ResumeAggregateWrite.class)))
+                .thenAnswer(invocation -> {
+                    ResumeRepository.ResumeAggregateWrite write = invocation.getArgument(0);
+                    return new ReplaceResult(write.resume(), write.variants().stream().map(ResumeRepository.VariantWrite::variant).toList(), List.of());
+                });
+        var result = service.generate(new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID, true));
+        assertEquals(2, result.variants().size());
+        assertTrue(result.variants().getFirst().generatedFile().fileName().startsWith("germany_joni-hysaj_"));
     }
 
     @Test
