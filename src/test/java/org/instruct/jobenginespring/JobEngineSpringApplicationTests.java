@@ -7,8 +7,10 @@ import org.instruct.jobenginespring.application.job.port.JobAnalysisRunRepositor
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
+import org.instruct.jobenginespring.application.profile.port.ProfilePersonalDetailsRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileResumeDocumentRepository;
+import org.instruct.jobenginespring.application.resume.port.ResumeRepository;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
@@ -253,6 +255,16 @@ class JobEngineSpringApplicationTests {
                     return new Replacement(resumeDocument, Optional.empty());
                 }
             };
+        }
+
+        @Bean
+        ProfilePersonalDetailsRepository profilePersonalDetailsRepository() {
+            return org.mockito.Mockito.mock(ProfilePersonalDetailsRepository.class);
+        }
+
+        @Bean
+        ResumeRepository resumeRepository() {
+            return org.mockito.Mockito.mock(ResumeRepository.class);
         }
     }
 
