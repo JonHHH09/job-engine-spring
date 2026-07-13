@@ -67,6 +67,11 @@ public class PostgresResumeRepository implements ResumeRepository {
         Resume resume = safe.resume();
         List<ResumeVariant> previousVariants = List.of();
 
+        // Serialize concurrent replacements for the same profile/job/format pair so two
+        // generate_german_tailored_resume calls cannot both pass the existence lookup and then
+        // race on the unique (profile_id, job_id, format) constraint after PDFs were stored.
+        lockGermanyResume(resume.profileId(), resume.jobId(), resume.format());
+
         Optional<Resume> existing = findByProfileJobFormat(resume.profileId(), resume.jobId(), resume.format());
         if (existing.isPresent()) {
             previousVariants = findVariants(existing.get().id());
@@ -170,6 +175,13 @@ public class PostgresResumeRepository implements ResumeRepository {
         }
 
         return new ReplaceResult(resume, List.copyOf(savedVariants), previousVariants);
+    }
+
+    private void lockGermanyResume(UUID profileId, UUID jobId, String format) {
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(:lockKey, 0))")
+                .param("lockKey", "german-tailored-resume:" + profileId + ":" + jobId + ":" + format)
+                .query((resultSet, rowNumber) -> Boolean.TRUE)
+                .single();
     }
 
     private Resume mapResume(ResultSet rs, int rowNum) throws SQLException {
