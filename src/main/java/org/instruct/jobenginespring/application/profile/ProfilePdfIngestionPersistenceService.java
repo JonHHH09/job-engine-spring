@@ -109,13 +109,32 @@ public class ProfilePdfIngestionPersistenceService {
             );
         }
 
-        ProfilePdfSource source = profilePdfSourceRepository.save(new ProfilePdfSource(
+        var inserted = profilePdfSourceRepository.insertOrFind(new ProfilePdfSource(
                 UUID.randomUUID(),
                 profileAggregate.profile().id(),
                 extractionId,
                 SOURCE_TYPE,
                 clock.instant()
         ));
-        return ProfilePdfIngestionService.toResult(source, storedExtraction, status, createdProfile, false);
+        if (inserted.inserted()) {
+            return ProfilePdfIngestionService.toResult(
+                    inserted.source(), storedExtraction, status, createdProfile, false
+            );
+        }
+        if (createdProfile) {
+            profileService.deleteProfile(profileAggregate.profile().id());
+        }
+        if (!inserted.source().pdfExtractionId().equals(extractionId)
+                || (!createdProfile && !inserted.source().profileId().equals(profileAggregate.profile().id()))) {
+            throw new ApplicationException(
+                    ApplicationErrorCode.VALIDATION_ERROR,
+                    "Profile is already linked to a PDF extraction",
+                    Map.of("profileId", String.valueOf(profileAggregate.profile().id())),
+                    null
+            );
+        }
+        return ProfilePdfIngestionService.toResult(
+                inserted.source(), storedExtraction, IngestionStatus.REUSED_EXISTING_SOURCE, false, true
+        );
     }
 }
