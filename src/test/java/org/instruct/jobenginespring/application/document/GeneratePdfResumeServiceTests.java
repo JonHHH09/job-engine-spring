@@ -418,7 +418,7 @@ class GeneratePdfResumeServiceTests {
         assertEquals(List.of(), profileRepository.findIdentityCandidates(new ProfileIdentitySearch("agentic@example.test", null)));
 
         ProfilePdfIngestionService.ProfilePdfIngestionResult result = new ProfilePdfIngestionService.ProfilePdfIngestionResult(
-                ProfilePdfIngestionService.IngestionStatus.VALIDATION_FAILED,
+                ProfilePdfIngestionService.IngestionStatus.CREATED_PROFILE,
                 PROFILE_ID,
                 UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
                 UUID.fromString("cccccccc-cccc-cccc-cccc-cccccccccccc"),
@@ -1004,14 +1004,6 @@ class GeneratePdfResumeServiceTests {
         }
 
         @Override
-        public Optional<StoredDocumentMetadata> findFileMetadataBySha256(String sha256) {
-            return files.values().stream()
-                    .filter(file -> file.sha256().equals(sha256))
-                    .findFirst()
-                    .map(StoredDocumentFile::metadata);
-        }
-
-        @Override
         public Optional<StoredDocumentFile> findFileContentById(UUID fileId) {
             return Optional.ofNullable(files.get(fileId));
         }
@@ -1076,13 +1068,6 @@ class GeneratePdfResumeServiceTests {
         @Override
         public Optional<ProfileResumeDocument> findByProfileIdAndResumeType(UUID profileId, String resumeType) {
             return Optional.ofNullable(linksByProfileAndType.get(key(profileId, resumeType)));
-        }
-
-        @Override
-        public Optional<ProfileResumeDocument> findByDocumentId(UUID documentId) {
-            return linksByProfileAndType.values().stream()
-                    .filter(link -> link.documentId().equals(documentId))
-                    .findFirst();
         }
 
         @Override

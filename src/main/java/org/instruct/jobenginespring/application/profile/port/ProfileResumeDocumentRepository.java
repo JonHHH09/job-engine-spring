@@ -13,8 +13,6 @@ public interface ProfileResumeDocumentRepository {
 
     Optional<ProfileResumeDocument> findByProfileIdAndResumeType(UUID profileId, String resumeType);
 
-    Optional<ProfileResumeDocument> findByDocumentId(UUID documentId);
-
     /**
      * Serializes generated-resume mutations for a profile and returns its current links.
      * Callers must invoke this inside the transaction that deletes the profile.

@@ -13,8 +13,6 @@ public interface DocumentRepository {
 
     Optional<StoredDocumentMetadata> findFileMetadataById(UUID fileId);
 
-    Optional<StoredDocumentMetadata> findFileMetadataBySha256(String sha256);
-
     Optional<StoredDocumentFile> findFileContentById(UUID fileId);
 
     Optional<PdfExtractionRecord> findPdfExtractionByFileId(UUID fileId);

@@ -6,11 +6,14 @@ import org.instruct.jobenginespring.application.document.DocumentStorageService.
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
+import org.instruct.jobenginespring.domain.document.PdfExtractionRecord.PageProjection;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
@@ -106,10 +109,17 @@ class PostgresDocumentRepositoryIntegrationTests {
 
         assertEquals(file.metadata(), saved);
         assertEquals(saved, repository.findFileMetadataById(FILE_ID).orElseThrow());
-        assertEquals(saved, repository.findFileMetadataBySha256(SHA256).orElseThrow());
         StoredDocumentFile found = repository.findFileContentById(FILE_ID).orElseThrow();
         assertEquals(file.metadata(), found.metadata());
         assertArrayEquals(PDF_CONTENT, found.content());
+    }
+
+    @Test
+    void databaseRejectsBlobByteSizeThatDoesNotMatchContent() {
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update("""
+                INSERT INTO document.blobs (id, sha256, byte_size, content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), SHA256, PDF_CONTENT.length + 1L, PDF_CONTENT, java.sql.Timestamp.from(NOW)));
     }
 
     @Test
@@ -272,6 +282,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 1,
                 false,
                 "sample text",
+                List.of(new PageProjection(1, "sample text")),
                 NOW
         );
 
@@ -279,6 +290,7 @@ class PostgresDocumentRepositoryIntegrationTests {
 
         assertEquals(extraction, saved);
         assertEquals(extraction, repository.findPdfExtractionByFileId(FILE_ID).orElseThrow());
+        assertEquals(List.of(new PageProjection(1, "sample text")), saved.pages());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
         jdbc.update("DELETE FROM document.documents WHERE id = ?", FILE_ID);
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
@@ -299,6 +311,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 1,
                 false,
                 "sample text",
+                List.of(new PageProjection(1, "sample text")),
                 refreshedAt
         );
 
@@ -307,6 +320,20 @@ class PostgresDocumentRepositoryIntegrationTests {
         assertEquals(canonical, updated);
         assertEquals(canonical, repository.findPdfExtractionByFileId(FILE_ID).orElseThrow());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
+    }
+
+    @Test
+    void rejectsMalformedPersistedPageProjections() {
+        repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
+        repository.savePdfExtraction(new PdfExtractionRecord(
+                EXTRACTION_ID, FILE_ID, "test-extractor", 11, 1, false, "sample text", NOW
+        ));
+        jdbc.update(
+                "UPDATE document.pdf_extractions SET page_projections = '[\"invalid\"]'::jsonb WHERE id = ?",
+                EXTRACTION_ID
+        );
+
+        assertThrows(DataAccessException.class, () -> repository.findPdfExtractionByFileId(FILE_ID));
     }
 
     @Test
@@ -322,8 +349,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 List.of()
         );
         when(extractionService.extractText(
-                any(byte[].class),
-                eq("sample.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         )).thenReturn(canonical);
@@ -338,7 +364,7 @@ class PostgresDocumentRepositoryIntegrationTests {
         PdfExtractionRecord persisted = repository.findPdfExtractionByFileId(FILE_ID).orElseThrow();
         assertEquals(20, persisted.characterCount());
         assertEquals("0123456789abcdefghij", persisted.extractedText());
-        verify(extractionService, times(1)).extractText(any(byte[].class), any(), any(), any());
+        verify(extractionService, times(1)).extractText(any(StoredDocumentFile.class), any(), any());
     }
 
     @Test
@@ -351,8 +377,7 @@ class PostgresDocumentRepositoryIntegrationTests {
         CountDownLatch start = new CountDownLatch(1);
         CyclicBarrier bothExtracted = new CyclicBarrier(2);
         when(extractionService.extractText(
-                any(byte[].class),
-                eq("sample.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         )).thenAnswer(invocation -> {
@@ -379,7 +404,7 @@ class PostgresDocumentRepositoryIntegrationTests {
             assertEquals("sample text", firstResult.extraction().text());
             assertEquals("sample text", secondResult.extraction().text());
             assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
-            verify(extractionService, times(2)).extractText(any(byte[].class), any(), any(), any());
+            verify(extractionService, times(2)).extractText(any(StoredDocumentFile.class), any(), any());
         }
     }
 
