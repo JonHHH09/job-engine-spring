@@ -60,8 +60,8 @@ public class ProfileService {
     }
 
     @Transactional(readOnly = true)
-    public Page<UserProfile> listProfiles(Integer limit, UUID cursor) {
-        return profileRepository.listProfiles(PageRequest.of(limit, cursor));
+    public Page<UserProfile> listProfiles(Integer limit, String cursor) {
+        return profileRepository.listProfiles(PageRequest.of(limit, cursor, "profiles", "all"));
     }
 
     @Transactional(readOnly = true)

@@ -979,8 +979,8 @@ class JobServiceTests {
         assertEquals(List.of(), new JobAggregate(new JobPosting(
                 aggregateJobId, "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint", NOW, NOW
         ), null, null, new JobTextIngestion(UUID.randomUUID(), aggregateJobId, null, "hash", NOW)).skills());
-        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, null).queryTokens());
-        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, null).jobs());
+        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, false, 0, null).queryTokens());
+        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, false, 0, null).jobs());
         JobPosting posting = new JobPosting(
                 UUID.randomUUID(), "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint-2", NOW, NOW
         );

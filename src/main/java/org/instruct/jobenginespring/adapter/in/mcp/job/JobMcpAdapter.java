@@ -146,11 +146,11 @@ public class JobMcpAdapter {
 
     public record ListRequest(
             @McpToolParam(required = false, description = "Maximum page size, 1-100") Integer limit,
-            @McpToolParam(required = false, description = "UUID cursor returned by the previous page") UUID cursor
+            @McpToolParam(required = false, description = "Opaque cursor returned by the previous page") String cursor
     ) {
     }
 
-    public record ListJobsResult(List<JobPosting> jobs, UUID nextCursor) {
+    public record ListJobsResult(List<JobPosting> jobs, String nextCursor) {
         public ListJobsResult {
             jobs = jobs == null ? List.of() : List.copyOf(jobs);
         }

@@ -90,7 +90,8 @@ class PostgresJobRepositoryIntegrationTests {
                 "job_link_ingestions",
                 "job_skills",
                 "job_text_ingestions",
-                "jobs"
+                "jobs",
+                "search_terms"
         ), tables);
     }
 

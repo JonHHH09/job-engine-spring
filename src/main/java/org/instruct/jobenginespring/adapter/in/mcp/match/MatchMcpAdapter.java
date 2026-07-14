@@ -64,12 +64,12 @@ public class MatchMcpAdapter {
         catch(Exception e){return CallToolResult.builder().isError(true).structuredContent(errors.toErrorResponse(e)).build();}}
     private static <T>T require(T value){if(value==null)throw new IllegalArgumentException("request must not be null");return value;}
     public record AnalyzeRequest(UUID profileId,UUID jobId){} public record ProfileRequest(UUID profileId){} public record IdRequest(UUID id){}
-    public record ReportRequest(UUID reportId){} public record ReportFilter(UUID profileId,UUID jobId,Integer limit,UUID cursor){} public record DisagreementFilter(UUID reportId){}
+    public record ReportRequest(UUID reportId){} public record ReportFilter(UUID profileId,UUID jobId,Integer limit,String cursor){} public record DisagreementFilter(UUID reportId){}
     public record AcknowledgeRequest(UUID disagreementId,String linearIssueId){}
     public record LinkRequest(UUID disagreementId,String linearIssueId){}
     public record ReviewRequest(UUID reportId,String reviewer,String model,String reviewVersion,Integer overallScore,MatchOutcome outcome,
                                 Boolean blockerMismatch,List<ComponentScore> components,List<MatchEvidence> evidence,String summary){}
-    public record Reports(List<MatchAnalysisService.ReportView> reports,UUID nextCursor){public Reports{reports=List.copyOf(reports);}}
+    public record Reports(List<MatchAnalysisService.ReportView> reports,String nextCursor){public Reports{reports=List.copyOf(reports);}}
     public record Reviews(List<MatchReview> reviews){public Reviews{reviews=List.copyOf(reviews);}}
     public record Disagreements(List<MatchDisagreement> disagreements){public Disagreements{disagreements=List.copyOf(disagreements);}}
 }

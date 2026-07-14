@@ -77,7 +77,7 @@ class ProfileMcpAdapterTests {
     @Test
     void listProfilesToolDelegatesToService() {
         UserProfile profile = sampleProfile();
-        when(profileService.listProfiles(1, null)).thenReturn(new Page<>(List.of(profile), PROFILE_ID));
+        when(profileService.listProfiles(1, null)).thenReturn(new Page<>(List.of(profile), "cursor"));
 
         CallToolResult result = adapter.listProfiles(new ProfileMcpAdapter.ListRequest(1, null));
 
@@ -87,7 +87,7 @@ class ProfileMcpAdapterTests {
                 result.structuredContent()
         );
         assertEquals(List.of(profile), listResult.profiles());
-        assertEquals(PROFILE_ID, listResult.nextCursor());
+        assertEquals("cursor", listResult.nextCursor());
         assertEquals(List.of(), new ProfileMcpAdapter.ListProfilesResult(null, null).profiles());
         verify(profileService).listProfiles(1, null);
     }

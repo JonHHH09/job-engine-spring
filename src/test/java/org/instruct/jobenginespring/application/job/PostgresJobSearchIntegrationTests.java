@@ -28,6 +28,8 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
 class PostgresJobSearchIntegrationTests {
@@ -120,21 +122,102 @@ class PostgresJobSearchIntegrationTests {
         assertEquals(boundedRows, dataSource.rowsRead());
 
         dataSource.reset();
-        var firstPage = repository.listJobs(PageRequest.of(1, null));
+        var firstPage = repository.listJobs(PageRequest.of(1, null, "jobs", "all"));
         assertEquals(1, firstPage.items().size());
         assertNotNull(firstPage.nextCursor());
         assertEquals(1, dataSource.statementExecutions());
         assertEquals(2, dataSource.rowsRead());
 
-        var secondPage = repository.listJobs(PageRequest.of(1, firstPage.nextCursor()));
+        var secondPage = repository.listJobs(PageRequest.of(1, firstPage.nextCursor(), "jobs", "all"));
         assertEquals(1, secondPage.items().size());
         assertNotEquals(firstPage.items().getFirst().id(), secondPage.items().getFirst().id());
 
-        assertEquals(null, repository.listJobs(PageRequest.of(100, null)).nextCursor());
+        assertEquals(null, repository.listJobs(PageRequest.of(100, null, "jobs", "all")).nextCursor());
         assertEquals(0, service.searchJobs(new JobService.JobSearchRequest("rust", 1)).totalMatches());
     }
 
+    @Test
+    void searchUsesCanonicalUnicodeTermsAndIndexedPrefixPlan() {
+        repository.saveJobAggregate(textAggregate(UUID.randomUUID(),
+                "Développeur Café\u0301", "Systèmes distribués à Montréal", "unicode-job"));
+
+        var result = service.searchJobs(new JobService.JobSearchRequest("developpeur cafe montreal", 10));
+
+        assertEquals(1, result.totalMatches());
+        assertTrue(result.jobs().getFirst().matchedFields().contains("job.title"));
+        jdbc.execute("SET enable_seqscan = off");
+        var plan = String.join("\n", jdbc.queryForList("""
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+                WITH query_tokens(token) AS (VALUES ('dev')),
+                query_prefixes AS (
+                    SELECT token query_token, left(token, length) prefix
+                    FROM query_tokens CROSS JOIN LATERAL generate_series(1, length(token)) length
+                ), posting_hits AS (
+                    SELECT posting.job_id, posting.field_key, query.token, posting.weight
+                    FROM query_tokens query JOIN job_schema.search_terms posting
+                      ON posting.term >= query.token AND posting.term < query.token || '~'
+                    UNION
+                    SELECT posting.job_id, posting.field_key, prefix.query_token, posting.weight
+                    FROM query_prefixes prefix JOIN job_schema.search_terms posting ON posting.term = prefix.prefix
+                )
+                SELECT job_id, SUM(weight) FROM posting_hits GROUP BY job_id LIMIT 501
+                """, String.class));
+        assertTrue(plan.contains("job_search_terms_term_prefix_idx"), plan);
+    }
+
+    @Test
+    void opaqueCursorSurvivesAnchorDeleteAndUpdatesAndExcludesLaterInserts() {
+        var firstId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        var secondId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        var thirdId = UUID.fromString("00000000-0000-0000-0000-000000000003");
+        repository.saveJobAggregate(textAggregate(firstId, "Alpha", "Java", "cursor-one"));
+        repository.saveJobAggregate(textAggregate(secondId, "Beta", "Java", "cursor-two"));
+        repository.saveJobAggregate(textAggregate(thirdId, "Gamma", "Java", "cursor-three"));
+
+        var firstPage = repository.listJobs(PageRequest.of(1, null, "jobs", "all"));
+        var resumed = PageRequest.of(1, firstPage.nextCursor(), "jobs", "all");
+        repository.deleteJob(firstPage.items().getFirst().id());
+        var second = repository.findJobAggregate(secondId).orElseThrow();
+        var renamed = second.job();
+        repository.updateJobAggregate(new JobAggregate(new JobPosting(renamed.id(), renamed.sourceMethod(),
+                renamed.sourceLabel(), "Renamed", renamed.company(), renamed.location(), renamed.description(),
+                renamed.experienceRequirement(), renamed.employmentType(), renamed.seniority(), renamed.postedAt(),
+                renamed.canonicalFingerprint(), renamed.createdAt(), renamed.updatedAt().plusSeconds(1)),
+                second.skills(), second.linkIngestion(), second.textIngestion()));
+        repository.saveJobAggregate(textAggregate(UUID.randomUUID(), "Later", "Java", "cursor-later",
+                resumed.cursor().snapshotAt().plusSeconds(1)));
+
+        var secondPage = repository.listJobs(resumed);
+        var thirdPage = repository.listJobs(PageRequest.of(1, secondPage.nextCursor(), "jobs", "all"));
+
+        assertEquals(secondId, secondPage.items().getFirst().id());
+        assertEquals(thirdId, thirdPage.items().getFirst().id());
+        assertNull(thirdPage.nextCursor());
+    }
+
+    @Test
+    void matchingCorpusIsCappedBeforeAggregateHydrationAndReportsLowerBoundMetadata() {
+        for (int index = 0; index <= PostgresJobRepository.MAX_SEARCH_CANDIDATES; index++) {
+            repository.saveJobAggregate(textAggregate(UUID.randomUUID(), "Java Engineer " + index,
+                    "Java platform", "scale-" + index));
+        }
+        dataSource.reset();
+
+        var result = service.searchJobs(new JobService.JobSearchRequest("java", 1));
+
+        assertNull(result.totalMatches());
+        assertEquals(PostgresJobRepository.MAX_SEARCH_CANDIDATES, result.matchedCount());
+        assertTrue(result.hasMore());
+        assertEquals(1, result.returnedCount());
+        assertEquals(4, dataSource.statementExecutions());
+        assertTrue(dataSource.rowsRead() <= 2_000, "bounded hydration read " + dataSource.rowsRead() + " rows");
+    }
+
     private static JobAggregate textAggregate(UUID jobId, String title, String description, String textHash) {
+        return textAggregate(jobId, title, description, textHash, NOW);
+    }
+
+    private static JobAggregate textAggregate(UUID jobId, String title, String description, String textHash, Instant createdAt) {
         return new JobAggregate(
                 new JobPosting(
                         jobId,
@@ -149,12 +232,12 @@ class PostgresJobSearchIntegrationTests {
                         null,
                         NOW,
                         title.toLowerCase(),
-                        NOW,
-                        NOW
+                        createdAt,
+                        createdAt
                 ),
-                List.of(new JobSkill(UUID.randomUUID(), jobId, "Java", "java", true, 0, NOW)),
+                List.of(new JobSkill(UUID.randomUUID(), jobId, "Java", "java", true, 0, createdAt)),
                 null,
-                new org.instruct.jobenginespring.domain.job.JobTextIngestion(UUID.randomUUID(), jobId, "manual paste", textHash, NOW)
+                new org.instruct.jobenginespring.domain.job.JobTextIngestion(UUID.randomUUID(), jobId, "manual paste", textHash, createdAt)
         );
     }
 

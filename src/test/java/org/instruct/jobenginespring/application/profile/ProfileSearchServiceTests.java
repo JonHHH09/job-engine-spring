@@ -170,7 +170,8 @@ class ProfileSearchServiceTests {
         assertTrue((Boolean) invoke("containsTokenPrefix", new Class<?>[]{java.util.Set.class, String.class}, java.util.Set.of("postgresql"), "post"));
         assertTrue((Boolean) invoke("containsTokenPrefix", new Class<?>[]{java.util.Set.class, String.class}, java.util.Set.of("post"), "postgresql"));
 
-        ProfileSearchService.ProfileSearchResult nullCollectionsResult = new ProfileSearchService.ProfileSearchResult("q", null, 0, 0, null);
+        ProfileSearchService.ProfileSearchResult nullCollectionsResult =
+                new ProfileSearchService.ProfileSearchResult("q", null, 0, 0, false, 0, null);
         assertEquals(List.of(), nullCollectionsResult.queryTokens());
         assertEquals(List.of(), nullCollectionsResult.profiles());
         ProfileSearchService.ProfileSearchMatch nullFieldsMatch = new ProfileSearchService.ProfileSearchMatch(

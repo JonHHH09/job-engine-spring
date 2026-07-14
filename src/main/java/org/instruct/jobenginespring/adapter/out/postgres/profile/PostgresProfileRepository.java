@@ -6,6 +6,7 @@ import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
 import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.pagination.SearchCandidates;
+import org.instruct.jobenginespring.application.search.SearchTerm;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -45,6 +46,8 @@ import java.util.stream.Collectors;
 @ConditionalOnProperty(prefix = "job-engine.profile.postgres", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class PostgresProfileRepository implements ProfileRepository {
 
+    public static final int MAX_SEARCH_CANDIDATES = 500;
+
     private static final RowMapper<ProfileContact> CONTACT_MAPPER = DataClassRowMapper.newInstance(ProfileContact.class);
     private static final RowMapper<ProfileLink> LINK_MAPPER = DataClassRowMapper.newInstance(ProfileLink.class);
     private static final RowMapper<ProfileSkill> SKILL_MAPPER = DataClassRowMapper.newInstance(ProfileSkill.class);
@@ -75,26 +78,33 @@ public class PostgresProfileRepository implements ProfileRepository {
     @Override
     public Page<UserProfile> listProfiles(PageRequest request) {
         var rows = jdbc.sql("""
-                        WITH anchor AS (
-                            SELECT full_name, id FROM profile.profiles WHERE id = :cursor
+                        WITH bounds AS (
+                            SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
                         )
-                        SELECT profile.id, profile.full_name, profile.email, profile.summary,
-                               profile.created_at, profile.updated_at
+                        SELECT profile.id, profile.full_name, profile.email, profile.summary, profile.created_at,
+                               profile.updated_at, bounds.snapshot_at
                         FROM profile.profiles profile
-                        LEFT JOIN anchor ON true
-                        WHERE CAST(:cursor AS uuid) IS NULL
-                           OR profile.full_name > anchor.full_name
-                           OR (profile.full_name = anchor.full_name AND profile.id > anchor.id)
-                        ORDER BY profile.full_name, profile.id
+                        CROSS JOIN bounds
+                        WHERE profile.created_at <= bounds.snapshot_at
+                          AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                               OR profile.created_at < :cursorCreatedAt
+                               OR (profile.created_at = :cursorCreatedAt AND profile.id > :cursorId))
+                        ORDER BY profile.created_at DESC, profile.id
                         LIMIT :fetchLimit
                         """)
-                .param("cursor", request.cursor())
+                .param("snapshotAt", timestamp(request.cursor() == null ? null : request.cursor().snapshotAt()))
+                .param("cursorCreatedAt", timestamp(request.cursor() == null ? null : request.cursor().createdAt()))
+                .param("cursorId", request.cursor() == null ? null : request.cursor().id())
                 .param("fetchLimit", request.limit() + 1)
-                .query(this::mapProfile)
+                .query((resultSet, rowNumber) -> new ProfilePageRow(
+                        mapProfile(resultSet, rowNumber), resultSet.getTimestamp("snapshot_at").toInstant()))
                 .list();
         boolean hasMore = rows.size() > request.limit();
-        var items = rows.stream().limit(request.limit()).toList();
-        return new Page<>(items, hasMore ? items.getLast().id() : null);
+        var pageRows = rows.stream().limit(request.limit()).toList();
+        var items = pageRows.stream().map(ProfilePageRow::profile).toList();
+        var last = hasMore ? pageRows.getLast() : null;
+        return new Page<>(items, last == null ? null
+                : request.nextCursor(last.snapshotAt(), last.profile().createdAt(), last.profile().id()));
     }
 
     @Override
@@ -108,77 +118,41 @@ public class PostgresProfileRepository implements ProfileRepository {
         var ranked = namedJdbc.query("""
                         WITH query_tokens AS (
                             SELECT token FROM unnest(CAST(:queryTokens AS text[])) AS token
-                        ), field_values AS (
-                            SELECT id AS profile_id, full_name AS value, 8 AS weight FROM profile.profiles
-                            UNION ALL SELECT id, email, 5 FROM profile.profiles
-                            UNION ALL SELECT id, summary, 3 FROM profile.profiles
-                            UNION ALL SELECT profile_id, contact_type, 2 FROM profile.profile_contacts
-                            UNION ALL SELECT profile_id, contact_value, 2 FROM profile.profile_contacts
-                            UNION ALL SELECT profile_id, label, 1 FROM profile.profile_contacts
-                            UNION ALL SELECT profile_id, link_type, 3 FROM profile.profile_links
-                            UNION ALL SELECT profile_id, url, 3 FROM profile.profile_links
-                            UNION ALL SELECT profile_id, label, 2 FROM profile.profile_links
-                            UNION ALL SELECT profile_id, skill, 7 FROM profile.profile_skills
-                            UNION ALL SELECT profile_id, normalized_skill, 7 FROM profile.profile_skills
-                            UNION ALL SELECT profile_id, category, 3 FROM profile.profile_skills
-                            UNION ALL SELECT profile_id, language, 4 FROM profile.profile_languages
-                            UNION ALL SELECT profile_id, normalized_language, 4 FROM profile.profile_languages
-                            UNION ALL SELECT profile_id, proficiency, 2 FROM profile.profile_languages
-                            UNION ALL SELECT profile_id, institution, 4 FROM profile.education
-                            UNION ALL SELECT profile_id, degree, 3 FROM profile.education
-                            UNION ALL SELECT profile_id, field, 4 FROM profile.education
-                            UNION ALL SELECT profile_id, location, 2 FROM profile.education
-                            UNION ALL SELECT profile_id, relevant_focus, 3 FROM profile.education
-                            UNION ALL SELECT profile_id, company, 4 FROM profile.experiences
-                            UNION ALL SELECT profile_id, title, 6 FROM profile.experiences
-                            UNION ALL SELECT profile_id, location, 2 FROM profile.experiences
-                            UNION ALL SELECT profile_id, description, 3 FROM profile.experiences
-                            UNION ALL SELECT profile_id, name, 5 FROM profile.projects
-                            UNION ALL SELECT profile_id, url, 3 FROM profile.projects
-                            UNION ALL SELECT profile_id, description, 3 FROM profile.projects
-                            UNION ALL
-                                SELECT project.profile_id, technology.technology, 5
-                                FROM profile.project_technologies technology
-                                JOIN profile.projects project ON project.id = technology.project_id
-                            UNION ALL
-                                SELECT project.profile_id, technology.normalized_technology, 5
-                                FROM profile.project_technologies technology
-                                JOIN profile.projects project ON project.id = technology.project_id
+                        ), query_prefixes AS (
+                            SELECT token AS query_token, left(token, length) AS prefix
+                            FROM query_tokens CROSS JOIN LATERAL generate_series(1, length(token)) AS length
+                        ), posting_hits AS (
+                            SELECT posting.profile_id, posting.field_key, query.token AS query_token, posting.weight
+                            FROM query_tokens query
+                            JOIN profile.search_terms posting
+                              ON posting.term >= query.token AND posting.term < query.token || '~'
+                            UNION
+                            SELECT posting.profile_id, posting.field_key, prefix.query_token, posting.weight
+                            FROM query_prefixes prefix
+                            JOIN profile.search_terms posting ON posting.term = prefix.prefix
                         ), scored AS (
-                            SELECT profile_id, SUM(weight * (
-                                SELECT COUNT(*) FROM query_tokens query_token
-                                WHERE EXISTS (
-                                    SELECT 1
-                                    FROM regexp_split_to_table(lower(COALESCE(value, '')), '[^a-z0-9+#.]+') text_token
-                                    WHERE text_token <> '' AND (
-                                        text_token = query_token.token
-                                        OR starts_with(text_token, query_token.token)
-                                        OR starts_with(query_token.token, text_token)
-                                    )
-                                )
-                            ))::integer AS score
-                            FROM field_values
+                            SELECT profile_id, SUM(weight)::integer AS score
+                            FROM posting_hits
                             GROUP BY profile_id
                         ), matching AS (
-                            SELECT profile.*, scored.score,
-                                   COUNT(*) OVER () AS total_matches
+                            SELECT profile.*, scored.score
                             FROM scored
                             JOIN profile.profiles profile ON profile.id = scored.profile_id
-                            WHERE scored.score > 0
                             ORDER BY scored.score DESC, profile.full_name, profile.id
-                            LIMIT :limit
+                            LIMIT :fetchLimit
                         )
                         SELECT * FROM matching ORDER BY score DESC, full_name, id
                         """, new MapSqlParameterSource()
                         .addValue("queryTokens", queryTokens.toArray(String[]::new))
-                        .addValue("limit", limit),
+                        .addValue("fetchLimit", MAX_SEARCH_CANDIDATES + 1),
                 (resultSet, rowNumber) -> new RankedProfile(
-                        mapProfile(resultSet, rowNumber), resultSet.getInt("total_matches")));
+                        mapProfile(resultSet, rowNumber), resultSet.getInt("score")));
         if (ranked.isEmpty()) {
             return new SearchCandidates<>(0, List.of());
         }
-        var profiles = ranked.stream().map(RankedProfile::profile).toList();
-        return new SearchCandidates<>(ranked.getFirst().totalMatches(), aggregatesForProfiles(profiles));
+        boolean hasMore = ranked.size() > MAX_SEARCH_CANDIDATES;
+        var profiles = ranked.stream().limit(MAX_SEARCH_CANDIDATES).map(RankedProfile::profile).toList();
+        return new SearchCandidates<>(profiles.size(), hasMore, aggregatesForProfiles(profiles));
     }
 
     @Override
@@ -329,6 +303,7 @@ public class PostgresProfileRepository implements ProfileRepository {
                 .param("updatedAt", Timestamp.from(profile.updatedAt()))
                 .update();
         replaceChildren(aggregate);
+        rebuildSearchTerms(aggregate);
         return findProfileAggregate(profile.id()).orElseThrow();
     }
 
@@ -430,6 +405,69 @@ public class PostgresProfileRepository implements ProfileRepository {
                             (id, project_id, technology, normalized_technology, display_order, created_at)
                         VALUES (:id, :projectId, :technology, :normalizedTechnology, :displayOrder, :createdAt)
                         """, aggregate.projectTechnologies());
+    }
+
+    private void rebuildSearchTerms(ProfileAggregate aggregate) {
+        var profile = aggregate.profile();
+        var terms = new ArrayList<SearchTerm>();
+        addTerms(terms, profile.id(), "profile.fullName", profile.fullName(), 8);
+        addTerms(terms, profile.id(), "profile.email", profile.email(), 5);
+        addTerms(terms, profile.id(), "profile.summary", profile.summary(), 3);
+        aggregate.contacts().forEach(value -> {
+            addTerms(terms, profile.id(), "contacts:" + value.id() + ":type", value.contactType(), 2);
+            addTerms(terms, profile.id(), "contacts:" + value.id() + ":value", value.contactValue(), 2);
+            addTerms(terms, profile.id(), "contacts:" + value.id() + ":label", value.label(), 1);
+        });
+        aggregate.links().forEach(value -> {
+            addTerms(terms, profile.id(), "links:" + value.id() + ":type", value.linkType(), 3);
+            addTerms(terms, profile.id(), "links:" + value.id() + ":url", value.url(), 3);
+            addTerms(terms, profile.id(), "links:" + value.id() + ":label", value.label(), 2);
+        });
+        aggregate.skills().forEach(value -> {
+            addTerms(terms, profile.id(), "skills:" + value.id() + ":skill", value.skill(), 7);
+            addTerms(terms, profile.id(), "skills:" + value.id() + ":normalized", value.normalizedSkill(), 7);
+            addTerms(terms, profile.id(), "skills:" + value.id() + ":category", value.category(), 3);
+        });
+        aggregate.languages().forEach(value -> {
+            addTerms(terms, profile.id(), "languages:" + value.id() + ":language", value.language(), 4);
+            addTerms(terms, profile.id(), "languages:" + value.id() + ":normalized", value.normalizedLanguage(), 4);
+            addTerms(terms, profile.id(), "languages:" + value.id() + ":proficiency", value.proficiency(), 2);
+        });
+        aggregate.education().forEach(value -> {
+            addTerms(terms, profile.id(), "education:" + value.id() + ":institution", value.institution(), 4);
+            addTerms(terms, profile.id(), "education:" + value.id() + ":degree", value.degree(), 3);
+            addTerms(terms, profile.id(), "education:" + value.id() + ":field", value.field(), 4);
+            addTerms(terms, profile.id(), "education:" + value.id() + ":location", value.location(), 2);
+            addTerms(terms, profile.id(), "education:" + value.id() + ":focus", value.relevantFocus(), 3);
+        });
+        aggregate.experiences().forEach(value -> {
+            addTerms(terms, profile.id(), "experience:" + value.id() + ":company", value.company(), 4);
+            addTerms(terms, profile.id(), "experience:" + value.id() + ":title", value.title(), 6);
+            addTerms(terms, profile.id(), "experience:" + value.id() + ":location", value.location(), 2);
+            addTerms(terms, profile.id(), "experience:" + value.id() + ":description", value.description(), 3);
+        });
+        aggregate.projects().forEach(value -> {
+            addTerms(terms, profile.id(), "projects:" + value.id() + ":name", value.name(), 5);
+            addTerms(terms, profile.id(), "projects:" + value.id() + ":url", value.url(), 3);
+            addTerms(terms, profile.id(), "projects:" + value.id() + ":description", value.description(), 3);
+        });
+        aggregate.projectTechnologies().forEach(value -> {
+            addTerms(terms, profile.id(), "technologies:" + value.id() + ":technology", value.technology(), 5);
+            addTerms(terms, profile.id(), "technologies:" + value.id() + ":normalized", value.normalizedTechnology(), 5);
+        });
+        jdbc.sql("DELETE FROM profile.search_terms WHERE profile_id = :profileId")
+                .param("profileId", profile.id()).update();
+        namedJdbc.batchUpdate("""
+                        INSERT INTO profile.search_terms (profile_id, field_key, term, weight)
+                        VALUES (:entityId, :fieldKey, :term, :weight)
+                        """, terms.stream().map(term -> new MapSqlParameterSource()
+                        .addValue("entityId", term.entityId()).addValue("fieldKey", term.fieldKey())
+                        .addValue("term", term.term()).addValue("weight", term.weight()))
+                .toArray(SqlParameterSource[]::new));
+    }
+
+    private static void addTerms(List<SearchTerm> terms, UUID profileId, String fieldKey, String value, int weight) {
+        terms.addAll(SearchTerm.from(profileId, fieldKey, value, weight));
     }
 
     private List<ProfileAggregate> aggregatesForProfiles(List<UserProfile> profiles) {
@@ -611,6 +649,13 @@ public class PostgresProfileRepository implements ProfileRepository {
         return resultSet.getTimestamp(column).toInstant();
     }
 
-    private record RankedProfile(UserProfile profile, int totalMatches) {
+    private static Timestamp timestamp(Instant instant) {
+        return instant == null ? null : Timestamp.from(instant);
+    }
+
+    private record RankedProfile(UserProfile profile, int score) {
+    }
+
+    private record ProfilePageRow(UserProfile profile, Instant snapshotAt) {
     }
 }

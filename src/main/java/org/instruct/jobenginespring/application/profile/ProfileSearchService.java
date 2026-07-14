@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
+import org.instruct.jobenginespring.application.search.SearchTextNormalizer;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -19,17 +20,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.text.Normalizer;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
 /** Deterministic profile search use case over the normalized profile aggregate. */
 @Service
@@ -38,8 +35,6 @@ public class ProfileSearchService {
 
     private static final int DEFAULT_LIMIT = 20;
     private static final int MAX_LIMIT = 100;
-    private static final Pattern TOKEN_SPLIT = Pattern.compile("[^a-z0-9+#.]+", Pattern.CASE_INSENSITIVE);
-
     @NonNull
     private final ProfileRepository profileRepository;
     @Transactional(readOnly = true)
@@ -57,8 +52,10 @@ public class ProfileSearchService {
         List<ProfileSearchMatch> returned = matches.stream()
                 .limit(safeRequest.limit())
                 .toList();
-        int totalMatches = candidates.totalMatches() < 0 ? matches.size() : candidates.totalMatches();
-        return new ProfileSearchResult(safeRequest.query().strip(), queryTokens, totalMatches, returned.size(), returned);
+        int matchedCount = candidates.matchedCount() < 0 ? matches.size() : candidates.matchedCount();
+        Integer totalMatches = candidates.hasMore() ? null : matchedCount;
+        return new ProfileSearchResult(safeRequest.query().strip(), queryTokens, totalMatches,
+                matchedCount, candidates.hasMore(), returned.size(), returned);
     }
 
     private static ProfileSearchRequest validate(ProfileSearchRequest request) {
@@ -188,16 +185,7 @@ public class ProfileSearchService {
         if (text == null || text.isBlank()) {
             return List.of();
         }
-        String normalized = Normalizer.normalize(text.strip().toLowerCase(Locale.ROOT), Normalizer.Form.NFKD)
-                .replaceAll("\\p{M}", "");
-        String[] rawTokens = TOKEN_SPLIT.split(normalized);
-        List<String> tokens = new ArrayList<>();
-        for (String token : rawTokens) {
-            if (!token.isBlank()) {
-                tokens.add(token);
-            }
-        }
-        return List.copyOf(new LinkedHashSet<>(tokens));
+        return SearchTextNormalizer.tokens(text);
     }
 
     private static ApplicationException validation(String field, String reason) {
@@ -215,7 +203,9 @@ public class ProfileSearchService {
     public record ProfileSearchResult(
             String query,
             List<String> queryTokens,
-            int totalMatches,
+            Integer totalMatches,
+            int matchedCount,
+            boolean hasMore,
             int returnedCount,
             List<ProfileSearchMatch> profiles
     ) {
@@ -223,6 +213,7 @@ public class ProfileSearchService {
             queryTokens = queryTokens == null ? List.of() : List.copyOf(queryTokens);
             profiles = profiles == null ? List.of() : List.copyOf(profiles);
         }
+
     }
 
     public record ProfileSearchMatch(UserProfile profile, int score, List<String> matchedFields) {

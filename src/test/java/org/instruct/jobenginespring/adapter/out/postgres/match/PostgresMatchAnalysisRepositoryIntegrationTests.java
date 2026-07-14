@@ -18,6 +18,7 @@ import static org.mockito.Mockito.*;
 
 import java.time.Instant;
 import java.sql.ResultSet;
+import java.sql.Timestamp;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -165,13 +166,15 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
         }
         dataSource.reset();
 
-        var firstPage = repository.listReports(null, null, PageRequest.of(5, null));
+        var firstPage = repository.listReports(null, null,
+                PageRequest.of(5, null, "match-reports", "profile=null;job=null"));
 
         assertEquals(5, firstPage.items().size());
         assertNotNull(firstPage.nextCursor());
         assertEquals(1, dataSource.statementExecutions());
         assertEquals(6, dataSource.rowsRead());
-        assertNull(repository.listReports(null, null, PageRequest.of(100, null)).nextCursor());
+        assertNull(repository.listReports(null, null,
+                PageRequest.of(100, null, "match-reports", "profile=null;job=null")).nextCursor());
 
         dataSource.reset();
         var joined = repository.findReportWithRevisions(firstPage.items().getFirst().report().id()).orElseThrow();
@@ -180,6 +183,29 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
         assertEquals(NOW, joined.currentJobRevision());
         assertEquals(1, dataSource.statementExecutions());
         assertEquals(1, dataSource.rowsRead());
+    }
+
+    @Test void reportCursorSurvivesDeletesAndJoinedUpdatesAndKeepsFirstPageSnapshot() {
+        var newest = saveReportAt("cursor-newest", NOW.plusSeconds(3));
+        var middle = saveReportAt("cursor-middle", NOW.plusSeconds(2));
+        var oldest = saveReportAt("cursor-oldest", NOW.plusSeconds(1));
+        var firstRequest = PageRequest.of(1, null, "match-reports", "profile=null;job=null");
+        var firstPage = repository.listReports(null, null, firstRequest);
+        var resumed = PageRequest.of(1, firstPage.nextCursor(), "match-reports", "profile=null;job=null");
+
+        jdbc.update("DELETE FROM match.reports WHERE id=?", newest.id());
+        jdbc.update("UPDATE profile.profiles SET updated_at=? WHERE id=?",
+                Timestamp.from(NOW.plusSeconds(20)), PROFILE);
+        saveReportAt("cursor-later", resumed.cursor().snapshotAt().plusSeconds(1));
+
+        var secondPage = repository.listReports(null, null, resumed);
+        var thirdPage = repository.listReports(null, null, PageRequest.of(
+                1, secondPage.nextCursor(), "match-reports", "profile=null;job=null"));
+
+        assertEquals(middle.id(), secondPage.items().getFirst().report().id());
+        assertEquals(NOW.plusSeconds(20), secondPage.items().getFirst().currentProfileRevision());
+        assertEquals(oldest.id(), thirdPage.items().getFirst().report().id());
+        assertNull(thirdPage.nextCursor());
     }
 
     @Test void joinedRevisionMapperHandlesMissingCurrentRows() throws Exception {
@@ -206,6 +232,13 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
         return new MatchReport(UUID.randomUUID(), PROFILE, JOB, NOW, NOW, "v1", 80, 100, MatchOutcome.STRONG_MATCH,
                 false, List.of(new ComponentScore(MatchComponent.TECHNICAL, 40, 40, EvidenceStatus.MATCH)),
                 List.of(new MatchEvidence(MatchComponent.TECHNICAL, EvidenceStatus.MATCH, "normalized_skill", "java", false)), NOW);
+    }
+
+    private MatchReport saveReportAt(String version, Instant createdAt) {
+        var base = report();
+        return repository.saveReport(new MatchReport(UUID.randomUUID(), PROFILE, JOB, NOW, NOW, version,
+                base.overallScore(), base.confidence(), base.outcome(), base.blockerMismatch(),
+                base.components(), base.evidence(), createdAt));
     }
     private static MatchReview review(UUID reportId) {
         return new MatchReview(UUID.randomUUID(), reportId, "human", "provider-neutral", "v1", 50,

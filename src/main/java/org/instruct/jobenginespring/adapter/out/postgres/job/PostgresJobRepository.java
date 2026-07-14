@@ -4,6 +4,7 @@ import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.pagination.SearchCandidates;
+import org.instruct.jobenginespring.application.search.SearchTerm;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -34,6 +35,8 @@ import java.util.UUID;
 @ConditionalOnProperty(prefix = "job-engine.job.postgres", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class PostgresJobRepository implements JobRepository {
 
+    public static final int MAX_SEARCH_CANDIDATES = 500;
+
     private final JdbcClient jdbc;
     private final NamedParameterJdbcOperations namedJdbc;
 
@@ -58,35 +61,35 @@ public class PostgresJobRepository implements JobRepository {
     @Override
     public Page<JobPosting> listJobs(PageRequest request) {
         var rows = jdbc.sql("""
-                        WITH anchor AS (
-                            SELECT COALESCE(posted_at, '-infinity'::timestamptz) AS posted_at,
-                                   created_at, title, id
-                            FROM job_schema.jobs
-                            WHERE id = :cursor
+                        WITH bounds AS (
+                            SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
                         )
                         SELECT job.id, job.source_method, job.source_label, job.title, job.company, job.location,
                                job.description, job.experience_requirement, job.employment_type, job.seniority,
-                               job.posted_at, job.canonical_fingerprint, job.created_at, job.updated_at
+                               job.posted_at, job.canonical_fingerprint, job.created_at, job.updated_at,
+                               bounds.snapshot_at
                         FROM job_schema.jobs job
-                        LEFT JOIN anchor ON true
-                        WHERE CAST(:cursor AS uuid) IS NULL
-                           OR COALESCE(job.posted_at, '-infinity'::timestamptz) < anchor.posted_at
-                           OR (COALESCE(job.posted_at, '-infinity'::timestamptz) = anchor.posted_at
-                               AND job.created_at < anchor.created_at)
-                           OR (COALESCE(job.posted_at, '-infinity'::timestamptz) = anchor.posted_at
-                               AND job.created_at = anchor.created_at AND job.title > anchor.title)
-                           OR (COALESCE(job.posted_at, '-infinity'::timestamptz) = anchor.posted_at
-                               AND job.created_at = anchor.created_at AND job.title = anchor.title AND job.id > anchor.id)
-                        ORDER BY job.posted_at DESC NULLS LAST, job.created_at DESC, job.title, job.id
+                        CROSS JOIN bounds
+                        WHERE job.created_at <= bounds.snapshot_at
+                          AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                               OR job.created_at < :cursorCreatedAt
+                               OR (job.created_at = :cursorCreatedAt AND job.id > :cursorId))
+                        ORDER BY job.created_at DESC, job.id
                         LIMIT :fetchLimit
                         """)
-                .param("cursor", request.cursor())
+                .param("snapshotAt", timestamp(request.cursor() == null ? null : request.cursor().snapshotAt()))
+                .param("cursorCreatedAt", timestamp(request.cursor() == null ? null : request.cursor().createdAt()))
+                .param("cursorId", request.cursor() == null ? null : request.cursor().id())
                 .param("fetchLimit", request.limit() + 1)
-                .query(this::mapJob)
+                .query((resultSet, rowNumber) -> new JobPageRow(
+                        mapJob(resultSet, rowNumber), resultSet.getTimestamp("snapshot_at").toInstant()))
                 .list();
         boolean hasMore = rows.size() > request.limit();
-        var items = rows.stream().limit(request.limit()).toList();
-        return new Page<>(items, hasMore ? items.getLast().id() : null);
+        var pageRows = rows.stream().limit(request.limit()).toList();
+        var items = pageRows.stream().map(JobPageRow::job).toList();
+        var last = hasMore ? pageRows.getLast() : null;
+        return new Page<>(items, last == null ? null
+                : request.nextCursor(last.snapshotAt(), last.job().createdAt(), last.job().id()));
     }
 
     @Override
@@ -100,49 +103,41 @@ public class PostgresJobRepository implements JobRepository {
         var ranked = namedJdbc.query("""
                         WITH query_tokens AS (
                             SELECT token FROM unnest(CAST(:queryTokens AS text[])) AS token
-                        ), field_values AS (
-                            SELECT id AS job_id, title AS value, 8 AS weight FROM job_schema.jobs
-                            UNION ALL SELECT id, company, 5 FROM job_schema.jobs
-                            UNION ALL SELECT id, location, 3 FROM job_schema.jobs
-                            UNION ALL SELECT id, description, 3 FROM job_schema.jobs
-                            UNION ALL SELECT id, experience_requirement, 4 FROM job_schema.jobs
-                            UNION ALL SELECT id, employment_type, 2 FROM job_schema.jobs
-                            UNION ALL SELECT id, seniority, 2 FROM job_schema.jobs
-                            UNION ALL SELECT job_id, skill, 7 FROM job_schema.job_skills
+                        ), query_prefixes AS (
+                            SELECT token AS query_token, left(token, length) AS prefix
+                            FROM query_tokens CROSS JOIN LATERAL generate_series(1, length(token)) AS length
+                        ), posting_hits AS (
+                            SELECT posting.job_id, posting.field_key, query.token AS query_token, posting.weight
+                            FROM query_tokens query
+                            JOIN job_schema.search_terms posting
+                              ON posting.term >= query.token AND posting.term < query.token || '~'
+                            UNION
+                            SELECT posting.job_id, posting.field_key, prefix.query_token, posting.weight
+                            FROM query_prefixes prefix
+                            JOIN job_schema.search_terms posting ON posting.term = prefix.prefix
                         ), scored AS (
-                            SELECT job_id, SUM(weight * (
-                                SELECT COUNT(*) FROM query_tokens query_token
-                                WHERE EXISTS (
-                                    SELECT 1
-                                    FROM regexp_split_to_table(lower(COALESCE(value, '')), '[^a-z0-9+#.]+') text_token
-                                    WHERE text_token <> '' AND (
-                                        text_token = query_token.token
-                                        OR starts_with(text_token, query_token.token)
-                                        OR starts_with(query_token.token, text_token)
-                                    )
-                                )
-                            ))::integer AS score
-                            FROM field_values
+                            SELECT job_id, SUM(weight)::integer AS score
+                            FROM posting_hits
                             GROUP BY job_id
                         ), matching AS (
-                            SELECT job.*, scored.score, COUNT(*) OVER () AS total_matches
+                            SELECT job.*, scored.score
                             FROM scored
                             JOIN job_schema.jobs job ON job.id = scored.job_id
-                            WHERE scored.score > 0
                             ORDER BY scored.score DESC, job.title, job.id
-                            LIMIT :limit
+                            LIMIT :fetchLimit
                         )
                         SELECT * FROM matching ORDER BY score DESC, title, id
                         """, new MapSqlParameterSource()
                         .addValue("queryTokens", queryTokens.toArray(String[]::new))
-                        .addValue("limit", limit),
+                        .addValue("fetchLimit", MAX_SEARCH_CANDIDATES + 1),
                 (resultSet, rowNumber) -> new RankedJob(
-                        mapJob(resultSet, rowNumber), resultSet.getInt("total_matches")));
+                        mapJob(resultSet, rowNumber), resultSet.getInt("score")));
         if (ranked.isEmpty()) {
             return new SearchCandidates<>(0, List.of());
         }
-        var jobs = ranked.stream().map(RankedJob::job).toList();
-        return new SearchCandidates<>(ranked.getFirst().totalMatches(), aggregatesForJobs(jobs));
+        boolean hasMore = ranked.size() > MAX_SEARCH_CANDIDATES;
+        var jobs = ranked.stream().limit(MAX_SEARCH_CANDIDATES).map(RankedJob::job).toList();
+        return new SearchCandidates<>(jobs.size(), hasMore, aggregatesForJobs(jobs));
     }
 
     @Override
@@ -205,6 +200,7 @@ public class PostgresJobRepository implements JobRepository {
                     .orElseThrow();
         }
         batchInsertSkills(aggregate.skills());
+        rebuildSearchTerms(aggregate);
         return findJobAggregate(job.id()).orElseThrow();
     }
 
@@ -243,6 +239,7 @@ public class PostgresJobRepository implements JobRepository {
             throw new IllegalStateException("Job disappeared during update: " + job.id());
         }
         replaceSkills(job.id(), aggregate.skills());
+        rebuildSearchTerms(aggregate);
         return findJobAggregate(job.id()).orElseThrow();
     }
 
@@ -359,6 +356,28 @@ public class PostgresJobRepository implements JobRepository {
                 .param("jobId", jobId)
                 .update();
         batchInsertSkills(skills);
+    }
+
+    private void rebuildSearchTerms(JobAggregate aggregate) {
+        var job = aggregate.job();
+        var terms = new ArrayList<SearchTerm>();
+        terms.addAll(SearchTerm.from(job.id(), "job.title", job.title(), 8));
+        terms.addAll(SearchTerm.from(job.id(), "job.company", job.company(), 5));
+        terms.addAll(SearchTerm.from(job.id(), "job.location", job.location(), 3));
+        terms.addAll(SearchTerm.from(job.id(), "job.description", job.description(), 3));
+        terms.addAll(SearchTerm.from(job.id(), "job.experienceRequirement", job.experienceRequirement(), 4));
+        terms.addAll(SearchTerm.from(job.id(), "job.employmentType", job.employmentType(), 2));
+        terms.addAll(SearchTerm.from(job.id(), "job.seniority", job.seniority(), 2));
+        aggregate.skills().forEach(skill -> terms.addAll(SearchTerm.from(job.id(),
+                "skills:" + skill.id(), skill.skill(), 7)));
+        jdbc.sql("DELETE FROM job_schema.search_terms WHERE job_id = :jobId").param("jobId", job.id()).update();
+        namedJdbc.batchUpdate("""
+                        INSERT INTO job_schema.search_terms (job_id, field_key, term, weight)
+                        VALUES (:entityId, :fieldKey, :term, :weight)
+                        """, terms.stream().map(term -> new MapSqlParameterSource()
+                        .addValue("entityId", term.entityId()).addValue("fieldKey", term.fieldKey())
+                        .addValue("term", term.term()).addValue("weight", term.weight()))
+                .toArray(SqlParameterSource[]::new));
     }
 
     private Optional<JobPosting> findJobById(UUID jobId) {
@@ -526,6 +545,9 @@ public class PostgresJobRepository implements JobRepository {
         return resultSet.getTimestamp(column).toInstant();
     }
 
-    private record RankedJob(JobPosting job, int totalMatches) {
+    private record RankedJob(JobPosting job, int score) {
+    }
+
+    private record JobPageRow(JobPosting job, Instant snapshotAt) {
     }
 }

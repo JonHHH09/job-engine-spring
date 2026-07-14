@@ -108,7 +108,7 @@ class MatchMcpAdapterTests {
         var reviewResult = new MatchAnalysisService.ReviewResult(review, disagreement);
         when(service.analyzeAll(profileId)).thenReturn(batch);
         when(service.getReport(reportId)).thenReturn(view);
-        when(service.listReports(profileId, jobId, 1, null)).thenReturn(new Page<>(List.of(view), reportId));
+        when(service.listReports(profileId, jobId, 1, null)).thenReturn(new Page<>(List.of(view), "cursor"));
         when(service.submitReview(any())).thenReturn(reviewResult);
         when(service.getReview(reviewId)).thenReturn(review);
         when(service.listReviews(reportId)).thenReturn(List.of(review));

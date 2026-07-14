@@ -74,31 +74,38 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
     }
     @Override public Page<ReportWithRevisions> listReports(UUID profileId, UUID jobId, PageRequest request) {
         var rows = jdbc.sql("""
-                WITH anchor AS (
-                    SELECT created_at, id FROM match.reports WHERE id = :cursor
+                WITH bounds AS (
+                    SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
                 )
                 SELECT report.*, profile.updated_at AS current_profile_revision,
-                       job.updated_at AS current_job_revision
+                       job.updated_at AS current_job_revision, bounds.snapshot_at
                 FROM match.reports report
                 LEFT JOIN profile.profiles profile ON profile.id = report.profile_id
                 LEFT JOIN job_schema.jobs job ON job.id = report.job_id
-                LEFT JOIN anchor ON true
+                CROSS JOIN bounds
                 WHERE (CAST(:profileId AS uuid) IS NULL OR report.profile_id = :profileId)
                   AND (CAST(:jobId AS uuid) IS NULL OR report.job_id = :jobId)
-                  AND (CAST(:cursor AS uuid) IS NULL OR report.created_at < anchor.created_at
-                       OR (report.created_at = anchor.created_at AND report.id > anchor.id))
+                  AND report.created_at <= bounds.snapshot_at
+                  AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL OR report.created_at < :cursorCreatedAt
+                       OR (report.created_at = :cursorCreatedAt AND report.id > :cursorId))
                 ORDER BY report.created_at DESC, report.id
                 LIMIT :fetchLimit
                 """)
                 .param("profileId", profileId)
                 .param("jobId", jobId)
-                .param("cursor", request.cursor())
+                .param("snapshotAt", timestamp(request.cursor() == null ? null : request.cursor().snapshotAt()))
+                .param("cursorCreatedAt", timestamp(request.cursor() == null ? null : request.cursor().createdAt()))
+                .param("cursorId", request.cursor() == null ? null : request.cursor().id())
                 .param("fetchLimit", request.limit() + 1)
-                .query(this::reportWithRevisions)
+                .query((resultSet, rowNumber) -> new ReportPageRow(
+                        reportWithRevisions(resultSet, rowNumber), instant(resultSet, "snapshot_at")))
                 .list();
         boolean hasMore = rows.size() > request.limit();
-        var items = rows.stream().limit(request.limit()).toList();
-        return new Page<>(items, hasMore ? items.getLast().report().id() : null);
+        var pageRows = rows.stream().limit(request.limit()).toList();
+        var items = pageRows.stream().map(ReportPageRow::value).toList();
+        var last = hasMore ? pageRows.getLast() : null;
+        return new Page<>(items, last == null ? null : request.nextCursor(last.snapshotAt(),
+                last.value().report().createdAt(), last.value().report().id()));
     }
     @Override public MatchReview saveReview(MatchReview r) {
         jdbc.sql("""
@@ -161,4 +168,6 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
         var timestamp = rs.getTimestamp(column);
         return timestamp == null ? null : timestamp.toInstant();
     }
+    private static Timestamp timestamp(Instant instant) { return instant == null ? null : Timestamp.from(instant); }
+    private record ReportPageRow(ReportWithRevisions value, Instant snapshotAt) {}
 }

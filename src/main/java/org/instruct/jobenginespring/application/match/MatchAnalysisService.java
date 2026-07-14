@@ -78,8 +78,10 @@ public class MatchAnalysisService {
         return listReports(profileId, jobId, null, null).items();
     }
 
-    public Page<ReportView> listReports(UUID profileId, UUID jobId, Integer limit, UUID cursor) {
-        var page = matches.listReports(profileId, jobId, PageRequest.of(limit, cursor));
+    public Page<ReportView> listReports(UUID profileId, UUID jobId, Integer limit, String cursor) {
+        var filterIdentity = "profile=" + profileId + ";job=" + jobId;
+        var page = matches.listReports(profileId, jobId,
+                PageRequest.of(limit, cursor, "match-reports", filterIdentity));
         return new Page<>(page.items().stream().map(MatchAnalysisService::view).toList(), page.nextCursor());
     }
 

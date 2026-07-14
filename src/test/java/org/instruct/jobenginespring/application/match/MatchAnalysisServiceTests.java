@@ -163,12 +163,14 @@ class MatchAnalysisServiceTests {
         var report = report();
         var revision = new ReportWithRevisions(report, NOW.plusSeconds(1), NOW);
         when(repository.findReportWithRevisions(report.id())).thenReturn(Optional.of(revision));
-        when(repository.listReports(report.profileId(), report.jobId(), PageRequest.of(null, null)))
+        var pageRequest = PageRequest.of(null, null, "match-reports",
+                "profile=" + report.profileId() + ";job=" + report.jobId());
+        when(repository.listReports(report.profileId(), report.jobId(), pageRequest))
                 .thenReturn(new Page<>(List.of(revision), null));
 
         assertTrue(service.getReport(report.id()).stale());
         assertEquals(1, service.listReports(report.profileId(), report.jobId()).size());
-        verify(repository).listReports(report.profileId(), report.jobId(), PageRequest.of(null, null));
+        verify(repository).listReports(report.profileId(), report.jobId(), pageRequest);
         verifyNoInteractions(profiles, jobs);
     }
 

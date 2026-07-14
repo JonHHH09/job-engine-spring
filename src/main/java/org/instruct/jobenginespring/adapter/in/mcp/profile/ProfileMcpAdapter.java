@@ -99,11 +99,11 @@ public class ProfileMcpAdapter {
 
     public record ListRequest(
             @McpToolParam(required = false, description = "Maximum page size, 1-100") Integer limit,
-            @McpToolParam(required = false, description = "UUID cursor returned by the previous page") UUID cursor
+            @McpToolParam(required = false, description = "Opaque cursor returned by the previous page") String cursor
     ) {
     }
 
-    public record ListProfilesResult(List<UserProfile> profiles, UUID nextCursor) {
+    public record ListProfilesResult(List<UserProfile> profiles, String nextCursor) {
         public ListProfilesResult {
             profiles = profiles == null ? List.of() : List.copyOf(profiles);
         }

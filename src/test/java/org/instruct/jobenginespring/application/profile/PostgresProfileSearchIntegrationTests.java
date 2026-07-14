@@ -27,6 +27,8 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
 class PostgresProfileSearchIntegrationTests {
@@ -124,21 +126,104 @@ class PostgresProfileSearchIntegrationTests {
         assertEquals(boundedRows, dataSource.rowsRead());
 
         dataSource.reset();
-        var firstPage = repository.listProfiles(PageRequest.of(1, null));
+        var firstPage = repository.listProfiles(PageRequest.of(1, null, "profiles", "all"));
         assertEquals(1, firstPage.items().size());
         assertNotNull(firstPage.nextCursor());
         assertEquals(1, dataSource.statementExecutions());
         assertEquals(2, dataSource.rowsRead());
 
-        var secondPage = repository.listProfiles(PageRequest.of(1, firstPage.nextCursor()));
+        var secondPage = repository.listProfiles(PageRequest.of(1, firstPage.nextCursor(), "profiles", "all"));
         assertEquals(1, secondPage.items().size());
         assertNotEquals(firstPage.items().getFirst().id(), secondPage.items().getFirst().id());
 
-        assertEquals(null, repository.listProfiles(PageRequest.of(100, null)).nextCursor());
+        assertEquals(null, repository.listProfiles(PageRequest.of(100, null, "profiles", "all")).nextCursor());
         assertEquals(0, service.searchProfiles(new ProfileSearchService.ProfileSearchRequest("rust", 1)).totalMatches());
     }
 
+    @Test
+    void searchUsesCanonicalUnicodeTermsAndIndexedPrefixPlan() {
+        repository.saveProfileAggregate(profileAggregate(UUID.randomUUID(), "José Café\u0301",
+                "jose@example.test", "Développement", "Montréal"));
+
+        var result = service.searchProfiles(new ProfileSearchService.ProfileSearchRequest(
+                "jose cafe developpement montreal", 10));
+
+        assertEquals(1, result.totalMatches());
+        assertTrue(result.profiles().getFirst().matchedFields().contains("profile.fullName"));
+        jdbc.execute("SET enable_seqscan = off");
+        var plan = String.join("\n", jdbc.queryForList("""
+                EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+                WITH query_tokens(token) AS (VALUES ('jos')),
+                query_prefixes AS (
+                    SELECT token query_token, left(token, length) prefix
+                    FROM query_tokens CROSS JOIN LATERAL generate_series(1, length(token)) length
+                ), posting_hits AS (
+                    SELECT posting.profile_id, posting.field_key, query.token, posting.weight
+                    FROM query_tokens query JOIN profile.search_terms posting
+                      ON posting.term >= query.token AND posting.term < query.token || '~'
+                    UNION
+                    SELECT posting.profile_id, posting.field_key, prefix.query_token, posting.weight
+                    FROM query_prefixes prefix JOIN profile.search_terms posting ON posting.term = prefix.prefix
+                )
+                SELECT profile_id, SUM(weight) FROM posting_hits GROUP BY profile_id LIMIT 501
+                """, String.class));
+        assertTrue(plan.contains("profile_search_terms_term_prefix_idx"), plan);
+    }
+
+    @Test
+    void opaqueCursorSurvivesAnchorDeleteAndUpdatesAndExcludesLaterInserts() {
+        var firstId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        var secondId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        var thirdId = UUID.fromString("00000000-0000-0000-0000-000000000003");
+        repository.saveProfileAggregate(profileAggregate(firstId, "Alpha", "alpha@x.test", "Java", "Remote"));
+        repository.saveProfileAggregate(profileAggregate(secondId, "Beta", "beta@x.test", "Java", "Remote"));
+        repository.saveProfileAggregate(profileAggregate(thirdId, "Gamma", "gamma@x.test", "Java", "Remote"));
+
+        var firstPage = repository.listProfiles(PageRequest.of(1, null, "profiles", "all"));
+        var resumed = PageRequest.of(1, firstPage.nextCursor(), "profiles", "all");
+        repository.deleteProfile(firstPage.items().getFirst().id());
+        var second = repository.findProfileAggregate(secondId).orElseThrow();
+        var profile = second.profile();
+        repository.saveProfileAggregate(new ProfileAggregate(new UserProfile(profile.id(), "Renamed", profile.email(),
+                profile.summary(), profile.rawResumeText(), profile.createdAt(), profile.updatedAt().plusSeconds(1)),
+                second.contacts(), second.links(), second.skills(), second.languages(), second.education(),
+                second.experiences(), second.projects(), second.projectTechnologies()));
+        repository.saveProfileAggregate(profileAggregate(UUID.randomUUID(), "Later", "later@x.test", "Java", "Remote",
+                resumed.cursor().snapshotAt().plusSeconds(1)));
+
+        var secondPage = repository.listProfiles(resumed);
+        var thirdPage = repository.listProfiles(PageRequest.of(1, secondPage.nextCursor(), "profiles", "all"));
+
+        assertEquals(secondId, secondPage.items().getFirst().id());
+        assertEquals(thirdId, thirdPage.items().getFirst().id());
+        assertNull(thirdPage.nextCursor());
+    }
+
+    @Test
+    void matchingCorpusIsCappedBeforeAggregateHydrationAndReportsLowerBoundMetadata() {
+        for (int index = 0; index <= PostgresProfileRepository.MAX_SEARCH_CANDIDATES; index++) {
+            repository.saveProfileAggregate(profileAggregate(UUID.randomUUID(), "Java Profile " + index,
+                    "java-" + index + "@example.test", "Java", "Remote"));
+        }
+        dataSource.reset();
+
+        var result = service.searchProfiles(new ProfileSearchService.ProfileSearchRequest("java", 1));
+
+        assertNull(result.totalMatches());
+        assertEquals(PostgresProfileRepository.MAX_SEARCH_CANDIDATES, result.matchedCount());
+        assertTrue(result.hasMore());
+        assertEquals(1, result.returnedCount());
+        assertEquals(9, dataSource.statementExecutions());
+        assertTrue(dataSource.rowsRead() <= 5_000, "bounded hydration read " + dataSource.rowsRead() + " rows");
+    }
+
     private static ProfileAggregate profileAggregate(UUID profileId, String fullName, String email, String skill, String location) {
+        return profileAggregate(profileId, fullName, email, skill, location, NOW);
+    }
+
+    private static ProfileAggregate profileAggregate(
+            UUID profileId, String fullName, String email, String skill, String location, Instant createdAt
+    ) {
         UUID projectId = UUID.randomUUID();
         List<ProjectTechnology> projectTechnologies = "Java".equals(skill)
                 ? List.of(
@@ -147,10 +232,10 @@ class PostgresProfileSearchIntegrationTests {
         )
                 : List.of(new ProjectTechnology(UUID.randomUUID(), projectId, "PostgreSQL", "postgresql", 0, NOW));
         return new ProfileAggregate(
-                new UserProfile(profileId, fullName, email, "Backend systems", null, NOW, NOW),
-                List.of(new ProfileContact(UUID.randomUUID(), profileId, "location", location, "home", NOW, NOW)),
+                new UserProfile(profileId, fullName, email, "Backend systems", null, createdAt, createdAt),
+                List.of(new ProfileContact(UUID.randomUUID(), profileId, "location", location, "home", createdAt, createdAt)),
                 List.of(),
-                List.of(new ProfileSkill(UUID.randomUUID(), profileId, skill, skill.toLowerCase(), "backend", 0, NOW)),
+                List.of(new ProfileSkill(UUID.randomUUID(), profileId, skill, skill.toLowerCase(), "backend", 0, createdAt)),
                 List.of(),
                 List.of(),
                 List.of(),

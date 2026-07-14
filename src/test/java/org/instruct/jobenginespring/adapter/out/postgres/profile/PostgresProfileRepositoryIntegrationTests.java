@@ -100,7 +100,8 @@ class PostgresProfileRepositoryIntegrationTests {
                 "profile_skills",
                 "profiles",
                 "project_technologies",
-                "projects"
+                "projects",
+                "search_terms"
         ), tables);
     }
 

@@ -69,14 +69,14 @@ class JobMcpAdapterTests {
     @Test
     void listJobsDelegatesToServiceWithObjectWrapper() {
         JobPosting posting = samplePosting();
-        when(jobService.listJobs(1, null)).thenReturn(new Page<>(List.of(posting), JOB_ID));
+        when(jobService.listJobs(1, null)).thenReturn(new Page<>(List.of(posting), "cursor"));
 
         CallToolResult result = adapter.listJobs(new JobMcpAdapter.ListRequest(1, null));
 
         assertFalse(result.isError());
         JobMcpAdapter.ListJobsResult content = assertInstanceOf(JobMcpAdapter.ListJobsResult.class, result.structuredContent());
         assertEquals(List.of(posting), content.jobs());
-        assertEquals(JOB_ID, content.nextCursor());
+        assertEquals("cursor", content.nextCursor());
         assertEquals(List.of(), new JobMcpAdapter.ListJobsResult(null, null).jobs());
         verify(jobService).listJobs(1, null);
     }
@@ -111,7 +111,8 @@ class JobMcpAdapterTests {
         JobService.AddJobFromLinkRequest serviceLinkRequest = linkRequest.toServiceRequest();
         JobService.JobSearchRequest serviceSearchRequest = searchRequest.toServiceRequest();
         AddJobResult addResult = new AddJobResult("created_job", sampleAggregate());
-        JobService.JobSearchResult searchResult = new JobService.JobSearchResult("java", List.of("java"), 1, 0, List.of());
+        JobService.JobSearchResult searchResult = new JobService.JobSearchResult(
+                "java", List.of("java"), 1, 1, false, 0, List.of());
         when(jobService.addJobFromText(serviceTextRequest)).thenReturn(addResult);
         when(jobService.addJobFromLink(serviceLinkRequest)).thenReturn(addResult);
         when(jobService.searchJobs(serviceSearchRequest)).thenReturn(searchResult);

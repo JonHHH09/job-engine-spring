@@ -9,6 +9,7 @@ import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher.J
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.application.search.SearchTextNormalizer;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -18,7 +19,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.text.Normalizer;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -41,7 +41,6 @@ public class JobService {
     private static final String SOURCE_METHOD_TEXT = "text";
     private static final int DEFAULT_SEARCH_LIMIT = 20;
     private static final int MAX_SEARCH_LIMIT = 100;
-    private static final Pattern TOKEN_SPLIT = Pattern.compile("[^a-z0-9+#.]+", Pattern.CASE_INSENSITIVE);
     private static final Pattern SKILLS_LINE = Pattern.compile("(?i)(?:required\\s+)?(?:technical\\s+)?skills?\\s*[:\\-]\\s*([^\\n.]+)");
     private static final Pattern EXPERIENCE_LINE = Pattern.compile("(?im)^(?:experience|requirements?|qualifications?)\\s*[:\\-]\\s*(.+)$");
 
@@ -68,8 +67,8 @@ public class JobService {
     }
 
     @Transactional(readOnly = true)
-    public Page<JobPosting> listJobs(Integer limit, UUID cursor) {
-        return jobRepository.listJobs(PageRequest.of(limit, cursor));
+    public Page<JobPosting> listJobs(Integer limit, String cursor) {
+        return jobRepository.listJobs(PageRequest.of(limit, cursor, "jobs", "all"));
     }
 
     @Transactional(readOnly = true)
@@ -93,8 +92,10 @@ public class JobService {
         List<JobSearchMatch> returned = matches.stream()
                 .limit(safeRequest.limit())
                 .toList();
-        int totalMatches = candidates.totalMatches() < 0 ? matches.size() : candidates.totalMatches();
-        return new JobSearchResult(safeRequest.query().strip(), queryTokens, totalMatches, returned.size(), returned);
+        int matchedCount = candidates.matchedCount() < 0 ? matches.size() : candidates.matchedCount();
+        Integer totalMatches = candidates.hasMore() ? null : matchedCount;
+        return new JobSearchResult(safeRequest.query().strip(), queryTokens, totalMatches,
+                matchedCount, candidates.hasMore(), returned.size(), returned);
     }
 
     @Transactional
@@ -570,27 +571,12 @@ public class JobService {
     }
 
     private static String normalizedKey(String value) {
-        if (value == null || value.isBlank()) {
-            return "";
-        }
-        return Normalizer.normalize(value.strip().toLowerCase(Locale.ROOT), Normalizer.Form.NFKD)
-                .replaceAll("\\p{M}", "")
+        return SearchTextNormalizer.normalize(value)
                 .replaceAll("\\s+", " ");
     }
 
     private static List<String> tokens(String text) {
-        String normalized = normalizedKey(text);
-        if (normalized.isBlank()) {
-            return List.of();
-        }
-        String[] rawTokens = TOKEN_SPLIT.split(normalized);
-        LinkedHashSet<String> tokens = new LinkedHashSet<>();
-        for (String token : rawTokens) {
-            if (!token.isBlank()) {
-                tokens.add(token);
-            }
-        }
-        return List.copyOf(tokens);
+        return SearchTextNormalizer.tokens(text);
     }
 
     private static <T> List<T> nullSafe(List<T> values) {
@@ -677,7 +663,8 @@ public class JobService {
     public record DeleteJobResult(UUID jobId, boolean deleted) {
     }
 
-    public record JobSearchResult(String query, List<String> queryTokens, int totalMatches, int returnedCount, List<JobSearchMatch> jobs) {
+    public record JobSearchResult(String query, List<String> queryTokens, Integer totalMatches, int matchedCount,
+                                  boolean hasMore, int returnedCount, List<JobSearchMatch> jobs) {
         public JobSearchResult {
             queryTokens = queryTokens == null ? List.of() : List.copyOf(queryTokens);
             jobs = jobs == null ? List.of() : List.copyOf(jobs);
