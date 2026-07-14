@@ -114,15 +114,20 @@ class ProfilePdfIngestionConcurrencyIntegrationTests {
         String sha256 = "f".repeat(64);
         StoredPdfTextExtractionResult first = seedExtraction(UUID.randomUUID(), UUID.randomUUID(), sha256);
         StoredPdfTextExtractionResult second = seedExtraction(UUID.randomUUID(), UUID.randomUUID(), sha256);
+        var blockingSources = installBlockingSources(org.apache.commons.codec.digest.DigestUtils.sha256Hex(
+                "document:" + sha256
+        ));
         ProfilePdfIngestionService service = serviceFor(first, second, profileRequest());
 
-        List<ProfilePdfIngestionResult> results = runConcurrently(
+        List<ProfilePdfIngestionResult> results = runAtContestedLock(
                 service,
                 new IngestProfileFromStoredPdfRequest(first.document().id(), null, null, null),
-                new IngestProfileFromStoredPdfRequest(second.document().id(), null, null, null)
+                new IngestProfileFromStoredPdfRequest(second.document().id(), null, null, null),
+                blockingSources
         );
 
         assertEquals(Set.of(IngestionStatus.CREATED_PROFILE, IngestionStatus.REUSED_EXISTING_SOURCE), statuses(results));
+        assertEquals(List.of(1, 2), blockingSources.acquiredOrder());
         assertReturnedRelationshipsExist(results);
         assertEquals(1, count("profile.profiles"));
         assertEquals(1, count("profile.profile_pdf_sources"));
@@ -134,9 +139,23 @@ class ProfilePdfIngestionConcurrencyIntegrationTests {
         StoredPdfTextExtractionResult second = seedExtraction(UUID.randomUUID(), UUID.randomUUID(), "c".repeat(64));
         ProfileWriteRequest firstRequest = profileRequest("agent@example.test", "https://example.test/first");
         ProfileWriteRequest secondRequest = profileRequest("agent@example.test", "https://example.test/second");
+        var blockingSources = installBlockingSources(org.apache.commons.codec.digest.DigestUtils.sha256Hex(
+                "email:agent@example.test"
+        ));
         ProfilePdfIngestionService service = serviceFor(first, second, firstRequest, secondRequest);
 
-        assertDuplicateCandidatePair(service, first, second);
+        List<ProfilePdfIngestionResult> results = runAtContestedLock(
+                service,
+                new IngestProfileFromStoredPdfRequest(first.document().id(), null, null, null),
+                new IngestProfileFromStoredPdfRequest(second.document().id(), null, null, null),
+                blockingSources
+        );
+
+        assertEquals(Set.of(IngestionStatus.CREATED_PROFILE, IngestionStatus.DUPLICATE_PROFILE_CANDIDATE), statuses(results));
+        assertEquals(List.of(1, 2), blockingSources.acquiredOrder());
+        assertReturnedRelationshipsExist(results);
+        assertEquals(1, count("profile.profiles"));
+        assertEquals(1, count("profile.profile_pdf_sources"));
     }
 
     @Test
@@ -171,24 +190,6 @@ class ProfilePdfIngestionConcurrencyIntegrationTests {
         assertEquals("https://example.test/shared", jdbc.queryForObject(
                 "SELECT url FROM profile.profile_links", String.class
         ));
-    }
-
-    private static void assertDuplicateCandidatePair(
-            ProfilePdfIngestionService service,
-            StoredPdfTextExtractionResult first,
-            StoredPdfTextExtractionResult second
-    ) throws Exception {
-
-        List<ProfilePdfIngestionResult> results = runConcurrently(
-                service,
-                new IngestProfileFromStoredPdfRequest(first.document().id(), null, null, null),
-                new IngestProfileFromStoredPdfRequest(second.document().id(), null, null, null)
-        );
-
-        assertEquals(Set.of(IngestionStatus.CREATED_PROFILE, IngestionStatus.DUPLICATE_PROFILE_CANDIDATE), statuses(results));
-        assertReturnedRelationshipsExist(results);
-        assertEquals(1, count("profile.profiles"));
-        assertEquals(1, count("profile.profile_pdf_sources"));
     }
 
     @Test
@@ -259,31 +260,6 @@ class ProfilePdfIngestionConcurrencyIntegrationTests {
                 new ProfileIdentityMatcher(profiles),
                 sources
         );
-    }
-
-    private static List<ProfilePdfIngestionResult> runConcurrently(
-            ProfilePdfIngestionService service,
-            IngestProfileFromStoredPdfRequest first,
-            IngestProfileFromStoredPdfRequest second
-    ) throws Exception {
-        CountDownLatch ready = new CountDownLatch(2);
-        CountDownLatch start = new CountDownLatch(1);
-        TransactionTemplate transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
-        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-            Future<ProfilePdfIngestionResult> firstResult = executor.submit(() -> transactions.execute(status -> {
-                ready.countDown();
-                await(start);
-                return service.ingestProfileFromStoredPdf(first);
-            }));
-            Future<ProfilePdfIngestionResult> secondResult = executor.submit(() -> transactions.execute(status -> {
-                ready.countDown();
-                await(start);
-                return service.ingestProfileFromStoredPdf(second);
-            }));
-            ready.await();
-            start.countDown();
-            return List.of(firstResult.get(), secondResult.get());
-        }
     }
 
     private static List<ProfilePdfIngestionResult> runAtContestedLock(
