@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -16,6 +17,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -112,6 +114,48 @@ class GeneratedResumeCleanupServiceTests {
         verify(cleanupRepository).deleteCompletedBefore(
                 NOW.minus(GeneratedResumeCleanupService.COMPLETED_RETENTION),
                 GeneratedResumeCleanupService.RETENTION_BATCH_SIZE
+        );
+    }
+
+    @Test
+    void acceptsStrictlyPositiveRetentionBoundariesWithoutMovingCutoffIntoFuture() {
+        var boundaryService = serviceWithRetention(Duration.ofNanos(1), 1);
+
+        boundaryService.purgeCompletedTasks();
+
+        verify(cleanupRepository).deleteCompletedBefore(NOW.minusNanos(1), 1);
+    }
+
+    @Test
+    void rejectsNonPositiveConfiguredCompletedRetentionAtConstruction() {
+        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ZERO, 1));
+        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofNanos(-1), 1));
+    }
+
+    @Test
+    void rejectsNonPositiveConfiguredRetentionBatchSizeAtConstruction() {
+        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofDays(1), 0));
+        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofDays(1), -1));
+    }
+
+    private GeneratedResumeCleanupService serviceWithRetention(Duration retention, int batchSize) {
+        return new GeneratedResumeCleanupService(
+                cleanupRepository,
+                transactionLifecycle,
+                mock(GeneratedResumeCleanupExecutor.class),
+                Clock.fixed(NOW, ZoneOffset.UTC),
+                retention,
+                batchSize
+        );
+    }
+
+    private GeneratedResumeCleanupService configuredService(Duration retention, int batchSize) {
+        return new GeneratedResumeCleanupService(
+                cleanupRepository,
+                transactionLifecycle,
+                mock(GeneratedResumeCleanupExecutor.class),
+                retention,
+                batchSize
         );
     }
 }

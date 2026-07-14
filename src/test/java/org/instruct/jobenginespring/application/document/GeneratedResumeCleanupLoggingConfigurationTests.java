@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
+import org.instruct.jobenginespring.adapter.out.transaction.GeneratedResumeCleanupScheduler;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -16,6 +17,7 @@ class GeneratedResumeCleanupLoggingConfigurationTests {
 
             assertTrue(configuration.contains("<target>System.err</target>"));
             assertTrue(configuration.contains(GeneratedResumeCleanupExecutor.class.getName()));
+            assertTrue(configuration.contains(GeneratedResumeCleanupScheduler.class.getName()));
             assertTrue(configuration.contains("additivity=\"false\""));
             assertFalse(configuration.contains("System.out"));
             assertFalse(configuration.contains("%ex"));

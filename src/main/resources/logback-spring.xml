@@ -12,5 +12,10 @@
         <appender-ref ref="CLEANUP_STDERR"/>
     </logger>
 
+    <logger name="org.instruct.jobenginespring.adapter.out.transaction.GeneratedResumeCleanupScheduler"
+            level="ERROR" additivity="false">
+        <appender-ref ref="CLEANUP_STDERR"/>
+    </logger>
+
     <root level="OFF"/>
 </configuration>

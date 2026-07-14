@@ -26,23 +26,26 @@ public class GeneratedResumeCleanupService {
     private final GeneratedResumeCleanupRepository cleanupRepository;
     private final TransactionLifecycle transactionLifecycle;
     private final GeneratedResumeCleanupExecutor cleanupExecutor;
+    private final Duration completedRetention;
+    private final int retentionBatchSize;
     private Clock clock = Clock.systemUTC();
-
-    @Value("${job-engine.pdf-generation.cleanup-completed-retention:30d}")
-    private Duration completedRetention = COMPLETED_RETENTION;
-
-    @Value("${job-engine.pdf-generation.cleanup-retention-batch-size:1000}")
-    private int retentionBatchSize = RETENTION_BATCH_SIZE;
 
     @Autowired
     public GeneratedResumeCleanupService(
             GeneratedResumeCleanupRepository cleanupRepository,
             TransactionLifecycle transactionLifecycle,
-            GeneratedResumeCleanupExecutor cleanupExecutor
+            GeneratedResumeCleanupExecutor cleanupExecutor,
+            @Value("${job-engine.pdf-generation.cleanup-completed-retention:30d}") Duration completedRetention,
+            @Value("${job-engine.pdf-generation.cleanup-retention-batch-size:1000}") int retentionBatchSize
     ) {
         this.cleanupRepository = Objects.requireNonNull(cleanupRepository, "cleanupRepository must not be null");
         this.transactionLifecycle = Objects.requireNonNull(transactionLifecycle, "transactionLifecycle must not be null");
         this.cleanupExecutor = Objects.requireNonNull(cleanupExecutor, "cleanupExecutor must not be null");
+        this.completedRetention = requirePositive(completedRetention, "completedRetention");
+        if (retentionBatchSize <= 0) {
+            throw new IllegalArgumentException("retentionBatchSize must be positive");
+        }
+        this.retentionBatchSize = retentionBatchSize;
     }
 
     GeneratedResumeCleanupService(
@@ -51,7 +54,25 @@ public class GeneratedResumeCleanupService {
             GeneratedResumeCleanupExecutor cleanupExecutor,
             Clock clock
     ) {
-        this(cleanupRepository, transactionLifecycle, cleanupExecutor);
+        this(
+                cleanupRepository,
+                transactionLifecycle,
+                cleanupExecutor,
+                COMPLETED_RETENTION,
+                RETENTION_BATCH_SIZE
+        );
+        this.clock = Objects.requireNonNull(clock, "clock must not be null");
+    }
+
+    GeneratedResumeCleanupService(
+            GeneratedResumeCleanupRepository cleanupRepository,
+            TransactionLifecycle transactionLifecycle,
+            GeneratedResumeCleanupExecutor cleanupExecutor,
+            Clock clock,
+            Duration completedRetention,
+            int retentionBatchSize
+    ) {
+        this(cleanupRepository, transactionLifecycle, cleanupExecutor, completedRetention, retentionBatchSize);
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
@@ -86,5 +107,13 @@ public class GeneratedResumeCleanupService {
 
     public int purgeCompletedTasks() {
         return cleanupRepository.deleteCompletedBefore(clock.instant().minus(completedRetention), retentionBatchSize);
+    }
+
+    private static Duration requirePositive(Duration duration, String name) {
+        Objects.requireNonNull(duration, name + " must not be null");
+        if (duration.isZero() || duration.isNegative()) {
+            throw new IllegalArgumentException(name + " must be positive");
+        }
+        return duration;
     }
 }
