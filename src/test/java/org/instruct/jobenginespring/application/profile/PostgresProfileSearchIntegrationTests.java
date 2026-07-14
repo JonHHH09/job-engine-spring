@@ -168,7 +168,7 @@ class PostgresProfileSearchIntegrationTests {
     }
 
     @Test
-    void opaqueCursorSurvivesAnchorDeleteAndUpdatesAndExcludesLaterInserts() {
+    void opaqueCursorSurvivesAnchorDeleteAndUpdatesAndExcludesRowsWithLaterCreatedAt() {
         var firstId = UUID.fromString("00000000-0000-0000-0000-000000000001");
         var secondId = UUID.fromString("00000000-0000-0000-0000-000000000002");
         var thirdId = UUID.fromString("00000000-0000-0000-0000-000000000003");
@@ -199,12 +199,14 @@ class PostgresProfileSearchIntegrationTests {
     @Test
     void matchingCorpusIsCappedBeforeAggregateHydrationAndReportsLowerBoundMetadata() {
         var expectedIds = IntStream.rangeClosed(0, PostgresProfileRepository.MAX_SEARCH_CANDIDATES)
-                .mapToObj(PostgresProfileSearchIntegrationTests::candidateId)
-                .sorted(java.util.Comparator.comparing(UUID::toString))
+                .boxed()
+                .sorted(java.util.Comparator.comparing(PostgresProfileSearchIntegrationTests::candidateName)
+                        .thenComparing(PostgresProfileSearchIntegrationTests::candidateId))
+                .map(PostgresProfileSearchIntegrationTests::candidateId)
                 .toList();
         for (int index = 0; index <= PostgresProfileRepository.MAX_SEARCH_CANDIDATES; index++) {
             repository.saveProfileAggregate(profileAggregate(candidateId(index),
-                    (index % 2 == 0 ? "Java Développeur " : "Java Ångström ") + index,
+                    candidateName(index),
                     "java-" + index + "@example.test", "Java", "Remote"));
         }
         dataSource.reset();
@@ -250,6 +252,10 @@ class PostgresProfileSearchIntegrationTests {
 
     private static UUID candidateId(int index) {
         return UUID.fromString("00000000-0000-0000-0000-%012d".formatted(index + 1L));
+    }
+
+    private static String candidateName(int index) {
+        return (index % 2 == 0 ? "Java Développeur " : "Java Ångström ") + index;
     }
 
     private static void seedCommonPrefixSearchCorpus(int count) {

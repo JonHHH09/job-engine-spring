@@ -147,7 +147,7 @@ class PostgresMatchAnalysisBatchIntegrationTests {
     }
 
     @Test
-    void analyzeAllProcessesOneStablePageAcrossDeletionAndLaterInsertion() {
+    void analyzeAllProcessesOneStablePageAcrossDeletionAndRowsWithLaterCreatedAt() {
         try (var context = applicationContext()) {
             var service = context.getBean(MatchAnalysisService.class);
 

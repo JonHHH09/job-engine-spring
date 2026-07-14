@@ -117,8 +117,6 @@ public class PostgresProfileRepository implements ProfileRepository {
                 SELECT profile_id, SUM(weight)::integer AS score
                 FROM posting_hits
                 GROUP BY profile_id
-                ORDER BY SUM(weight) DESC, profile_id
-                LIMIT :fetchLimit
             ), matching AS (
                 SELECT profile.*, scored.score, posting_bounds.posting_truncated
                 FROM scored
@@ -126,10 +124,10 @@ public class PostgresProfileRepository implements ProfileRepository {
                     SELECT * FROM profile.profiles profile WHERE profile.id = scored.profile_id LIMIT 1
                 ) profile
                 CROSS JOIN posting_bounds
-                ORDER BY scored.score DESC, profile.id
+                ORDER BY scored.score DESC, profile.full_name COLLATE "C", profile.id
                 LIMIT :fetchLimit
             )
-            SELECT * FROM matching ORDER BY score DESC, id
+            SELECT * FROM matching ORDER BY score DESC, full_name COLLATE "C", id
             """;
 
     private static final RowMapper<ProfileContact> CONTACT_MAPPER = DataClassRowMapper.newInstance(ProfileContact.class);

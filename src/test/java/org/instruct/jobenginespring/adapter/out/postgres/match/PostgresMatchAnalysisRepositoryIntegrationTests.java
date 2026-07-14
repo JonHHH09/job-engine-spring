@@ -187,7 +187,7 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
         assertEquals(1, dataSource.rowsRead());
     }
 
-    @Test void reportCursorSurvivesDeletesAndJoinedUpdatesAndKeepsFirstPageSnapshot() {
+    @Test void reportCursorSurvivesDeletesAndJoinedUpdatesAndKeepsFirstPageWatermark() {
         var newest = saveReportAt("cursor-newest", NOW.plusSeconds(3));
         var middle = saveReportAt("cursor-middle", NOW.plusSeconds(2));
         var oldest = saveReportAt("cursor-oldest", NOW.plusSeconds(1));
@@ -249,7 +249,7 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
                 "match-disagreements", "report=" + report.id()));
     }
 
-    @Test void historyCursorsSurviveDeletionMutationAndPostSnapshotInserts() {
+    @Test void historyCursorsSurviveDeletionMutationAndRowsAfterTheWatermark() {
         var report = repository.saveReport(report());
         var oldestReview = repository.saveReview(reviewAt(report.id(), "oldest", NOW.plusSeconds(1)));
         var middleReview = repository.saveReview(reviewAt(report.id(), "middle", NOW.plusSeconds(2)));

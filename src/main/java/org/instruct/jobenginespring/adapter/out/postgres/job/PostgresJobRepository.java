@@ -106,8 +106,6 @@ public class PostgresJobRepository implements JobRepository {
                 SELECT job_id, SUM(weight)::integer AS score
                 FROM posting_hits
                 GROUP BY job_id
-                ORDER BY SUM(weight) DESC, job_id
-                LIMIT :fetchLimit
             ), matching AS (
                 SELECT job.*, scored.score, posting_bounds.posting_truncated
                 FROM scored
@@ -115,10 +113,10 @@ public class PostgresJobRepository implements JobRepository {
                     SELECT * FROM job_schema.jobs job WHERE job.id = scored.job_id LIMIT 1
                 ) job
                 CROSS JOIN posting_bounds
-                ORDER BY scored.score DESC, job.id
+                ORDER BY scored.score DESC, job.title COLLATE "C", job.id
                 LIMIT :fetchLimit
             )
-            SELECT * FROM matching ORDER BY score DESC, id
+            SELECT * FROM matching ORDER BY score DESC, title COLLATE "C", id
             """;
 
     private final JdbcClient jdbc;

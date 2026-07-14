@@ -165,7 +165,7 @@ class PostgresJobSearchIntegrationTests {
     }
 
     @Test
-    void opaqueCursorSurvivesAnchorDeleteAndUpdatesAndExcludesLaterInserts() {
+    void opaqueCursorSurvivesAnchorDeleteAndUpdatesAndExcludesRowsWithLaterCreatedAt() {
         var firstId = UUID.fromString("00000000-0000-0000-0000-000000000001");
         var secondId = UUID.fromString("00000000-0000-0000-0000-000000000002");
         var thirdId = UUID.fromString("00000000-0000-0000-0000-000000000003");
@@ -197,12 +197,14 @@ class PostgresJobSearchIntegrationTests {
     @Test
     void matchingCorpusIsCappedBeforeAggregateHydrationAndReportsLowerBoundMetadata() {
         var expectedIds = IntStream.rangeClosed(0, PostgresJobRepository.MAX_SEARCH_CANDIDATES)
-                .mapToObj(PostgresJobSearchIntegrationTests::candidateId)
-                .sorted(java.util.Comparator.comparing(UUID::toString))
+                .boxed()
+                .sorted(java.util.Comparator.comparing(PostgresJobSearchIntegrationTests::candidateName)
+                        .thenComparing(PostgresJobSearchIntegrationTests::candidateId))
+                .map(PostgresJobSearchIntegrationTests::candidateId)
                 .toList();
         for (int index = 0; index <= PostgresJobRepository.MAX_SEARCH_CANDIDATES; index++) {
             repository.saveJobAggregate(textAggregate(candidateId(index),
-                    (index % 2 == 0 ? "Java Développeur " : "Java Ångström ") + index,
+                    candidateName(index),
                     "Java platform", "scale-" + index));
         }
         dataSource.reset();
@@ -248,6 +250,10 @@ class PostgresJobSearchIntegrationTests {
 
     private static UUID candidateId(int index) {
         return UUID.fromString("00000000-0000-0000-0000-%012d".formatted(index + 1L));
+    }
+
+    private static String candidateName(int index) {
+        return (index % 2 == 0 ? "Java Développeur " : "Java Ångström ") + index;
     }
 
     private static void seedCommonPrefixSearchCorpus(int count) {

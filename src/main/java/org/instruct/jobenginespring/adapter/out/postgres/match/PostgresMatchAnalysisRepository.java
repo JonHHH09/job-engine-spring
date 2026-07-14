@@ -100,10 +100,11 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
                   AND ARRAY[report.profile_id, report.job_id]
                       = ARRAY[CAST(:profileId AS uuid), CAST(:jobId AS uuid)]
                   AND (ARRAY[report.profile_id, report.job_id], report.created_at, report.id)
-                      <= (ARRAY[CAST(:profileId AS uuid), CAST(:jobId AS uuid)], bounds.snapshot_at,
-                          CAST('ffffffff-ffff-ffff-ffff-ffffffffffff' AS uuid))
-                  AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
-                       OR (report.created_at, report.id) < (:cursorCreatedAt, :cursorId))
+                      < (ARRAY[CAST(:profileId AS uuid), CAST(:jobId AS uuid)],
+                         COALESCE(CAST(:cursorCreatedAt AS timestamptz),
+                                  bounds.snapshot_at + INTERVAL '1 microsecond'),
+                         COALESCE(CAST(:cursorId AS uuid),
+                                  CAST('00000000-0000-0000-0000-000000000000' AS uuid)))
                 ORDER BY ARRAY[report.profile_id, report.job_id], report.created_at DESC, report.id DESC
                 LIMIT :fetchLimit
             ), page AS MATERIALIZED (
