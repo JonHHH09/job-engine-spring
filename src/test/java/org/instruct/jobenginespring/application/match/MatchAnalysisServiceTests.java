@@ -107,16 +107,22 @@ class MatchAnalysisServiceTests {
 
     @Test
     void batchFailureNeverReturnsUnderlyingExceptionMessage() {
+        var profiles = mock(ProfileRepository.class);
         var jobs = mock(JobRepository.class);
-        var service = spy(new MatchAnalysisService(mock(ProfileRepository.class), jobs, mock(MatchAnalysisRepository.class),
-                new DeterministicMatchScorer(), Clock.fixed(NOW, ZoneOffset.UTC)));
+        var pairAnalyzer = mock(MatchPairAnalyzer.class);
+        var profile = mock(org.instruct.jobenginespring.domain.profile.ProfileAggregate.class);
+        var profileId = UUID.randomUUID();
+        var service = new MatchAnalysisService(profiles, jobs, mock(MatchAnalysisRepository.class), pairAnalyzer,
+                Clock.fixed(NOW, ZoneOffset.UTC));
         var aggregate = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
         var jobId = UUID.randomUUID();
         when(aggregate.job().id()).thenReturn(jobId);
+        when(profiles.findProfileAggregate(profileId)).thenReturn(Optional.of(profile));
         when(jobs.listJobAggregates()).thenReturn(List.of(aggregate));
-        doThrow(new IllegalStateException("jdbc://private-host secret-token")).when(service).analyze(any(), eq(jobId));
+        when(pairAnalyzer.analyze(profile, aggregate))
+                .thenThrow(new IllegalStateException("jdbc://private-host secret-token"));
 
-        var result = service.analyzeAll(UUID.randomUUID());
+        var result = service.analyzeAll(profileId);
 
         assertEquals("analysis failed", result.failed().getFirst().error());
     }
@@ -205,9 +211,12 @@ class MatchAnalysisServiceTests {
 
     @Test
     void analyzeAllReturnsSuccessesAndFailuresAndValidatesProfile() {
+        var profiles = mock(ProfileRepository.class);
         var jobs = mock(JobRepository.class);
-        var service = spy(new MatchAnalysisService(mock(ProfileRepository.class), jobs, mock(MatchAnalysisRepository.class),
-                new DeterministicMatchScorer(), Clock.fixed(NOW, ZoneOffset.UTC)));
+        var pairAnalyzer = mock(MatchPairAnalyzer.class);
+        var service = new MatchAnalysisService(profiles, jobs, mock(MatchAnalysisRepository.class), pairAnalyzer,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        var profile = mock(org.instruct.jobenginespring.domain.profile.ProfileAggregate.class);
         var first = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
         var second = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
         var firstId = UUID.randomUUID();
@@ -216,15 +225,55 @@ class MatchAnalysisServiceTests {
         var view = new MatchAnalysisService.ReportView(report(), false);
         when(first.job().id()).thenReturn(firstId);
         when(second.job().id()).thenReturn(secondId);
+        when(profiles.findProfileAggregate(profileId)).thenReturn(Optional.of(profile));
         when(jobs.listJobAggregates()).thenReturn(List.of(first, second));
-        doReturn(view).when(service).analyze(profileId, firstId);
-        doThrow(new IllegalStateException("private detail")).when(service).analyze(profileId, secondId);
+        when(pairAnalyzer.analyze(profile, first)).thenReturn(view.report());
+        when(pairAnalyzer.analyze(profile, second)).thenThrow(new IllegalStateException("private detail"));
 
         var result = service.analyzeAll(profileId);
 
         assertEquals(List.of(view), result.succeeded());
         assertEquals(List.of(new MatchAnalysisService.PairFailure(profileId, secondId, "analysis failed")), result.failed());
         assertThrows(NullPointerException.class, () -> service.analyzeAll(null));
+        var missingProfileId = UUID.randomUUID();
+        when(profiles.findProfileAggregate(missingProfileId)).thenReturn(Optional.empty());
+        assertThrows(IllegalArgumentException.class, () -> service.analyzeAll(missingProfileId));
+    }
+
+    @Test
+    void analyzeAllLoadsTheProfileOnceAndReusesListedJobAggregates() {
+        var profiles = mock(ProfileRepository.class);
+        var jobs = mock(JobRepository.class);
+        var repository = mock(MatchAnalysisRepository.class);
+        var scorer = mock(DeterministicMatchScorer.class);
+        var profile = mock(org.instruct.jobenginespring.domain.profile.ProfileAggregate.class);
+        var first = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
+        var second = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
+        var profileId = UUID.randomUUID();
+        var firstId = UUID.randomUUID();
+        var secondId = UUID.randomUUID();
+        var firstReport = report();
+        var secondReport = report();
+        when(first.job().id()).thenReturn(firstId);
+        when(second.job().id()).thenReturn(secondId);
+        when(profiles.findProfileAggregate(profileId)).thenReturn(Optional.of(profile));
+        when(jobs.listJobAggregates()).thenReturn(List.of(first, second));
+        when(jobs.findJobAggregate(firstId)).thenReturn(Optional.of(first));
+        when(jobs.findJobAggregate(secondId)).thenReturn(Optional.of(second));
+        when(scorer.score(profile, first, NOW)).thenReturn(firstReport);
+        when(scorer.score(profile, second, NOW)).thenReturn(secondReport);
+        when(repository.saveReport(firstReport)).thenReturn(firstReport);
+        when(repository.saveReport(secondReport)).thenReturn(secondReport);
+        var service = new MatchAnalysisService(profiles, jobs, repository, scorer, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        var result = service.analyzeAll(profileId);
+
+        assertEquals(2, result.succeeded().size());
+        assertTrue(result.failed().isEmpty());
+        verify(profiles).findProfileAggregate(profileId);
+        verify(jobs, never()).findJobAggregate(any());
+        verify(scorer).score(profile, first, NOW);
+        verify(scorer).score(profile, second, NOW);
     }
 
     @Test
@@ -281,7 +330,7 @@ class MatchAnalysisServiceTests {
         assertThrows(NullPointerException.class, () -> new MatchAnalysisService(mock(ProfileRepository.class), mock(JobRepository.class),
                 null, new DeterministicMatchScorer(), Clock.systemUTC()));
         assertThrows(NullPointerException.class, () -> new MatchAnalysisService(mock(ProfileRepository.class), mock(JobRepository.class),
-                mock(MatchAnalysisRepository.class), null, Clock.systemUTC()));
+                mock(MatchAnalysisRepository.class), (DeterministicMatchScorer) null, Clock.systemUTC()));
         assertThrows(NullPointerException.class, () -> new MatchAnalysisService(mock(ProfileRepository.class), mock(JobRepository.class),
                 mock(MatchAnalysisRepository.class), new DeterministicMatchScorer(), null));
 
