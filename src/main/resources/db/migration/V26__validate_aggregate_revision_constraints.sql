@@ -1,4 +1,3 @@
--- JOB-64 branch-local migration numbers must be reconciled with parallel migrations before integration.
 ALTER TABLE profile.profiles
     VALIDATE CONSTRAINT profiles_revision_non_negative;
 

@@ -7,6 +7,9 @@ import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher.JobLinkFetchResult;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.application.search.SearchTextNormalizer;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -16,7 +19,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.text.Normalizer;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -39,7 +41,6 @@ public class JobService {
     private static final String SOURCE_METHOD_TEXT = "text";
     private static final int DEFAULT_SEARCH_LIMIT = 20;
     private static final int MAX_SEARCH_LIMIT = 100;
-    private static final Pattern TOKEN_SPLIT = Pattern.compile("[^a-z0-9+#.]+", Pattern.CASE_INSENSITIVE);
     private static final Pattern SKILLS_LINE = Pattern.compile("(?i)(?:required\\s+)?(?:technical\\s+)?skills?\\s*[:\\-]\\s*([^\\n.]+)");
     private static final Pattern EXPERIENCE_LINE = Pattern.compile("(?im)^(?:experience|requirements?|qualifications?)\\s*[:\\-]\\s*(.+)$");
 
@@ -66,6 +67,11 @@ public class JobService {
     }
 
     @Transactional(readOnly = true)
+    public Page<JobPosting> listJobs(Integer limit, String cursor) {
+        return jobRepository.listJobs(PageRequest.of(limit, cursor, "jobs", "all"));
+    }
+
+    @Transactional(readOnly = true)
     public Optional<JobAggregate> getJob(UUID jobId) {
         Objects.requireNonNull(jobId, "jobId must not be null");
         return jobRepository.findJobAggregate(jobId);
@@ -75,17 +81,22 @@ public class JobService {
     public JobSearchResult searchJobs(JobSearchRequest request) {
         JobSearchRequest safeRequest = validateSearch(request);
         List<String> queryTokens = tokens(safeRequest.query());
-        List<JobSearchMatch> matches = jobRepository.listJobAggregates().stream()
+        var candidates = jobRepository.searchJobCandidates(queryTokens, safeRequest.limit());
+        List<JobSearchMatch> matches = candidates.items().stream()
                 .map(aggregate -> match(aggregate, queryTokens))
                 .filter(match -> match.score() > 0)
                 .sorted(Comparator.comparingInt(JobSearchMatch::score).reversed()
-                        .thenComparing(match -> match.job().title())
-                        .thenComparing(match -> match.job().id()))
+                        // UUID text order exactly matches PostgreSQL's UUID byte order and avoids
+                        // deployment-specific text collation at the bounded-candidate boundary.
+                        .thenComparing(match -> match.job().id().toString()))
                 .toList();
         List<JobSearchMatch> returned = matches.stream()
                 .limit(safeRequest.limit())
                 .toList();
-        return new JobSearchResult(safeRequest.query().strip(), queryTokens, matches.size(), returned.size(), returned);
+        int matchedCount = candidates.matchedCount() < 0 ? matches.size() : candidates.matchedCount();
+        Integer totalMatches = candidates.hasMore() ? null : matchedCount;
+        return new JobSearchResult(safeRequest.query().strip(), queryTokens, totalMatches,
+                matchedCount, candidates.hasMore(), returned.size(), returned);
     }
 
     @Transactional
@@ -169,7 +180,6 @@ public class JobService {
         ));
     }
 
-    @Transactional
     public AddJobResult addJobFromLink(AddJobFromLinkRequest request) {
         AddJobFromLinkRequest safeRequest = validateLinkRequest(request);
         String retrievalUrl = clean(safeRequest.url());
@@ -369,15 +379,23 @@ public class JobService {
         if (request.query() == null || request.query().isBlank()) {
             throw validation("query", "must not be blank");
         }
-        List<String> queryTokens = tokens(request.query());
+        String query = request.query().strip();
+        if (query.codePointCount(0, query.length()) > SearchTextNormalizer.MAX_QUERY_CHARACTERS) {
+            throw validation("query", "must not exceed " + SearchTextNormalizer.MAX_QUERY_CHARACTERS + " characters");
+        }
+        List<String> queryTokens = tokens(query);
         if (queryTokens.isEmpty()) {
             throw validation("query", "must contain searchable text");
+        }
+        if (queryTokens.size() > SearchTextNormalizer.MAX_QUERY_TOKENS) {
+            throw validation("query", "must contain at most " + SearchTextNormalizer.MAX_QUERY_TOKENS
+                    + " searchable terms");
         }
         int limit = request.limit() == null ? DEFAULT_SEARCH_LIMIT : request.limit();
         if (limit < 1 || limit > MAX_SEARCH_LIMIT) {
             throw validation("limit", "must be between 1 and " + MAX_SEARCH_LIMIT);
         }
-        return new JobSearchRequest(request.query().strip(), limit);
+        return new JobSearchRequest(query, limit);
     }
 
     private static UpdateJobRequest validateUpdate(UpdateJobRequest request) {
@@ -575,27 +593,12 @@ public class JobService {
     }
 
     private static String normalizedKey(String value) {
-        if (value == null || value.isBlank()) {
-            return "";
-        }
-        return Normalizer.normalize(value.strip().toLowerCase(Locale.ROOT), Normalizer.Form.NFKD)
-                .replaceAll("\\p{M}", "")
+        return SearchTextNormalizer.normalize(value)
                 .replaceAll("\\s+", " ");
     }
 
     private static List<String> tokens(String text) {
-        String normalized = normalizedKey(text);
-        if (normalized.isBlank()) {
-            return List.of();
-        }
-        String[] rawTokens = TOKEN_SPLIT.split(normalized);
-        LinkedHashSet<String> tokens = new LinkedHashSet<>();
-        for (String token : rawTokens) {
-            if (!token.isBlank()) {
-                tokens.add(token);
-            }
-        }
-        return List.copyOf(tokens);
+        return SearchTextNormalizer.tokens(text);
     }
 
     private static <T> List<T> nullSafe(List<T> values) {
@@ -699,7 +702,8 @@ public class JobService {
     public record DeleteJobResult(UUID jobId, boolean deleted) {
     }
 
-    public record JobSearchResult(String query, List<String> queryTokens, int totalMatches, int returnedCount, List<JobSearchMatch> jobs) {
+    public record JobSearchResult(String query, List<String> queryTokens, Integer totalMatches, int matchedCount,
+                                  boolean hasMore, int returnedCount, List<JobSearchMatch> jobs) {
         public JobSearchResult {
             queryTokens = queryTokens == null ? List.of() : List.copyOf(queryTokens);
             jobs = jobs == null ? List.of() : List.copyOf(jobs);

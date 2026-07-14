@@ -1,6 +1,11 @@
 package org.instruct.jobenginespring.adapter.out.postgres.job;
 
 import org.instruct.jobenginespring.application.job.port.JobRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.application.pagination.SearchCandidates;
+import org.instruct.jobenginespring.application.search.SearchTerm;
+import org.instruct.jobenginespring.application.search.SearchTextNormalizer;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -32,6 +37,89 @@ import java.util.UUID;
 @ConditionalOnProperty(prefix = "job-engine.job.postgres", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class PostgresJobRepository implements JobRepository {
 
+    public static final int MAX_SEARCH_CANDIDATES = 500;
+    private static final int SEARCH_FIELD_COUNT = 8;
+    static final int MAX_POSTINGS_PER_TOKEN = (MAX_SEARCH_CANDIDATES + 1) * SEARCH_FIELD_COUNT;
+    public static final String SEARCH_CANDIDATES_SQL = """
+            WITH query_tokens AS (
+                SELECT token FROM unnest(CAST(:queryTokens AS text[])) AS token
+            ), query_prefixes AS (
+                SELECT prefix, query_token
+                FROM unnest(CAST(:queryPrefixes AS text[]), CAST(:prefixOwners AS text[]))
+                    AS value(prefix, query_token)
+            ), query_prefix_sets AS (
+                SELECT query_token, array_agg(prefix ORDER BY prefix COLLATE "C") AS prefixes
+                FROM query_prefixes
+                GROUP BY query_token
+            ), raw_hits AS (
+                SELECT posting.job_id, posting.field_key, query.token AS query_token, posting.weight,
+                       posting.ordinal > :postingLimit AS truncated
+                FROM query_tokens query
+                CROSS JOIN LATERAL (
+                    WITH RECURSIVE sample(term, job_id, field_key, weight, ordinal) AS (
+                        (
+                            SELECT posting.term, posting.job_id, posting.field_key, posting.weight, 1::bigint
+                            FROM job_schema.search_terms posting
+                            WHERE posting.term COLLATE "C" >= query.token COLLATE "C"
+                              AND posting.term COLLATE "C" < (query.token || '~') COLLATE "C"
+                            ORDER BY posting.term COLLATE "C", posting.job_id, posting.field_key
+                            LIMIT 1
+                        )
+                        UNION ALL
+                        SELECT next.term, next.job_id, next.field_key, next.weight, sample.ordinal + 1
+                        FROM sample
+                        CROSS JOIN LATERAL (
+                            SELECT posting.term, posting.job_id, posting.field_key, posting.weight
+                            FROM job_schema.search_terms posting
+                            WHERE posting.term COLLATE "C" >= query.token COLLATE "C"
+                              AND posting.term COLLATE "C" < (query.token || '~') COLLATE "C"
+                              AND (posting.term COLLATE "C", posting.job_id, posting.field_key)
+                                  > (sample.term COLLATE "C", sample.job_id, sample.field_key)
+                            ORDER BY posting.term COLLATE "C", posting.job_id, posting.field_key
+                            LIMIT 1
+                        ) next
+                        WHERE sample.ordinal < :postingFetchLimit
+                    )
+                    SELECT * FROM sample
+                ) posting
+                UNION ALL
+                SELECT posting.job_id, posting.field_key, prefix_set.query_token, posting.weight,
+                       posting.ordinal > :postingLimit AS truncated
+                FROM query_prefix_sets prefix_set
+                CROSS JOIN LATERAL (
+                    SELECT sample.*,
+                           row_number() OVER (ORDER BY sample.term COLLATE "C", sample.job_id, sample.field_key) AS ordinal
+                    FROM (
+                        SELECT posting.term, posting.job_id, posting.field_key, posting.weight
+                        FROM job_schema.search_terms posting
+                        WHERE posting.term COLLATE "C" = ANY(prefix_set.prefixes)
+                        ORDER BY posting.term COLLATE "C", posting.job_id, posting.field_key
+                        LIMIT :postingFetchLimit
+                    ) sample
+                ) posting
+            ), posting_bounds AS (
+                SELECT COALESCE(bool_or(truncated), false) AS posting_truncated FROM raw_hits
+            ), posting_hits AS (
+                SELECT DISTINCT job_id, field_key, query_token, weight
+                FROM raw_hits
+                WHERE NOT truncated
+            ), scored AS (
+                SELECT job_id, SUM(weight)::integer AS score
+                FROM posting_hits
+                GROUP BY job_id
+            ), matching AS (
+                SELECT job.*, scored.score, posting_bounds.posting_truncated
+                FROM scored
+                CROSS JOIN LATERAL (
+                    SELECT * FROM job_schema.jobs job WHERE job.id = scored.job_id LIMIT 1
+                ) job
+                CROSS JOIN posting_bounds
+                ORDER BY scored.score DESC, job.title COLLATE "C", job.id
+                LIMIT :fetchLimit
+            )
+            SELECT * FROM matching ORDER BY score DESC, title COLLATE "C", id
+            """;
+
     private final JdbcClient jdbc;
     private final NamedParameterJdbcOperations namedJdbc;
 
@@ -48,15 +136,72 @@ public class PostgresJobRepository implements JobRepository {
                                canonical_fingerprint, created_at, updated_at, revision
                         FROM job_schema.jobs
                         ORDER BY posted_at DESC NULLS LAST, created_at DESC, title, id
+                        LIMIT :limit
                         """)
+                .param("limit", PageRequest.DEFAULT_LIMIT)
                 .query(this::mapJob)
                 .list();
     }
 
     @Override
-    public List<JobAggregate> listJobAggregates() {
-        List<JobPosting> jobs = listJobs();
-        return aggregatesForJobs(jobs);
+    public Page<JobPosting> listJobs(PageRequest request) {
+        var rows = jdbc.sql("""
+                        WITH bounds AS (
+                            SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+                        )
+                        SELECT job.id, job.source_method, job.source_label, job.title, job.company, job.location,
+                               job.description, job.experience_requirement, job.employment_type, job.seniority,
+                               job.posted_at, job.canonical_fingerprint, job.created_at, job.updated_at, job.revision,
+                               bounds.snapshot_at
+                        FROM job_schema.jobs job
+                        CROSS JOIN bounds
+                        WHERE job.created_at <= bounds.snapshot_at
+                          AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                               OR job.created_at < :cursorCreatedAt
+                               OR (job.created_at = :cursorCreatedAt AND job.id > :cursorId))
+                        ORDER BY job.created_at DESC, job.id
+                        LIMIT :fetchLimit
+                        """)
+                .param("snapshotAt", timestamp(request.cursor() == null ? null : request.cursor().snapshotAt()))
+                .param("cursorCreatedAt", timestamp(request.cursor() == null ? null : request.cursor().createdAt()))
+                .param("cursorId", request.cursor() == null ? null : request.cursor().id())
+                .param("fetchLimit", request.limit() + 1)
+                .query((resultSet, rowNumber) -> new JobPageRow(
+                        mapJob(resultSet, rowNumber), resultSet.getTimestamp("snapshot_at").toInstant()))
+                .list();
+        boolean hasMore = rows.size() > request.limit();
+        var pageRows = rows.stream().limit(request.limit()).toList();
+        var items = pageRows.stream().map(JobPageRow::job).toList();
+        var last = hasMore ? pageRows.getLast() : null;
+        return new Page<>(items, last == null ? null
+                : request.nextCursor(last.snapshotAt(), last.job().createdAt(), last.job().id()));
+    }
+
+    @Override
+    public Page<JobAggregate> listJobAggregates(PageRequest request) {
+        var page = listJobs(request);
+        return new Page<>(aggregatesForJobs(page.items()), page.nextCursor());
+    }
+
+    @Override
+    public SearchCandidates<JobAggregate> searchJobCandidates(List<String> queryTokens, int limit) {
+        var prefixes = SearchTextNormalizer.prefixes(queryTokens);
+        var ranked = namedJdbc.query(SEARCH_CANDIDATES_SQL, new MapSqlParameterSource()
+                        .addValue("queryTokens", queryTokens.toArray(String[]::new))
+                        .addValue("queryPrefixes", prefixes.values().toArray(String[]::new))
+                        .addValue("prefixOwners", prefixes.owners().toArray(String[]::new))
+                        .addValue("postingLimit", MAX_POSTINGS_PER_TOKEN)
+                        .addValue("postingFetchLimit", MAX_POSTINGS_PER_TOKEN + 1)
+                        .addValue("fetchLimit", MAX_SEARCH_CANDIDATES + 1),
+                (resultSet, rowNumber) -> new RankedJob(
+                        mapJob(resultSet, rowNumber), resultSet.getInt("score"),
+                        resultSet.getBoolean("posting_truncated")));
+        if (ranked.isEmpty()) {
+            return new SearchCandidates<>(0, List.of());
+        }
+        boolean hasMore = ranked.size() > MAX_SEARCH_CANDIDATES || ranked.getFirst().postingTruncated();
+        var jobs = ranked.stream().limit(MAX_SEARCH_CANDIDATES).map(RankedJob::job).toList();
+        return new SearchCandidates<>(jobs.size(), hasMore, aggregatesForJobs(jobs));
     }
 
     @Override
@@ -105,6 +250,7 @@ public class PostgresJobRepository implements JobRepository {
     }
 
     @Override
+    @Transactional
     public JobAggregate saveJobAggregate(JobAggregate aggregate) {
         JobPosting job = aggregate.job();
         boolean inserted = insertJobWithMatchingProvenance(aggregate);
@@ -119,6 +265,7 @@ public class PostgresJobRepository implements JobRepository {
                     .orElseThrow();
         }
         batchInsertSkills(aggregate.skills());
+        rebuildSearchTerms(aggregate);
         return findJobAggregate(job.id()).orElseThrow();
     }
 
@@ -162,6 +309,7 @@ public class PostgresJobRepository implements JobRepository {
             return Optional.empty();
         }
         replaceSkills(job.id(), aggregate.skills());
+        rebuildSearchTerms(aggregate);
         return findJobAggregate(job.id());
     }
 
@@ -278,6 +426,28 @@ public class PostgresJobRepository implements JobRepository {
                 .param("jobId", jobId)
                 .update();
         batchInsertSkills(skills);
+    }
+
+    private void rebuildSearchTerms(JobAggregate aggregate) {
+        var job = aggregate.job();
+        var terms = new ArrayList<SearchTerm>();
+        terms.addAll(SearchTerm.from(job.id(), "job.title", job.title(), 8));
+        terms.addAll(SearchTerm.from(job.id(), "job.company", job.company(), 5));
+        terms.addAll(SearchTerm.from(job.id(), "job.location", job.location(), 3));
+        terms.addAll(SearchTerm.from(job.id(), "job.description", job.description(), 3));
+        terms.addAll(SearchTerm.from(job.id(), "job.experienceRequirement", job.experienceRequirement(), 4));
+        terms.addAll(SearchTerm.from(job.id(), "job.employmentType", job.employmentType(), 2));
+        terms.addAll(SearchTerm.from(job.id(), "job.seniority", job.seniority(), 2));
+        aggregate.skills().forEach(skill -> terms.addAll(SearchTerm.from(job.id(),
+                "skills:" + skill.id(), skill.skill(), 7)));
+        jdbc.sql("DELETE FROM job_schema.search_terms WHERE job_id = :jobId").param("jobId", job.id()).update();
+        namedJdbc.batchUpdate("""
+                        INSERT INTO job_schema.search_terms (job_id, field_key, term, weight)
+                        VALUES (:entityId, :fieldKey, :term, :weight)
+                        """, terms.stream().map(term -> new MapSqlParameterSource()
+                        .addValue("entityId", term.entityId()).addValue("fieldKey", term.fieldKey())
+                        .addValue("term", term.term()).addValue("weight", term.weight()))
+                .toArray(SqlParameterSource[]::new));
     }
 
     private Optional<JobPosting> findJobById(UUID jobId) {
@@ -445,5 +615,11 @@ public class PostgresJobRepository implements JobRepository {
 
     private static Instant instant(ResultSet resultSet, String column) throws SQLException {
         return resultSet.getTimestamp(column).toInstant();
+    }
+
+    private record RankedJob(JobPosting job, int score, boolean postingTruncated) {
+    }
+
+    private record JobPageRow(JobPosting job, Instant snapshotAt) {
     }
 }

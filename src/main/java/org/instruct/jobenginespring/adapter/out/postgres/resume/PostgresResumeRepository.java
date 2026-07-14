@@ -7,6 +7,9 @@ import org.instruct.jobenginespring.domain.resume.ResumeEntryBullet;
 import org.instruct.jobenginespring.domain.resume.ResumeSection;
 import org.instruct.jobenginespring.domain.resume.ResumeVariant;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,7 +18,6 @@ import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -26,9 +28,11 @@ import java.util.UUID;
 public class PostgresResumeRepository implements ResumeRepository {
 
     private final JdbcClient jdbc;
+    private final NamedParameterJdbcOperations namedJdbc;
 
-    public PostgresResumeRepository(JdbcClient jdbc) {
-        this.jdbc = Objects.requireNonNull(jdbc, "jdbc must not be null");
+    public PostgresResumeRepository(NamedParameterJdbcOperations namedJdbc) {
+        this.namedJdbc = Objects.requireNonNull(namedJdbc, "namedJdbc must not be null");
+        this.jdbc = JdbcClient.create(namedJdbc);
     }
 
     @Override
@@ -97,84 +101,81 @@ public class PostgresResumeRepository implements ResumeRepository {
                 .param("updatedAt", Timestamp.from(resume.updatedAt()))
                 .update();
 
-        List<ResumeVariant> savedVariants = new ArrayList<>();
-        for (VariantWrite variantWrite : safe.variants()) {
-            ResumeVariant variant = variantWrite.variant();
-            jdbc.sql("""
-                            INSERT INTO resume.resume_variants (
-                                id, resume_id, language, document_id, file_path, created_at, updated_at
-                            ) VALUES (
-                                :id, :resumeId, :language, :documentId, :filePath, :createdAt, :updatedAt
-                            )
-                            """)
-                    .param("id", variant.id())
-                    .param("resumeId", variant.resumeId())
-                    .param("language", variant.language())
-                    .param("documentId", variant.documentId())
-                    .param("filePath", variant.filePath())
-                    .param("createdAt", Timestamp.from(variant.createdAt()))
-                    .param("updatedAt", Timestamp.from(variant.updatedAt()))
-                    .update();
-            savedVariants.add(variant);
-
-            for (SectionWrite sectionWrite : variantWrite.sections()) {
-                ResumeSection section = sectionWrite.section();
-                jdbc.sql("""
-                                INSERT INTO resume.resume_sections (
-                                    id, variant_id, section_type, title, display_order
-                                ) VALUES (
-                                    :id, :variantId, :sectionType, :title, :displayOrder
-                                )
-                                """)
-                        .param("id", section.id())
-                        .param("variantId", section.variantId())
-                        .param("sectionType", section.sectionType())
-                        .param("title", section.title())
-                        .param("displayOrder", section.displayOrder())
-                        .update();
-
-                for (EntryWrite entryWrite : sectionWrite.entries()) {
-                    ResumeEntry entry = entryWrite.entry();
-                    jdbc.sql("""
-                                    INSERT INTO resume.resume_entries (
-                                        id, section_id, entry_type, display_order, title, organization, location,
-                                        start_date, end_date, metadata
-                                    ) VALUES (
-                                        :id, :sectionId, :entryType, :displayOrder, :title, :organization, :location,
-                                        :startDate, :endDate, :metadata
-                                    )
-                                    """)
-                            .param("id", entry.id())
-                            .param("sectionId", entry.sectionId())
-                            .param("entryType", entry.entryType())
-                            .param("displayOrder", entry.displayOrder())
-                            .param("title", entry.title())
-                            .param("organization", entry.organization())
-                            .param("location", entry.location())
-                            .param("startDate", entry.startDate() == null ? null : Date.valueOf(entry.startDate()))
-                            .param("endDate", entry.endDate() == null ? null : Date.valueOf(entry.endDate()))
-                            .param("metadata", entry.metadata())
-                            .update();
-
-                    for (ResumeEntryBullet bullet : entryWrite.bullets()) {
-                        jdbc.sql("""
-                                        INSERT INTO resume.resume_entry_bullets (
-                                            id, entry_id, display_order, text
-                                        ) VALUES (
-                                            :id, :entryId, :displayOrder, :text
-                                        )
-                                        """)
-                                .param("id", bullet.id())
-                                .param("entryId", bullet.entryId())
-                                .param("displayOrder", bullet.displayOrder())
-                                .param("text", bullet.text())
-                                .update();
-                    }
-                }
-            }
-        }
+        batchInsertNestedContent(safe.variants());
+        List<ResumeVariant> savedVariants = safe.variants().stream().map(VariantWrite::variant).toList();
 
         return new ReplaceResult(resume, List.copyOf(savedVariants), previousVariants);
+    }
+
+    void batchInsertNestedContent(List<VariantWrite> variants) {
+        batchUpdate("""
+                INSERT INTO resume.resume_variants (
+                    id, resume_id, language, document_id, file_path, created_at, updated_at
+                ) VALUES (
+                    :id, :resumeId, :language, :documentId, :filePath, :createdAt, :updatedAt
+                )
+                """, variants.stream().map(VariantWrite::variant).map(PostgresResumeRepository::variantParameters).toList());
+
+        List<SectionWrite> sections = variants.stream().flatMap(variant -> variant.sections().stream()).toList();
+        batchUpdate("""
+                INSERT INTO resume.resume_sections (id, variant_id, section_type, title, display_order)
+                VALUES (:id, :variantId, :sectionType, :title, :displayOrder)
+                """, sections.stream().map(SectionWrite::section).map(PostgresResumeRepository::sectionParameters).toList());
+
+        List<EntryWrite> entries = sections.stream().flatMap(section -> section.entries().stream()).toList();
+        batchUpdate("""
+                INSERT INTO resume.resume_entries (
+                    id, section_id, entry_type, display_order, title, organization, location,
+                    start_date, end_date, metadata
+                ) VALUES (
+                    :id, :sectionId, :entryType, :displayOrder, :title, :organization, :location,
+                    :startDate, :endDate, :metadata
+                )
+                """, entries.stream().map(EntryWrite::entry).map(PostgresResumeRepository::entryParameters).toList());
+
+        List<ResumeEntryBullet> bullets = entries.stream().flatMap(entry -> entry.bullets().stream()).toList();
+        batchUpdate("""
+                INSERT INTO resume.resume_entry_bullets (id, entry_id, display_order, text)
+                VALUES (:id, :entryId, :displayOrder, :text)
+                """, bullets.stream().map(PostgresResumeRepository::bulletParameters).toList());
+    }
+
+    private void batchUpdate(String sql, List<SqlParameterSource> parameters) {
+        if (!parameters.isEmpty()) {
+            namedJdbc.batchUpdate(sql, parameters.toArray(SqlParameterSource[]::new));
+        }
+    }
+
+    private static SqlParameterSource variantParameters(ResumeVariant variant) {
+        return new MapSqlParameterSource()
+                .addValue("id", variant.id()).addValue("resumeId", variant.resumeId())
+                .addValue("language", variant.language()).addValue("documentId", variant.documentId())
+                .addValue("filePath", variant.filePath()).addValue("createdAt", Timestamp.from(variant.createdAt()))
+                .addValue("updatedAt", Timestamp.from(variant.updatedAt()));
+    }
+
+    private static SqlParameterSource sectionParameters(ResumeSection section) {
+        return new MapSqlParameterSource()
+                .addValue("id", section.id()).addValue("variantId", section.variantId())
+                .addValue("sectionType", section.sectionType()).addValue("title", section.title())
+                .addValue("displayOrder", section.displayOrder());
+    }
+
+    private static SqlParameterSource entryParameters(ResumeEntry entry) {
+        return new MapSqlParameterSource()
+                .addValue("id", entry.id()).addValue("sectionId", entry.sectionId())
+                .addValue("entryType", entry.entryType()).addValue("displayOrder", entry.displayOrder())
+                .addValue("title", entry.title()).addValue("organization", entry.organization())
+                .addValue("location", entry.location())
+                .addValue("startDate", entry.startDate() == null ? null : Date.valueOf(entry.startDate()))
+                .addValue("endDate", entry.endDate() == null ? null : Date.valueOf(entry.endDate()))
+                .addValue("metadata", entry.metadata());
+    }
+
+    private static SqlParameterSource bulletParameters(ResumeEntryBullet bullet) {
+        return new MapSqlParameterSource()
+                .addValue("id", bullet.id()).addValue("entryId", bullet.entryId())
+                .addValue("displayOrder", bullet.displayOrder()).addValue("text", bullet.text());
     }
 
     private void lockGermanyResume(UUID profileId, UUID jobId, String format) {

@@ -31,10 +31,17 @@ public class JobMcpAdapter {
 
     @McpTool(
             name = "list_jobs",
-            description = "List stored job postings without returning source ingestion raw text."
+            description = "List a bounded page of stored job postings without returning source ingestion raw text."
     )
-    public CallToolResult listJobs() {
-        return call(() -> new ListJobsResult(jobService.listJobs()));
+    public CallToolResult listJobs(
+            @McpToolParam(required = false, description = "Optional page size and cursor from the previous response")
+            ListRequest request
+    ) {
+        return call(() -> {
+            var safeRequest = request == null ? new ListRequest(null, null) : request;
+            var page = jobService.listJobs(safeRequest.limit(), safeRequest.cursor());
+            return new ListJobsResult(page.items(), page.nextCursor());
+        });
     }
 
     @McpTool(
@@ -137,14 +144,20 @@ public class JobMcpAdapter {
         }
     }
 
-    public record ListJobsResult(List<JobPosting> jobs) {
+    public record ListRequest(
+            @McpToolParam(required = false, description = "Maximum page size, 1-100") Integer limit,
+            @McpToolParam(required = false, description = "Opaque cursor returned by the previous page") String cursor
+    ) {
+    }
+
+    public record ListJobsResult(List<JobPosting> jobs, String nextCursor) {
         public ListJobsResult {
             jobs = jobs == null ? List.of() : List.copyOf(jobs);
         }
     }
 
     public record JobSearchRequest(
-            @McpToolParam(required = true, description = "Search query text") String query,
+            @McpToolParam(required = true, description = "Search query, maximum 256 characters and 16 searchable terms") String query,
             @McpToolParam(required = false, description = "Maximum number of results, 1-100") Integer limit
     ) {
         JobService.JobSearchRequest toServiceRequest() {

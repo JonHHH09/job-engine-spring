@@ -100,6 +100,52 @@ class PostgresProfilePdfSourceRepositoryIntegrationTests {
     }
 
     @Test
+    void insertOrFindReturnsTheDeterministicWinnerForBothSourceUniquenessConstraints() {
+        seedProfileFileAndExtraction();
+        ProfilePdfSource winner = new ProfilePdfSource(SOURCE_ID, PROFILE_ID, EXTRACTION_ID, "resume_pdf", NOW);
+
+        var inserted = sourceRepository.insertOrFind(winner);
+        var extractionLoser = sourceRepository.insertOrFind(new ProfilePdfSource(
+                UUID.randomUUID(), UUID.randomUUID(), EXTRACTION_ID, "resume_pdf", NOW.plusSeconds(1)
+        ));
+        var profileLoser = sourceRepository.insertOrFind(new ProfilePdfSource(
+                UUID.randomUUID(), PROFILE_ID, UUID.randomUUID(), "resume_pdf", NOW.plusSeconds(2)
+        ));
+
+        assertTrue(inserted.inserted());
+        assertEquals(winner, inserted.source());
+        assertFalse(extractionLoser.inserted());
+        assertEquals(winner, extractionLoser.source());
+        assertFalse(profileLoser.inserted());
+        assertEquals(winner, profileLoser.source());
+    }
+
+    @Test
+    void insertOrFindDoesNotMisclassifyAnUnrelatedPrimaryKeyConflict() {
+        seedProfileFileAndExtraction();
+        sourceRepository.save(new ProfilePdfSource(SOURCE_ID, PROFILE_ID, EXTRACTION_ID, "resume_pdf", NOW));
+        UUID otherProfileId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID otherFileId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        UUID otherExtractionId = UUID.fromString("33333333-3333-3333-3333-333333333333");
+        profileRepository.saveProfileAggregate(new ProfileAggregate(
+                new UserProfile(otherProfileId, "Other", "other@example.test", null, null, NOW, NOW),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
+        ));
+        documentRepository.saveFile(new StoredDocumentFile(
+                otherFileId, "other.pdf", "application/pdf", 5,
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "other".getBytes(java.nio.charset.StandardCharsets.UTF_8), NOW, NOW
+        ));
+        documentRepository.savePdfExtraction(new PdfExtractionRecord(
+                otherExtractionId, otherFileId, "test", 5, 1, false, "other", NOW
+        ));
+
+        assertThrows(IllegalStateException.class, () -> sourceRepository.insertOrFind(new ProfilePdfSource(
+                SOURCE_ID, otherProfileId, otherExtractionId, "resume_pdf", NOW.plusSeconds(1)
+        )));
+    }
+
+    @Test
     void enforcesOneProfilePerExtractionAndOneExtractionPerProfile() {
         seedProfileFileAndExtraction();
         sourceRepository.save(new ProfilePdfSource(SOURCE_ID, PROFILE_ID, EXTRACTION_ID, "resume_pdf", NOW));

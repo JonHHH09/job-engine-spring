@@ -12,23 +12,30 @@ import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionServi
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.ProfilePdfIngestionResult;
 import org.instruct.jobenginespring.application.profile.ProfileService.LinkWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
+import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
+import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileTextExtractor;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import java.time.Instant;
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -41,7 +48,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -58,7 +67,6 @@ class ProfilePdfIngestionConcurrencyIntegrationTests {
 
     private static DriverManagerDataSource dataSource;
     private static JdbcTemplate jdbc;
-
     private PostgresProfileRepository profiles;
     private PostgresProfilePdfSourceRepository sources;
     private ProfileService profileService;
@@ -429,5 +437,76 @@ class ProfilePdfIngestionConcurrencyIntegrationTests {
                 throw new IllegalStateException("Concurrency latch interrupted", exception);
             }
         }
+    }
+
+    @Test
+    void concurrentPersistenceUsesShortTransactionsAndReturnsTheSameSourceWinner() throws Exception {
+        StoredPdfTextExtractionResult extraction = seedExtraction(
+                UUID.randomUUID(), UUID.randomUUID(), "9".repeat(64)
+        );
+        sources = org.mockito.Mockito.spy(new PostgresProfilePdfSourceRepository(
+                JdbcClient.create(new NamedParameterJdbcTemplate(dataSource))
+        ));
+        doAnswer(invocation -> {
+            assertTrue(TransactionSynchronizationManager.isActualTransactionActive());
+            assertTrue(TransactionSynchronizationManager.hasResource(dataSource));
+            return invocation.callRealMethod();
+        }).when(sources).insertOrFind(any());
+
+        try (var context = applicationContext();
+             var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            var service = context.getBean(ProfilePdfIngestionPersistenceService.class);
+            CountDownLatch ready = new CountDownLatch(2);
+            CountDownLatch start = new CountDownLatch(1);
+            var first = executor.submit(() -> {
+                ready.countDown();
+                await(start);
+                return service.persist(
+                        new IngestProfileFromStoredPdfRequest(extraction.document().id(), null, null, null),
+                        extraction,
+                        profileRequest("first@example.test", "https://example.test/first")
+                );
+            });
+            var second = executor.submit(() -> {
+                ready.countDown();
+                await(start);
+                return service.persist(
+                        new IngestProfileFromStoredPdfRequest(extraction.document().id(), null, null, null),
+                        extraction,
+                        profileRequest("second@example.test", "https://example.test/second")
+                );
+            });
+            await(ready);
+            start.countDown();
+
+            var firstResult = first.get(15, TimeUnit.SECONDS);
+            var secondResult = second.get(15, TimeUnit.SECONDS);
+
+            assertEquals(Set.of(IngestionStatus.CREATED_PROFILE, IngestionStatus.REUSED_EXISTING_SOURCE),
+                    Set.of(firstResult.status(), secondResult.status()));
+            assertEquals(firstResult.profileId(), secondResult.profileId());
+            assertEquals(firstResult.sourceLinkId(), secondResult.sourceLinkId());
+            assertEquals(1, count("profile.profiles"));
+            assertEquals(1, count("profile.profile_pdf_sources"));
+        }
+    }
+
+    private AnnotationConfigApplicationContext applicationContext() {
+        var assetService = mock(GeneratedResumeAssetService.class);
+        when(assetService.deleteProfile(any())).thenAnswer(invocation -> profiles.deleteProfile(invocation.getArgument(0)));
+        var context = new AnnotationConfigApplicationContext();
+        context.register(TransactionConfiguration.class);
+        context.registerBean(ProfileRepository.class, () -> profiles);
+        context.registerBean(ProfilePdfSourceRepository.class, () -> sources);
+        context.registerBean(GeneratedResumeAssetService.class, () -> assetService);
+        context.registerBean(PlatformTransactionManager.class, () -> new DataSourceTransactionManager(dataSource));
+        context.register(ProfileService.class, ProfileIdentityMatcher.class, ProfilePdfIngestionPersistenceService.class);
+        context.refresh();
+        return context;
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @EnableTransactionManagement
+    static class TransactionConfiguration {
     }
 }

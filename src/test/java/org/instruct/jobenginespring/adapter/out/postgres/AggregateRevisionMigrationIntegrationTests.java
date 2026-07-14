@@ -15,7 +15,7 @@ class AggregateRevisionMigrationIntegrationTests {
     void validatesBothRevisionConstraintsOnlyAfterTheFollowUpMigrationCommits() {
         try (var postgres = postgres()) {
             postgres.start();
-            migrate(postgres, "19");
+            migrate(postgres, "25");
             var jdbc = jdbc(postgres);
 
             assertFalse(isValidated(jdbc, "profile", "profiles_revision_non_negative"));

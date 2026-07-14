@@ -82,18 +82,6 @@ public class PostgresProfileResumeDocumentRepository implements ProfileResumeDoc
     }
 
     @Override
-    public Optional<ProfileResumeDocument> findByDocumentId(UUID documentId) {
-        return jdbc.sql("""
-                        SELECT id, profile_id, document_id, file_path, resume_type, created_at, updated_at
-                        FROM profile.profile_resume_documents
-                        WHERE document_id = :documentId
-                        """)
-                .param("documentId", documentId)
-                .query(RESUME_DOCUMENT_MAPPER)
-                .optional();
-    }
-
-    @Override
     public List<ProfileResumeDocument> lockAndFindAllByProfileId(UUID profileId) {
         lockProfile(profileId);
         return jdbc.sql("""

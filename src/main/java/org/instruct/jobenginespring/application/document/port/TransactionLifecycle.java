@@ -6,4 +6,6 @@ public interface TransactionLifecycle {
     void afterCommit(Runnable action);
 
     void afterRollback(Runnable action);
+
+    void afterCompletion(Runnable action);
 }

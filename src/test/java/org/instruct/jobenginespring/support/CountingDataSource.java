@@ -3,8 +3,10 @@ package org.instruct.jobenginespring.support;
 import javax.sql.DataSource;
 import java.io.PrintWriter;
 import java.lang.reflect.Proxy;
+import java.lang.reflect.InvocationTargetException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,6 +16,10 @@ public final class CountingDataSource implements DataSource {
 
     private final DataSource delegate;
     private final AtomicInteger statementExecutions = new AtomicInteger();
+    private final AtomicInteger rowsRead = new AtomicInteger();
+    private final AtomicInteger maxRowsReadPerResultSet = new AtomicInteger();
+    private final AtomicInteger maxFetchSize = new AtomicInteger();
+    private final AtomicInteger maxBatchSize = new AtomicInteger();
 
     public CountingDataSource(DataSource delegate) {
         this.delegate = delegate;
@@ -23,8 +29,28 @@ public final class CountingDataSource implements DataSource {
         return statementExecutions.get();
     }
 
+    public int rowsRead() {
+        return rowsRead.get();
+    }
+
+    public int maxRowsReadPerResultSet() {
+        return maxRowsReadPerResultSet.get();
+    }
+
+    public int maxFetchSize() {
+        return maxFetchSize.get();
+    }
+
+    public int maxBatchSize() {
+        return maxBatchSize.get();
+    }
+
     public void reset() {
         statementExecutions.set(0);
+        rowsRead.set(0);
+        maxRowsReadPerResultSet.set(0);
+        maxFetchSize.set(0);
+        maxBatchSize.set(0);
     }
 
     @Override
@@ -90,14 +116,25 @@ public final class CountingDataSource implements DataSource {
     }
 
     private PreparedStatement wrapPreparedStatement(PreparedStatement statement) {
+        var pendingBatch = new AtomicInteger();
         return (PreparedStatement) Proxy.newProxyInstance(
                 statement.getClass().getClassLoader(),
                 new Class<?>[]{PreparedStatement.class},
                 (proxy, method, args) -> {
+                    if ("setFetchSize".equals(method.getName())) {
+                        maxFetchSize.accumulateAndGet((Integer) args[0], Math::max);
+                    } else if ("addBatch".equals(method.getName())) {
+                        pendingBatch.incrementAndGet();
+                    } else if ("clearBatch".equals(method.getName())) {
+                        pendingBatch.set(0);
+                    } else if ("executeBatch".equals(method.getName()) || "executeLargeBatch".equals(method.getName())) {
+                        maxBatchSize.accumulateAndGet(pendingBatch.getAndSet(0), Math::max);
+                    }
                     if (isExecutionMethod(method.getName())) {
                         statementExecutions.incrementAndGet();
                     }
-                    return method.invoke(statement, args);
+                    Object result = method.invoke(statement, args);
+                    return result instanceof ResultSet resultSet ? wrapResultSet(resultSet) : result;
                 }
         );
     }
@@ -110,7 +147,8 @@ public final class CountingDataSource implements DataSource {
                     if (isExecutionMethod(method.getName())) {
                         statementExecutions.incrementAndGet();
                     }
-                    return method.invoke(statement, args);
+                    Object result = method.invoke(statement, args);
+                    return result instanceof ResultSet resultSet ? wrapResultSet(resultSet) : result;
                 }
         );
     }
@@ -120,5 +158,26 @@ public final class CountingDataSource implements DataSource {
             case "execute", "executeQuery", "executeUpdate", "executeLargeUpdate", "executeBatch", "executeLargeBatch" -> true;
             default -> false;
         };
+    }
+
+    private ResultSet wrapResultSet(ResultSet resultSet) {
+        var resultSetRows = new AtomicInteger();
+        return (ResultSet) Proxy.newProxyInstance(
+                resultSet.getClass().getClassLoader(),
+                new Class<?>[]{ResultSet.class},
+                (proxy, method, args) -> {
+                    Object result;
+                    try {
+                        result = method.invoke(resultSet, args);
+                    } catch (InvocationTargetException exception) {
+                        throw exception.getCause();
+                    }
+                    if ("next".equals(method.getName()) && Boolean.TRUE.equals(result)) {
+                        rowsRead.incrementAndGet();
+                        maxRowsReadPerResultSet.accumulateAndGet(resultSetRows.incrementAndGet(), Math::max);
+                    }
+                    return result;
+                }
+        );
     }
 }

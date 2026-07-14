@@ -126,7 +126,7 @@ class DocumentStorageServiceTests {
                 "sample text",
                 List.of(new PdfTextExtractionService.ExtractedPdfPage(1, "sample text"))
         );
-        when(pdfTextExtractionService.extractText(any(byte[].class), any(), any(), any())).thenReturn(extraction);
+        when(pdfTextExtractionService.extractText(any(StoredDocumentFile.class), any(), any())).thenReturn(extraction);
 
         StoredPdfTextExtractionResult result = service.extractStoredPdfText(
                 new ExtractStoredPdfTextRequest(metadata.id(), 1_000, true, true)
@@ -140,8 +140,7 @@ class DocumentStorageServiceTests {
         assertEquals(metadata.id(), savedExtraction.fileId());
         assertEquals("sample text", savedExtraction.extractedText());
         verify(pdfTextExtractionService).extractText(
-                any(byte[].class),
-                eq("stored.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         );
@@ -152,7 +151,7 @@ class DocumentStorageServiceTests {
         Path pdf = writePdfLikeFile("stored-once.pdf", "placeholder");
         StoredDocumentMetadata metadata = service.storeDocumentFile(new StoreDocumentFileRequest(pdf.toString(), null));
         PdfTextExtractionResult extraction = new PdfTextExtractionResult("stored-once.pdf", 1, 4, false, "text", List.of());
-        when(pdfTextExtractionService.extractText(any(byte[].class), any(), any(), any())).thenReturn(extraction);
+        when(pdfTextExtractionService.extractText(any(StoredDocumentFile.class), any(), any())).thenReturn(extraction);
 
         StoredPdfTextExtractionResult first = service.extractStoredPdfText(
                 new ExtractStoredPdfTextRequest(metadata.id(), 1_000, false, true)
@@ -164,7 +163,7 @@ class DocumentStorageServiceTests {
         assertEquals(first.extractionId(), second.extractionId());
         assertEquals("text", second.extraction().text());
         assertEquals(1, repository.extractionCount());
-        verify(pdfTextExtractionService).extractText(any(byte[].class), any(), any(), any());
+        verify(pdfTextExtractionService).extractText(any(StoredDocumentFile.class), any(), any());
     }
 
     @Test
@@ -180,8 +179,7 @@ class DocumentStorageServiceTests {
                 List.of()
         );
         when(pdfTextExtractionService.extractText(
-                any(byte[].class),
-                eq("canonical.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         )).thenReturn(canonical);
@@ -199,7 +197,7 @@ class DocumentStorageServiceTests {
         assertTrue(second.extraction().truncated());
         assertEquals(20, repository.lastExtraction().characterCount());
         assertEquals("0123456789abcdefghij", repository.lastExtraction().extractedText());
-        verify(pdfTextExtractionService, times(1)).extractText(any(byte[].class), any(), any(), any());
+        verify(pdfTextExtractionService, times(1)).extractText(any(StoredDocumentFile.class), any(), any());
     }
 
     @Test
@@ -218,37 +216,58 @@ class DocumentStorageServiceTests {
                 )
         );
         when(pdfTextExtractionService.extractText(
-                any(byte[].class),
-                eq("pages.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         )).thenReturn(pageProjection);
-        when(pdfTextExtractionService.extractText(any(byte[].class), eq("pages.pdf"), eq(13), eq(true)))
-                .thenReturn(pageProjection);
-
         StoredPdfTextExtractionResult first = service.extractStoredPdfText(
                 new ExtractStoredPdfTextRequest(metadata.id(), 13, true, true)
         );
-        StoredPdfTextExtractionResult cached = service.extractStoredPdfText(
+        StoredPdfTextExtractionResult cachedDefault = service.extractStoredPdfText(
                 new ExtractStoredPdfTextRequest(metadata.id(), 13, null, true)
         );
         StoredPdfTextExtractionResult explicitCached = service.extractStoredPdfText(
                 new ExtractStoredPdfTextRequest(metadata.id(), 13, true, true)
         );
+        StoredPdfTextExtractionResult explicitOmission = service.extractStoredPdfText(
+                new ExtractStoredPdfTextRequest(metadata.id(), 13, false, true)
+        );
 
         assertEquals(pageProjection, first.extraction());
-        assertEquals(first.extraction(), cached.extraction());
-        assertEquals(cached.extraction(), explicitCached.extraction());
-        assertEquals(first.extractionId(), cached.extractionId());
-        assertEquals(cached.extractionId(), explicitCached.extractionId());
+        assertEquals(pageProjection, cachedDefault.extraction());
+        assertEquals(pageProjection, explicitCached.extraction());
+        assertEquals(List.of(), explicitOmission.extraction().pages());
+        assertEquals(first.extractionId(), cachedDefault.extractionId());
+        assertEquals(cachedDefault.extractionId(), explicitCached.extractionId());
         verify(pdfTextExtractionService).extractText(
-                any(byte[].class),
-                eq("pages.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         );
-        verify(pdfTextExtractionService, times(2))
-                .extractText(any(byte[].class), eq("pages.pdf"), eq(13), eq(true));
+        verify(pdfTextExtractionService, times(1)).extractText(any(StoredDocumentFile.class), any(), any());
+    }
+
+    @Test
+    void nonPersistedExtractionPreservesOmittedIncludePages() throws IOException {
+        Path pdf = writePdfLikeFile("non-persisted-pages.pdf", "placeholder");
+        StoredDocumentMetadata metadata = service.storeDocumentFile(new StoreDocumentFileRequest(pdf.toString(), null));
+        PdfTextExtractionResult extraction = new PdfTextExtractionResult(
+                "non-persisted-pages.pdf",
+                1,
+                4,
+                false,
+                "text",
+                List.of(new PdfTextExtractionService.ExtractedPdfPage(1, "text"))
+        );
+        when(pdfTextExtractionService.extractText(any(StoredDocumentFile.class), eq(1_000), eq(null)))
+                .thenReturn(extraction);
+
+        StoredPdfTextExtractionResult result = service.extractStoredPdfText(
+                new ExtractStoredPdfTextRequest(metadata.id(), 1_000, null, false)
+        );
+
+        assertEquals(extraction, result.extraction());
+        verify(pdfTextExtractionService).extractText(any(StoredDocumentFile.class), eq(1_000), eq(null));
     }
 
     @Test
@@ -270,8 +289,7 @@ class DocumentStorageServiceTests {
                 "legacy.pdf", 1, 11, false, "longer text", List.of()
         );
         when(pdfTextExtractionService.extractText(
-                any(byte[].class),
-                eq("legacy.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         )).thenReturn(canonical);
@@ -282,7 +300,7 @@ class DocumentStorageServiceTests {
 
         assertEquals(extractionId, result.extractionId());
         assertEquals("longer text", result.extraction().text());
-        assertEquals("spring-ai-page-pdf-document-reader:canonical-250000-v1", repository.lastExtraction().extractor());
+        assertEquals("spring-ai-page-pdf-document-reader:canonical-250000-pages-v2", repository.lastExtraction().extractor());
         assertEquals(1, repository.extractionCount());
     }
 
@@ -353,7 +371,7 @@ class DocumentStorageServiceTests {
         Path pdf = writePdfLikeFile("stored-no-persist.pdf", "placeholder");
         StoredDocumentMetadata metadata = service.storeDocumentFile(new StoreDocumentFileRequest(pdf.toString(), null));
         PdfTextExtractionResult extraction = new PdfTextExtractionResult("stored-no-persist.pdf", 1, 4, false, "text", List.of());
-        when(pdfTextExtractionService.extractText(any(byte[].class), any(), any(), any())).thenReturn(extraction);
+        when(pdfTextExtractionService.extractText(any(StoredDocumentFile.class), any(), any())).thenReturn(extraction);
 
         StoredPdfTextExtractionResult resultWithNullFlag = service.extractStoredPdfText(
                 new ExtractStoredPdfTextRequest(metadata.id(), 1_000, false, null)
@@ -429,14 +447,6 @@ class DocumentStorageServiceTests {
         }
 
         @Override
-        public Optional<StoredDocumentMetadata> findFileMetadataBySha256(String sha256) {
-            return files.values().stream()
-                    .filter(file -> file.sha256().equals(sha256))
-                    .findFirst()
-                    .map(StoredDocumentFile::metadata);
-        }
-
-        @Override
         public Optional<StoredDocumentFile> findFileContentById(UUID fileId) {
             return Optional.ofNullable(files.get(fileId));
         }
@@ -463,6 +473,11 @@ class DocumentStorageServiceTests {
         @Override
         public boolean deleteFileIfUnreferenced(UUID fileId) {
             return files.remove(fileId) != null;
+        }
+
+        @Override
+        public boolean prepareGeneratedFileCleanup(String filePath) {
+            return false;
         }
 
         private int fileCount() {

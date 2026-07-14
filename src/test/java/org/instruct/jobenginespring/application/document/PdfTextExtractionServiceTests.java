@@ -11,15 +11,21 @@ import org.instruct.jobenginespring.application.document.PdfTextExtractionServic
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionRequest;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.application.error.ApplicationException;
+import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -102,6 +108,96 @@ class PdfTextExtractionServiceTests {
 
         assertEquals("validation_error", exception.errorCode().code());
         assertEquals("file must be a PDF document", exception.details().get("reason"));
+    }
+
+    @Test
+    void pdfHeaderValidationReadsOnlyTheMagicBytes() {
+        byte[] headerAndPrivateContent = "%PDF-private-content".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        InputStream bounded = new InputStream() {
+            private int index;
+
+            @Override
+            public int read() throws IOException {
+                if (index >= 5) {
+                    throw new IOException("read beyond PDF magic header");
+                }
+                return headerAndPrivateContent[index++];
+            }
+        };
+
+        assertTrue(PdfTextExtractionService.hasPdfHeader(bounded));
+    }
+
+    @Test
+    void storedPdfExtractionUsesImmutableStreamAndValidatesActualContentSize() throws IOException {
+        Path pdf = createPdf("stored-stream.pdf", List.of("streamed text"));
+        byte[] content = Files.readAllBytes(pdf);
+        StoredDocumentFile stored = storedFile(content, content.length);
+
+        PdfTextExtractionResult result = service.extractText(stored, null, false);
+
+        assertEquals("stored.pdf", result.fileName());
+        assertTrue(result.text().contains("streamed text"));
+        assertEquals(List.of(), result.pages());
+        assertThrows(NullPointerException.class, () -> service.extractText((StoredDocumentFile) null, null, false));
+        assertEquals("file must be a PDF document", assertThrows(
+                ApplicationException.class,
+                () -> service.extractText(storedFile("not pdf".getBytes(), 7), null, false)
+        ).details().get("reason"));
+        byte[] oversizedContent = new byte[Math.toIntExact(PdfTextExtractionService.MAX_FILE_BYTES + 1)];
+        System.arraycopy("%PDF-".getBytes(), 0, oversizedContent, 0, 5);
+        assertEquals(
+                "PDF file size exceeds limit of " + PdfTextExtractionService.MAX_FILE_BYTES + " bytes",
+                assertThrows(ApplicationException.class, () -> service.extractText(
+                        storedFile(oversizedContent, oversizedContent.length), null, false
+                )).details().get("reason")
+        );
+    }
+
+    @Test
+    void localPathSnapshotRemainsStableWhenFileIsReplacedBeforeParsing() throws IOException {
+        Path original = createPdf("replaceable.pdf", List.of("original snapshot text"));
+        Path replacement = createPdf("replacement.pdf", List.of("replacement text"));
+        PdfTextExtractionService.PdfContentSnapshot snapshot =
+                PdfTextExtractionService.readLocalPdfSnapshot(original);
+
+        Files.move(replacement, original, StandardCopyOption.REPLACE_EXISTING);
+        assertEquals("replaceable.pdf", snapshot.getDescription());
+        assertTrue(snapshot.contentLength() > 0);
+        PdfTextExtractionResult result = service.extractText(snapshot, null, null);
+
+        assertTrue(result.text().contains("original snapshot text"));
+        assertFalse(result.text().contains("replacement text"));
+        assertEquals(1, result.pages().size());
+    }
+
+    @Test
+    void storedDocumentResourceReportsImmutableMetadata() throws IOException {
+        StoredDocumentFile stored = storedFile("%PDF-private".getBytes(), 12);
+        PdfTextExtractionService.StoredDocumentResource resource =
+                new PdfTextExtractionService.StoredDocumentResource(stored);
+
+        assertEquals("stored.pdf", resource.getDescription());
+        assertEquals("stored.pdf", resource.getFilename());
+        assertEquals(12, resource.contentLength());
+        assertArrayEquals(stored.content(), resource.getInputStream().readAllBytes());
+    }
+
+    @Test
+    void reportsUnreadableHeaderStream() {
+        InputStream unreadable = new InputStream() {
+            @Override
+            public int read() throws IOException {
+                throw new IOException("private detail");
+            }
+        };
+
+        ApplicationException exception = assertThrows(
+                ApplicationException.class,
+                () -> PdfTextExtractionService.hasPdfHeader(unreadable)
+        );
+
+        assertEquals("file is not readable", exception.details().get("reason"));
     }
 
     @Test
@@ -296,7 +392,7 @@ class PdfTextExtractionServiceTests {
     }
 
     @Test
-    void requestViewIncludesPagesByDefault() {
+    void persistedRequestViewIncludesPagesByDefaultAndHonorsExplicitFalse() {
         PdfTextExtractionResult canonical = new PdfTextExtractionResult(
                 "stored.pdf",
                 2,
@@ -308,11 +404,13 @@ class PdfTextExtractionServiceTests {
 
         PdfTextExtractionResult defaultView = PdfTextExtractionService.applyRequestView(canonical, 5, null);
         PdfTextExtractionResult explicitView = PdfTextExtractionService.applyRequestView(canonical, 5, true);
+        PdfTextExtractionResult omittedView = PdfTextExtractionService.applyRequestView(canonical, 5, false);
 
         assertEquals("abcde", defaultView.text());
         assertEquals(List.of(new ExtractedPdfPage(1, "abcde")), defaultView.pages());
         assertTrue(defaultView.truncated());
-        assertEquals(defaultView, explicitView);
+        assertEquals(List.of(new ExtractedPdfPage(1, "abcde")), explicitView.pages());
+        assertEquals(List.of(), omittedView.pages());
     }
 
     @Test
@@ -347,6 +445,13 @@ class PdfTextExtractionServiceTests {
             document.save(pdf.toFile());
         }
         return pdf;
+    }
+
+    private static StoredDocumentFile storedFile(byte[] content, long byteSize) {
+        return new StoredDocumentFile(
+                UUID.randomUUID(), "stored.pdf", "application/pdf", byteSize, "sha", content,
+                Instant.EPOCH, Instant.EPOCH
+        );
     }
 
     private Path createBlankPdf(String fileName, int pageCount) throws IOException {

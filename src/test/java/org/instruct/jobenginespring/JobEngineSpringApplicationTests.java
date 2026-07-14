@@ -91,8 +91,9 @@ class JobEngineSpringApplicationTests {
         ProfileRepository profileRepository() {
             return new ProfileRepository() {
                 @Override
-                public List<UserProfile> listProfiles() {
-                    return List.of();
+                public org.instruct.jobenginespring.application.pagination.Page<UserProfile> listProfiles(
+                        org.instruct.jobenginespring.application.pagination.PageRequest request) {
+                    return new org.instruct.jobenginespring.application.pagination.Page<>(List.of(), null);
                 }
 
                 @Override
@@ -101,8 +102,9 @@ class JobEngineSpringApplicationTests {
                 }
 
                 @Override
-                public List<ProfileAggregate> listProfileAggregates() {
-                    return List.of();
+                public org.instruct.jobenginespring.application.pagination.Page<ProfileAggregate> listProfileAggregates(
+                        org.instruct.jobenginespring.application.pagination.PageRequest request) {
+                    return new org.instruct.jobenginespring.application.pagination.Page<>(List.of(), null);
                 }
 
                 @Override
@@ -171,11 +173,6 @@ class JobEngineSpringApplicationTests {
                 }
 
                 @Override
-                public Optional<StoredDocumentMetadata> findFileMetadataBySha256(String sha256) {
-                    return Optional.empty();
-                }
-
-                @Override
                 public Optional<StoredDocumentFile> findFileContentById(UUID fileId) {
                     return Optional.empty();
                 }
@@ -197,6 +194,11 @@ class JobEngineSpringApplicationTests {
 
                 @Override
                 public boolean deleteFileIfUnreferenced(UUID fileId) {
+                    return false;
+                }
+
+                @Override
+                public boolean prepareGeneratedFileCleanup(String filePath) {
                     return false;
                 }
             };
@@ -252,11 +254,6 @@ class JobEngineSpringApplicationTests {
 
                 @Override
                 public Optional<ProfileResumeDocument> findByProfileIdAndResumeType(UUID profileId, String resumeType) {
-                    return Optional.empty();
-                }
-
-                @Override
-                public Optional<ProfileResumeDocument> findByDocumentId(UUID documentId) {
                     return Optional.empty();
                 }
 

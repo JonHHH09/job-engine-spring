@@ -156,6 +156,11 @@ class ProfileSearchServiceTests {
         assertInvalid(new ProfileSearchRequest(null, 10), "query", "must not be blank");
         assertInvalid(new ProfileSearchRequest(" ", 10), "query", "must not be blank");
         assertInvalid(new ProfileSearchRequest("---", 10), "query", "must contain searchable text");
+        assertInvalid(new ProfileSearchRequest("a".repeat(257), 10), "query", "must not exceed 256 characters");
+        assertInvalid(new ProfileSearchRequest(
+                        java.util.stream.IntStream.range(0, 17).mapToObj(index -> "term" + index)
+                                .collect(java.util.stream.Collectors.joining(" ")), 10),
+                "query", "must contain at most 16 searchable terms");
         assertInvalid(new ProfileSearchRequest("java", 0), "limit", "must be between 1 and 100");
         assertInvalid(new ProfileSearchRequest("java", 101), "limit", "must be between 1 and 100");
     }
@@ -170,7 +175,8 @@ class ProfileSearchServiceTests {
         assertTrue((Boolean) invoke("containsTokenPrefix", new Class<?>[]{java.util.Set.class, String.class}, java.util.Set.of("postgresql"), "post"));
         assertTrue((Boolean) invoke("containsTokenPrefix", new Class<?>[]{java.util.Set.class, String.class}, java.util.Set.of("post"), "postgresql"));
 
-        ProfileSearchService.ProfileSearchResult nullCollectionsResult = new ProfileSearchService.ProfileSearchResult("q", null, 0, 0, null);
+        ProfileSearchService.ProfileSearchResult nullCollectionsResult =
+                new ProfileSearchService.ProfileSearchResult("q", null, 0, 0, false, 0, null);
         assertEquals(List.of(), nullCollectionsResult.queryTokens());
         assertEquals(List.of(), nullCollectionsResult.profiles());
         ProfileSearchService.ProfileSearchMatch nullFieldsMatch = new ProfileSearchService.ProfileSearchMatch(
@@ -244,8 +250,10 @@ class ProfileSearchServiceTests {
         private int findProfileAggregateCalls;
 
         @Override
-        public List<UserProfile> listProfiles() {
-            return aggregates.values().stream().map(ProfileAggregate::profile).toList();
+        public org.instruct.jobenginespring.application.pagination.Page<UserProfile> listProfiles(
+                org.instruct.jobenginespring.application.pagination.PageRequest request) {
+            return new org.instruct.jobenginespring.application.pagination.Page<>(aggregates.values().stream()
+                    .limit(request.limit()).map(ProfileAggregate::profile).toList(), null);
         }
 
         @Override
@@ -260,9 +268,11 @@ class ProfileSearchServiceTests {
         }
 
         @Override
-        public List<ProfileAggregate> listProfileAggregates() {
+        public org.instruct.jobenginespring.application.pagination.Page<ProfileAggregate> listProfileAggregates(
+                org.instruct.jobenginespring.application.pagination.PageRequest request) {
             listProfileAggregatesCalls++;
-            return List.copyOf(aggregates.values());
+            return new org.instruct.jobenginespring.application.pagination.Page<>(aggregates.values().stream()
+                    .limit(request.limit()).toList(), null);
         }
 
         @Override

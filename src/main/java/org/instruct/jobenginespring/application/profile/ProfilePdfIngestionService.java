@@ -1,7 +1,6 @@
 package org.instruct.jobenginespring.application.profile;
 
 import lombok.NonNull;
-import org.apache.commons.codec.digest.DigestUtils;
 import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.ExtractStoredPdfTextRequest;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.StoredPdfTextExtractionResult;
@@ -12,14 +11,12 @@ import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRep
 import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository.LinkedPdfSource;
 import org.instruct.jobenginespring.application.profile.port.ProfileTextExtractor;
 import org.instruct.jobenginespring.application.profile.port.ProfileTextExtractor.ProfileTextExtractionInput;
-import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
 import org.instruct.jobenginespring.domain.profile.ProfilePdfSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -28,33 +25,37 @@ import java.util.UUID;
 @Service
 public class ProfilePdfIngestionService {
 
-    private static final String SOURCE_TYPE = "resume_pdf";
-
     @NonNull
     private final DocumentStorageService documentStorageService;
     @NonNull
     private final ProfileTextExtractor profileTextExtractor;
     @NonNull
-    private final ProfileService profileService;
-    @NonNull
-    private final ProfileIdentityMatcher profileIdentityMatcher;
-    @NonNull
     private final ProfilePdfSourceRepository profilePdfSourceRepository;
-    private Clock clock = Clock.systemUTC();
+    @NonNull
+    private final ProfilePdfIngestionPersistenceService persistenceService;
 
     @Autowired
     public ProfilePdfIngestionService(
+            DocumentStorageService documentStorageService,
+            ProfileTextExtractor profileTextExtractor,
+            ProfilePdfSourceRepository profilePdfSourceRepository,
+            ProfilePdfIngestionPersistenceService persistenceService
+    ) {
+        this.documentStorageService = Objects.requireNonNull(documentStorageService, "documentStorageService must not be null");
+        this.profileTextExtractor = Objects.requireNonNull(profileTextExtractor, "profileTextExtractor must not be null");
+        this.profilePdfSourceRepository = Objects.requireNonNull(profilePdfSourceRepository, "profilePdfSourceRepository must not be null");
+        this.persistenceService = Objects.requireNonNull(persistenceService, "persistenceService must not be null");
+    }
+
+    ProfilePdfIngestionService(
             DocumentStorageService documentStorageService,
             ProfileTextExtractor profileTextExtractor,
             ProfileService profileService,
             ProfileIdentityMatcher profileIdentityMatcher,
             ProfilePdfSourceRepository profilePdfSourceRepository
     ) {
-        this.documentStorageService = Objects.requireNonNull(documentStorageService, "documentStorageService must not be null");
-        this.profileTextExtractor = Objects.requireNonNull(profileTextExtractor, "profileTextExtractor must not be null");
-        this.profileService = Objects.requireNonNull(profileService, "profileService must not be null");
-        this.profileIdentityMatcher = Objects.requireNonNull(profileIdentityMatcher, "profileIdentityMatcher must not be null");
-        this.profilePdfSourceRepository = Objects.requireNonNull(profilePdfSourceRepository, "profilePdfSourceRepository must not be null");
+        this(documentStorageService, profileTextExtractor, profileService, profileIdentityMatcher,
+                profilePdfSourceRepository, Clock.systemUTC());
     }
 
     ProfilePdfIngestionService(
@@ -65,11 +66,19 @@ public class ProfilePdfIngestionService {
             ProfilePdfSourceRepository profilePdfSourceRepository,
             Clock clock
     ) {
-        this(documentStorageService, profileTextExtractor, profileService, profileIdentityMatcher, profilePdfSourceRepository);
-        this.clock = Objects.requireNonNull(clock, "clock must not be null");
+        this(
+                documentStorageService,
+                profileTextExtractor,
+                profilePdfSourceRepository,
+                new ProfilePdfIngestionPersistenceService(
+                        profileService,
+                        profileIdentityMatcher,
+                        profilePdfSourceRepository,
+                        Objects.requireNonNull(clock, "clock must not be null")
+                )
+        );
     }
 
-    @Transactional
     public ProfilePdfIngestionResult ingestProfileFromStoredPdf(IngestProfileFromStoredPdfRequest request) {
         IngestProfileFromStoredPdfRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
         UUID documentId = Objects.requireNonNull(safeRequest.documentId(), "documentId must not be null");
@@ -78,13 +87,24 @@ public class ProfilePdfIngestionService {
         );
         UUID extractionId = Objects.requireNonNull(storedExtraction.extractionId(), "extractionId must not be null");
         String documentSha256 = storedExtraction.document().sha256();
-        acquireLock("document:" + documentSha256);
 
-        return profilePdfSourceRepository.findLinkedByPdfExtractionId(extractionId)
+        var existingResult = profilePdfSourceRepository.findLinkedByPdfExtractionId(extractionId)
                 .map(ProfilePdfIngestionService::reusedResult)
                 .or(() -> profilePdfSourceRepository.findLinkedByDocumentSha256(documentSha256)
-                        .map(ProfilePdfIngestionService::reusedResult))
-                .orElseGet(() -> createOrUpdateLinkedProfile(safeRequest, storedExtraction, extractionId));
+                        .map(ProfilePdfIngestionService::reusedResult));
+        if (existingResult.isPresent()) {
+            return existingResult.orElseThrow();
+        }
+        if (safeRequest.existingProfileId() != null
+                && profilePdfSourceRepository.findLinkedByProfileId(safeRequest.existingProfileId()).isPresent()) {
+            return alreadyLinkedResult(safeRequest.existingProfileId(), storedExtraction);
+        }
+
+        ProfileWriteRequest profileWriteRequest = profileTextExtractor.extractProfile(new ProfileTextExtractionInput(
+                storedExtraction.extraction().text(),
+                storedExtraction.document().originalFileName()
+        ));
+        return persistenceService.persist(safeRequest, storedExtraction, profileWriteRequest);
     }
 
     @Transactional(readOnly = true)
@@ -99,63 +119,7 @@ public class ProfilePdfIngestionService {
                 ));
     }
 
-    private ProfilePdfIngestionResult createOrUpdateLinkedProfile(
-            IngestProfileFromStoredPdfRequest request,
-            StoredPdfTextExtractionResult storedExtraction,
-            UUID extractionId
-    ) {
-        UUID existingProfileId = request.existingProfileId();
-        ProfileWriteRequest profileWriteRequest = profileTextExtractor.extractProfile(new ProfileTextExtractionInput(
-                storedExtraction.extraction().text(),
-                storedExtraction.document().originalFileName()
-        ));
-        profileIdentityMatcher.concurrencyKeys(profileWriteRequest)
-                .forEach(profilePdfSourceRepository::acquireIngestionLock);
-        if (existingProfileId != null) {
-            acquireLock("profile:" + existingProfileId);
-            LinkedPdfSource existingSource = profilePdfSourceRepository.findLinkedByProfileId(existingProfileId).orElse(null);
-            if (existingSource != null) {
-                return alreadyLinkedResult(existingProfileId, storedExtraction);
-            }
-        }
-
-        boolean overwriteExisting = request.overwriteExistingProfile() != null && request.overwriteExistingProfile();
-        ProfileAggregate profileAggregate;
-        boolean createdProfile;
-        IngestionStatus status;
-        if (existingProfileId == null) {
-            ProfileIdentityMatcher.ProfileIdentityMatch identityMatch = profileIdentityMatcher.findStrongMatch(profileWriteRequest)
-                    .orElse(null);
-            if (identityMatch != null) {
-                return duplicateCandidateResult(identityMatch, storedExtraction);
-            }
-            profileAggregate = profileService.createProfile(profileWriteRequest);
-            createdProfile = true;
-            status = IngestionStatus.CREATED_PROFILE;
-        } else if (overwriteExisting) {
-            profileAggregate = profileService.updateProfile(existingProfileId, request.expectedRevision(), profileWriteRequest);
-            createdProfile = false;
-            status = IngestionStatus.UPDATED_PROFILE;
-        } else {
-            throw new ApplicationException(
-                    ApplicationErrorCode.VALIDATION_ERROR,
-                    "Existing profile ingestion requires overwriteExistingProfile=true",
-                    Map.of("profileId", String.valueOf(existingProfileId)),
-                    null
-            );
-        }
-
-        ProfilePdfSource source = profilePdfSourceRepository.save(new ProfilePdfSource(
-                UUID.randomUUID(),
-                profileAggregate.profile().id(),
-                extractionId,
-                SOURCE_TYPE,
-                clock.instant()
-        ));
-        return toResult(source, storedExtraction, status, createdProfile, false);
-    }
-
-    private static ProfilePdfIngestionResult duplicateCandidateResult(
+    static ProfilePdfIngestionResult duplicateCandidateResult(
             ProfileIdentityMatcher.ProfileIdentityMatch match,
             StoredPdfTextExtractionResult storedExtraction
     ) {
@@ -177,7 +141,7 @@ public class ProfilePdfIngestionService {
         );
     }
 
-    private static ProfilePdfIngestionResult alreadyLinkedResult(
+    static ProfilePdfIngestionResult alreadyLinkedResult(
             UUID existingProfileId,
             StoredPdfTextExtractionResult storedExtraction
     ) {
@@ -199,7 +163,7 @@ public class ProfilePdfIngestionService {
         );
     }
 
-    private static ProfilePdfIngestionResult reusedResult(LinkedPdfSource linked) {
+    static ProfilePdfIngestionResult reusedResult(LinkedPdfSource linked) {
         ProfilePdfSource source = linked.source();
         return new ProfilePdfIngestionResult(
                 IngestionStatus.REUSED_EXISTING_SOURCE,
@@ -219,7 +183,7 @@ public class ProfilePdfIngestionService {
         );
     }
 
-    private static ProfilePdfIngestionResult toResult(
+    static ProfilePdfIngestionResult toResult(
             ProfilePdfSource source,
             StoredPdfTextExtractionResult storedExtraction,
             IngestionStatus status,
@@ -288,11 +252,6 @@ public class ProfilePdfIngestionService {
         UPDATED_PROFILE,
         REUSED_EXISTING_SOURCE,
         DUPLICATE_PROFILE_CANDIDATE,
-        AMBIGUOUS_PROFILE_CANDIDATES,
-        VALIDATION_FAILED
-    }
-
-    private void acquireLock(String rawLockKey) {
-        profilePdfSourceRepository.acquireIngestionLock(DigestUtils.sha256Hex(rawLockKey));
+        AMBIGUOUS_PROFILE_CANDIDATES
     }
 }

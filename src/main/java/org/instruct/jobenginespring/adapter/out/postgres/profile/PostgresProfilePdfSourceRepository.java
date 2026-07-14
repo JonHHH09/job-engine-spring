@@ -56,6 +56,36 @@ public class PostgresProfilePdfSourceRepository implements ProfilePdfSourceRepos
     }
 
     @Override
+    public InsertResult insertOrFind(ProfilePdfSource source) {
+        Objects.requireNonNull(source, "source must not be null");
+        var inserted = jdbc.sql("""
+                        INSERT INTO profile.profile_pdf_sources (id, profile_id, pdf_extraction_id, source_type, created_at)
+                        VALUES (:id, :profileId, :pdfExtractionId, :sourceType, :createdAt)
+                        ON CONFLICT DO NOTHING
+                        RETURNING id, profile_id, pdf_extraction_id, source_type, created_at
+                        """)
+                .param("id", source.id())
+                .param("profileId", source.profileId())
+                .param("pdfExtractionId", source.pdfExtractionId())
+                .param("sourceType", source.sourceType())
+                .param("createdAt", Timestamp.from(source.createdAt()))
+                .query(SOURCE_MAPPER)
+                .optional();
+        if (inserted.isPresent()) {
+            return new InsertResult(inserted.orElseThrow(), true);
+        }
+
+        // A separate statement gets a fresh READ COMMITTED snapshot after a concurrent
+        // winner has committed and ON CONFLICT has stopped waiting for it.
+        return findByPdfExtractionId(source.pdfExtractionId())
+                .or(() -> findByProfileId(source.profileId()))
+                .map(winner -> new InsertResult(winner, false))
+                .orElseThrow(() -> new IllegalStateException(
+                        "Profile PDF source insert conflicted without a profile or extraction winner"
+                ));
+    }
+
+    @Override
     public Optional<ProfilePdfSource> findByProfileId(UUID profileId) {
         return jdbc.sql("""
                         SELECT id, profile_id, pdf_extraction_id, source_type, created_at

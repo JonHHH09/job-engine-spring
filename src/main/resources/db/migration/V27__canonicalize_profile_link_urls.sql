@@ -39,7 +39,7 @@ BEGIN
 
     IF duplicate_groups > 0 THEN
         RAISE EXCEPTION
-            'V21 blocked: % canonical profile link conflict group(s). Clean/merge rows before applying migration.',
+            'V27 blocked: % canonical profile link conflict group(s). Clean/merge rows before applying migration.',
             duplicate_groups;
     END IF;
 END $$;
