@@ -17,6 +17,7 @@ public class GeneratedResumeCleanupExecutor {
     static final Duration CLAIM_LEASE = Duration.ofMinutes(5);
     static final Duration RETRY_DELAY = Duration.ofMinutes(1);
     static final int RETRY_BATCH_SIZE = 25;
+    static final String FILE_DELETE_FAILED = "FILE_DELETE_FAILED";
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeneratedResumeCleanupExecutor.class);
 
@@ -50,7 +51,10 @@ public class GeneratedResumeCleanupExecutor {
         try {
             attempt(taskId);
         } catch (RuntimeException exception) {
-            LOGGER.error("Generated resume cleanup task {} could not update its durable state; it will be reclaimed after its lease", taskId, exception);
+            LOGGER.error(
+                    "event=generated_resume_cleanup_durable_state_failure taskId={} action=reclaim_after_lease",
+                    taskId
+            );
         }
     }
 
@@ -63,9 +67,12 @@ public class GeneratedResumeCleanupExecutor {
                 finalizer.markPending(
                         taskId,
                         clock.instant().plus(RETRY_DELAY),
-                        exception.getClass().getSimpleName()
+                        FILE_DELETE_FAILED
                 );
-                LOGGER.warn("Generated resume cleanup task {} failed and remains pending for retry", taskId);
+                LOGGER.warn(
+                        "event=generated_resume_cleanup_file_delete_failure taskId={} action=retry_pending",
+                        taskId
+                );
             }
         });
     }
