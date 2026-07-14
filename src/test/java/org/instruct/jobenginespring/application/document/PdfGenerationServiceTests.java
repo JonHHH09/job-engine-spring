@@ -216,6 +216,84 @@ class PdfGenerationServiceTests {
     }
 
     @Test
+    void paginationKeepsResumeEntryHeadingDateAndPlainFirstDetailTogether() throws Exception {
+        int linesPerPage = firstPageLineCountForGeneratedFiller();
+        List<String> lines = new java.util.ArrayList<>();
+        for (int index = 0; index < linesPerPage - 2; index++) {
+            lines.add("Filler " + index);
+        }
+        lines.add("Developer | Example Co");
+        lines.add("2024-01 - Present | Remote");
+        lines.add("Built deterministic resume layout checks.");
+
+        @SuppressWarnings("unchecked")
+        List<Object> pages = (List<Object>) invoke("paginate", new Class<?>[]{List.class}, lines);
+
+        assertEquals(linesPerPage - 2, pageLines(pages.getFirst()).size());
+        assertEquals("Developer | Example Co", pageLines(pages.get(1)).getFirst());
+        assertEquals("2024-01 - Present | Remote", pageLines(pages.get(1)).get(1));
+        assertEquals("Built deterministic resume layout checks.", pageLines(pages.get(1)).get(2));
+    }
+
+    @Test
+    void paginationKeepsTrailingResumeEntryHeadingAndDateTogether() throws Exception {
+        int linesPerPage = firstPageLineCountForGeneratedFiller();
+        List<String> lines = new java.util.ArrayList<>();
+        for (int index = 0; index < linesPerPage - 1; index++) {
+            lines.add("Filler " + index);
+        }
+        lines.add("Developer | Example Co");
+        lines.add("2024-01 - Present | Remote");
+
+        @SuppressWarnings("unchecked")
+        List<Object> pages = (List<Object>) invoke("paginate", new Class<?>[]{List.class}, lines);
+
+        assertEquals(linesPerPage - 1, pageLines(pages.getFirst()).size());
+        assertEquals("Developer | Example Co", pageLines(pages.get(1)).getFirst());
+        assertEquals("2024-01 - Present | Remote", pageLines(pages.get(1)).get(1));
+    }
+
+    @Test
+    void paginationKeepsWrappedBulletLinesTogether() throws Exception {
+        int linesPerPage = firstPageLineCountForGeneratedFiller();
+        List<String> lines = new java.util.ArrayList<>();
+        for (int index = 0; index < linesPerPage - 1; index++) {
+            lines.add("Filler " + index);
+        }
+        lines.add("- Provided support for mapping software used in");
+        lines.add("  field operations and remote collaboration.");
+
+        @SuppressWarnings("unchecked")
+        List<Object> pages = (List<Object>) invoke("paginate", new Class<?>[]{List.class}, lines);
+
+        assertEquals(linesPerPage - 1, pageLines(pages.getFirst()).size());
+        assertEquals("- Provided support for mapping software used in", pageLines(pages.get(1)).getFirst());
+        assertEquals("  field operations and remote collaboration.", pageLines(pages.get(1)).get(1));
+    }
+
+    @Test
+    void paginationKeepsEntryHeadingAndDateWithWrappedFirstBullet() throws Exception {
+        int linesPerPage = firstPageLineCountForGeneratedFiller();
+        List<String> lines = new java.util.ArrayList<>();
+        for (int index = 0; index < linesPerPage - 3; index++) {
+            lines.add("Filler " + index);
+        }
+        lines.add("Technician | Example Co");
+        lines.add("2020-03 - 2020-05 | Remote");
+        lines.add("- Provided support for mapping software used in");
+        lines.add("  field operations and remote collaboration.");
+
+        @SuppressWarnings("unchecked")
+        List<Object> pages = (List<Object>) invoke("paginate", new Class<?>[]{List.class}, lines);
+
+        assertEquals(linesPerPage - 3, pageLines(pages.getFirst()).size());
+        assertEquals("Technician | Example Co", pageLines(pages.get(1)).getFirst());
+        assertEquals("2020-03 - 2020-05 | Remote", pageLines(pages.get(1)).get(1));
+        assertEquals("- Provided support for mapping software used in", pageLines(pages.get(1)).get(2));
+        assertEquals("  field operations and remote collaboration.", pageLines(pages.get(1)).get(3));
+    }
+
+    @Test
     void rejectsBlankBody() {
         PdfGenerationService service = new PdfGenerationService(tempDir);
 
@@ -333,7 +411,9 @@ class PdfGenerationServiceTests {
         assertFalse((Boolean) invoke("isResumeEntryHeading", new Class<?>[]{List.class, int.class}, List.of("Developer | Example Co", "plain detail"), 0));
         assertFalse((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, new Object[]{null}));
         assertTrue((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "Dates not provided"));
+        assertTrue((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "Dates non précisées"));
         assertTrue((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "Unknown - 2024-01"));
+        assertTrue((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "Inconnu - 2024-01"));
         assertTrue((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "2024-01 - Present | Remote"));
         assertFalse((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "Spring Boot - Java"));
 

@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
+import org.instruct.jobenginespring.application.resume.OfflineFrenchResumeTranslator;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -72,6 +73,28 @@ final class ResumeBodyRenderer {
         return body.toString().strip();
     }
 
+    static String renderCanadianFrenchResume(
+            ProfileAggregate aggregate,
+            OfflineFrenchResumeTranslator translator
+    ) {
+        StringBuilder body = new StringBuilder();
+        UserProfile profile = aggregate.profile();
+        List<String> protectedTerms = canadianFrenchProtectedTerms(aggregate);
+
+        appendCanadianFrenchContactBlock(body, profile, aggregate.contacts(), aggregate.links(), translator, protectedTerms);
+        appendBlank(body);
+        appendSection(body, "PROFIL PROFESSIONNEL");
+        appendLine(body, hasText(profile.summary())
+                ? translator.translateText(profile.summary(), protectedTerms)
+                : "Résumé du profil non fourni.");
+        appendBlank(body);
+        appendCanadianFrenchSkills(body, aggregate.skills(), translator);
+        appendCanadianFrenchExperiences(body, aggregate.experiences(), translator, protectedTerms);
+        appendCanadianFrenchEducation(body, aggregate.education(), translator, protectedTerms);
+        appendCanadianFrenchLanguages(body, aggregate.languages(), translator);
+        return body.toString().strip();
+    }
+
     private static void appendCanadianContactBlock(
             StringBuilder body,
             UserProfile profile,
@@ -92,6 +115,206 @@ final class ResumeBodyRenderer {
         if (hasText(professionalLinks)) {
             appendLine(body, "Links: " + professionalLinks);
         }
+    }
+
+    private static void appendCanadianFrenchContactBlock(
+            StringBuilder body,
+            UserProfile profile,
+            List<ProfileContact> contacts,
+            List<ProfileLink> links,
+            OfflineFrenchResumeTranslator translator,
+            List<String> protectedTerms
+    ) {
+        List<String> contactItems = new ArrayList<>();
+        contactItems.add(translator.translateOpaqueValue(profile.email().strip()));
+        contacts.stream()
+                .filter(contact -> !isEmailContact(contact))
+                .map(contact -> translatedLabelValue(
+                        contact.label(),
+                        contact.contactType(),
+                        translatedContactValue(contact, translator, protectedTerms),
+                        translator
+                ))
+                .forEach(contactItems::add);
+        appendLine(body, translator.translateLabel("Contact") + ": " + String.join(" | ", contactItems));
+
+        String professionalLinks = links.stream()
+                .map(link -> translatedLabelValue(
+                        link.label(),
+                        link.linkType(),
+                        translator.translateOpaqueValue(link.url()),
+                        translator
+                ))
+                .collect(Collectors.joining(" | "));
+        if (hasText(professionalLinks)) {
+            appendLine(body, translator.translateLabel("Links") + ": " + professionalLinks);
+        }
+    }
+
+    private static String translatedContactValue(
+            ProfileContact contact,
+            OfflineFrenchResumeTranslator translator,
+            List<String> protectedTerms
+    ) {
+        String label = defaultText(contact.label(), contact.contactType());
+        String type = defaultText(contact.contactType(), contact.label());
+        String identity = (defaultText(label, "") + " " + defaultText(type, "")).toLowerCase(Locale.ROOT);
+        if (identity.contains("location") || identity.contains("address")) {
+            return translator.translateText(contact.contactValue(), protectedTerms);
+        }
+        return translator.translateOpaqueValue(contact.contactValue());
+    }
+
+    private static String translatedLabelValue(
+            String label,
+            String type,
+            String value,
+            OfflineFrenchResumeTranslator translator
+    ) {
+        String resolvedLabel = hasText(label) ? label.strip() : type.strip();
+        return translator.translateLabel(resolvedLabel) + ": " + value.strip();
+    }
+
+    private static void appendCanadianFrenchSkills(
+            StringBuilder body,
+            List<ProfileSkill> skills,
+            OfflineFrenchResumeTranslator translator
+    ) {
+        if (skills.isEmpty()) {
+            return;
+        }
+        appendSection(body, "COMPÉTENCES TECHNIQUES");
+        Map<String, List<ProfileSkill>> byCategory = skills.stream()
+                .sorted(Comparator.comparingInt(ProfileSkill::displayOrder).thenComparing(ProfileSkill::skill))
+                .collect(Collectors.groupingBy(
+                        skill -> defaultText(skill.category(), "General"),
+                        java.util.LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+        byCategory.forEach((category, categorySkills) -> appendLine(
+                body,
+                translator.translateLabel(category) + ": " + translator.translateTechnologyList(categorySkills.stream()
+                        .map(ProfileSkill::skill)
+                        .collect(Collectors.joining(", ")))
+        ));
+        appendBlank(body);
+    }
+
+    private static void appendCanadianFrenchExperiences(
+            StringBuilder body,
+            List<Experience> experiences,
+            OfflineFrenchResumeTranslator translator,
+            List<String> protectedTerms
+    ) {
+        if (experiences.isEmpty()) {
+            return;
+        }
+        appendSection(body, "EXPÉRIENCE PROFESSIONNELLE");
+        experiences.stream()
+                .sorted(Comparator.comparing(ResumeBodyRenderer::experienceSortDate, Comparator.reverseOrder())
+                        .thenComparing(Experience::displayOrder)
+                        .thenComparing(Experience::company, Comparator.nullsLast(String::compareTo)))
+                .forEach(experience -> {
+                    appendLine(body, translator.translateText(defaultText(experience.title(), "Role"), protectedTerms)
+                            + " | " + defaultText(experience.company(), "Entreprise"));
+                    appendLine(body, periodFrench(experience.startDate(), experience.endDate())
+                            + optionalTranslatedLocation(experience.location(), translator, protectedTerms));
+                    if (hasText(experience.description())) {
+                        experienceBullets(experience.description(), CANADIAN_EXPERIENCE_BULLET_LIMIT)
+                                .forEach(bullet -> appendLine(body, "- " + translator.translateText(bullet, protectedTerms)));
+                    }
+                    appendBlank(body);
+                });
+    }
+
+    private static void appendCanadianFrenchEducation(
+            StringBuilder body,
+            List<Education> education,
+            OfflineFrenchResumeTranslator translator,
+            List<String> protectedTerms
+    ) {
+        if (education.isEmpty()) {
+            return;
+        }
+        appendSection(body, "FORMATION");
+        education.stream()
+                .sorted(Comparator.comparing(Education::endDate, Comparator.nullsLast(Comparator.reverseOrder())))
+                .forEach(item -> {
+                    appendLine(body, translator.translateText(defaultText(item.degree(), "Diplôme"), protectedTerms)
+                            + optionalTranslatedField(item.field(), translator, protectedTerms));
+                    appendLine(body, defaultText(item.institution(), "Établissement")
+                            + optionalTranslatedLocation(item.location(), translator, protectedTerms));
+                    appendLine(body, periodFrench(item.startDate(), item.endDate()));
+                    if (hasText(item.relevantFocus())) {
+                        appendLine(body, "- " + translator.translateText(item.relevantFocus(), protectedTerms));
+                    }
+                    appendBlank(body);
+                });
+    }
+
+    private static void appendCanadianFrenchLanguages(
+            StringBuilder body,
+            List<ProfileLanguage> languages,
+            OfflineFrenchResumeTranslator translator
+    ) {
+        if (languages.isEmpty()) {
+            return;
+        }
+        appendSection(body, "LANGUES");
+        appendLine(body, languages.stream()
+                .sorted(Comparator.comparingInt(ProfileLanguage::displayOrder).thenComparing(ProfileLanguage::language))
+                .map(language -> translator.translateText(language.language())
+                        + translatedOptionalSuffix(language.proficiency(), translator))
+                .collect(Collectors.joining(", ")));
+        appendBlank(body);
+    }
+
+    private static String translatedOptionalSuffix(String text, OfflineFrenchResumeTranslator translator) {
+        return hasText(text) ? " (" + translator.translateLabel(text) + ")" : "";
+    }
+
+    private static String optionalTranslatedLocation(
+            String location,
+            OfflineFrenchResumeTranslator translator,
+            List<String> protectedTerms
+    ) {
+        return hasText(location) ? " | " + translator.translateText(location, protectedTerms) : "";
+    }
+
+    private static String optionalTranslatedField(
+            String field,
+            OfflineFrenchResumeTranslator translator,
+            List<String> protectedTerms
+    ) {
+        return hasText(field) ? ", " + translator.translateText(field, protectedTerms) : "";
+    }
+
+    private static List<String> canadianFrenchProtectedTerms(ProfileAggregate aggregate) {
+        List<String> terms = new ArrayList<>();
+        terms.add(aggregate.profile().fullName());
+        aggregate.experiences().stream().map(Experience::company).forEach(terms::add);
+        aggregate.education().stream().map(Education::institution).forEach(terms::add);
+        aggregate.projects().stream().map(ProfileProject::name).forEach(terms::add);
+        aggregate.skills().stream().map(ProfileSkill::skill).forEach(terms::add);
+        aggregate.projectTechnologies().stream().map(ProjectTechnology::technology).forEach(terms::add);
+        aggregate.projects().stream()
+                .flatMap(project -> project.technologies().stream())
+                .map(ProjectTechnology::technology)
+                .forEach(terms::add);
+        return terms.stream()
+                .filter(ResumeBodyRenderer::hasText)
+                .map(String::strip)
+                .distinct()
+                .toList();
+    }
+
+    private static String periodFrench(LocalDate startDate, LocalDate endDate) {
+        if (startDate == null && endDate == null) {
+            return "Dates non précisées";
+        }
+        String start = startDate == null ? "Inconnu" : MONTH_FORMATTER.format(startDate);
+        String end = endDate == null ? "Présent" : MONTH_FORMATTER.format(endDate);
+        return start + " - " + end;
     }
 
     private static boolean isEmailContact(ProfileContact contact) {

@@ -65,15 +65,24 @@ public class PdfGenerationService {
     }
 
     public GeneratedPdfFileResult generatePdfFile(GeneratePdfFileRequest request) {
-        return generatePdfFile(request, LEADING);
+        return generatePdfFile(request, LEADING, PageNumberLocale.ENGLISH);
+    }
+
+    GeneratedPdfFileResult generatePdfFile(GeneratePdfFileRequest request, PageNumberLocale pageNumberLocale) {
+        return generatePdfFile(request, LEADING, pageNumberLocale);
     }
 
     public GeneratedPdfFileResult generateCompactResumePdfFile(GeneratePdfFileRequest request) {
-        return generatePdfFile(request, COMPACT_RESUME_LEADING);
+        return generatePdfFile(request, COMPACT_RESUME_LEADING, PageNumberLocale.ENGLISH);
     }
 
-    private GeneratedPdfFileResult generatePdfFile(GeneratePdfFileRequest request, float leading) {
+    private GeneratedPdfFileResult generatePdfFile(
+            GeneratePdfFileRequest request,
+            float leading,
+            PageNumberLocale pageNumberLocale
+    ) {
         GeneratePdfFileRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
+        PageNumberLocale safePageNumberLocale = Objects.requireNonNull(pageNumberLocale, "pageNumberLocale must not be null");
         String body = validateBody(safeRequest.body());
         String fileName = sanitizeFileName(safeRequest.fileName());
         String title = sanitizeText(resolveTitle(safeRequest.title()));
@@ -84,7 +93,7 @@ public class PdfGenerationService {
 
         try {
             Files.createDirectories(outputDirectory);
-            int pageCount = writePdf(outputPath, title, body, leading);
+            int pageCount = writePdf(outputPath, title, body, leading, safePageNumberLocale);
             return new GeneratedPdfFileResult(
                     fileName,
                     outputPath.toString(),
@@ -155,7 +164,13 @@ public class PdfGenerationService {
         return sanitized;
     }
 
-    private static int writePdf(Path outputPath, String title, String body, float leading) throws IOException {
+    private static int writePdf(
+            Path outputPath,
+            String title,
+            String body,
+            float leading,
+            PageNumberLocale pageNumberLocale
+    ) throws IOException {
         try (PDDocument document = new PDDocument()) {
             List<String> lines = bodyLines(title, body);
             PDType1Font titleFont = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
@@ -165,7 +180,8 @@ public class PdfGenerationService {
 
             for (int pageIndex = 0; pageIndex < pages.size(); pageIndex++) {
                 PDPage page = addPage(document);
-                writePage(document, page, pages.get(pageIndex), pageIndex + 1, pages.size(), titleFont, bodyFont, chromeFont, leading);
+                writePage(document, page, pages.get(pageIndex), pageIndex + 1, pages.size(), titleFont, bodyFont,
+                        chromeFont, leading, pageNumberLocale);
             }
             document.save(outputPath.toFile());
             return document.getNumberOfPages();
@@ -213,7 +229,25 @@ public class PdfGenerationService {
         int remainingSlots = linesPerPage - pageLineCount;
         String line = lines.get(lineIndex);
         return (isSectionHeading(line) && remainingSlots < 2)
-                || (isResumeEntryHeading(lines, lineIndex) && remainingSlots < 3);
+                || (isResumeEntryHeading(lines, lineIndex)
+                && remainingSlots < resumeEntryOpeningBlockLineCount(lines, lineIndex))
+                || (isBulletLine(line) && remainingSlots < wrappedBulletLineCount(lines, lineIndex));
+    }
+
+    private static int resumeEntryOpeningBlockLineCount(List<String> lines, int headingIndex) {
+        int firstDetailIndex = headingIndex + 2;
+        if (firstDetailIndex < lines.size() && isBulletLine(lines.get(firstDetailIndex))) {
+            return 2 + wrappedBulletLineCount(lines, firstDetailIndex);
+        }
+        return 3;
+    }
+
+    private static int wrappedBulletLineCount(List<String> lines, int bulletIndex) {
+        int lineCount = 1;
+        for (int index = bulletIndex + 1; index < lines.size() && isBulletContinuationLine(lines.get(index)); index++) {
+            lineCount++;
+        }
+        return lineCount;
     }
 
     private static boolean isResumeEntryHeading(List<String> lines, int lineIndex) {
@@ -231,7 +265,9 @@ public class PdfGenerationService {
 
     private static boolean isResumeDateLine(String line) {
             return line != null && (line.startsWith("Dates not provided")
+                    || line.startsWith("Dates non précisées")
                     || line.startsWith("Unknown - ")
+                    || line.startsWith("Inconnu - ")
                     || line.startsWith("unbekannt - ")
                     || line.matches("^\\d{2}/\\d{4} - .+")
                     || line.matches("^\\d{4}-\\d{2} - .+"));
@@ -246,11 +282,12 @@ public class PdfGenerationService {
             PDType1Font titleFont,
             PDType1Font bodyFont,
             PDType1Font chromeFont,
-            float leading
+            float leading,
+            PageNumberLocale pageNumberLocale
     ) throws IOException {
         try (PDPageContentStream contentStream = new PDPageContentStream(document, page)) {
             drawBackground(contentStream, page);
-            drawChrome(contentStream, page, chromeFont, pageNumber, pageCount);
+            drawChrome(contentStream, page, chromeFont, pageNumber, pageCount, pageNumberLocale);
             drawBody(contentStream, pageLines, titleFont, bodyFont, chromeFont, leading);
         }
     }
@@ -267,10 +304,14 @@ public class PdfGenerationService {
             PDPage page,
             PDType1Font chromeFont,
             int pageNumber,
-            int pageCount
+            int pageCount,
+            PageNumberLocale pageNumberLocale
     ) throws IOException {
         PDRectangle box = page.getMediaBox();
-        String chromeText = "Page " + pageNumber + " of " + pageCount;
+        String chromeText = switch (pageNumberLocale) {
+            case ENGLISH -> "Page " + pageNumber + " of " + pageCount;
+            case CANADIAN_FRENCH -> "Page " + pageNumber + " sur " + pageCount;
+        };
 
         contentStream.setNonStrokingColor(CHROME_BACKGROUND_COLOR);
         contentStream.addRect(0, box.getHeight() - HEADER_HEIGHT, box.getWidth(), HEADER_HEIGHT);
@@ -510,6 +551,11 @@ public class PdfGenerationService {
             int pageCount,
             String generatedAt
     ) {
+    }
+
+    enum PageNumberLocale {
+        ENGLISH,
+        CANADIAN_FRENCH
     }
 
     private record PageLines(List<String> lines, int startIndex) {

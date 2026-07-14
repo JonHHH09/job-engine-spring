@@ -29,6 +29,7 @@ EXPECTED_TOOLS = [
     "generate_pdf_file",
     "generate_pdf_resume",
     "generate_canadian_pdf_resume",
+    "generate_canadian_french_pdf_resume",
     "ingest_profile_from_stored_pdf",
     "get_profile_pdf_source",
     "list_jobs",
@@ -82,7 +83,7 @@ class SmokeMcpStdioTests(unittest.TestCase):
             )
 
         self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertIn("MCP STDIO smoke passed with 25 tools.", completed.stdout)
+        self.assertIn("MCP STDIO smoke passed with 26 tools.", completed.stdout)
 
 
 if __name__ == "__main__":
