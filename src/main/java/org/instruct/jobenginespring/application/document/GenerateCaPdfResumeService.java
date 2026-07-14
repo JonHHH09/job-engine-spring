@@ -7,7 +7,6 @@ import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.file.Path;
 import java.util.UUID;
@@ -35,7 +34,6 @@ public class GenerateCaPdfResumeService {
         this.outputDirectory = java.util.Objects.requireNonNull(outputDirectory, "outputDirectory must not be null");
     }
 
-    @Transactional
     public GeneratePdfResumeResult generateCanadianPdfResume(GenerateCaPdfResumeRequest request) {
         GenerateCaPdfResumeRequest safeRequest = java.util.Objects.requireNonNull(request, "request must not be null");
         UUID profileId = safeRequest.profileId();

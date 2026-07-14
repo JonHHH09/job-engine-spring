@@ -4,8 +4,6 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import org.instruct.jobenginespring.application.document.port.GeneratedResumeCleanupRepository;
-import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
@@ -29,16 +27,23 @@ class GeneratedResumeCleanupDiagnosticsTests {
 
     @Test
     void failedDeletionLogsSanitizedWarningWithoutThrowableOrPrivatePath() {
-        var repository = mock(GeneratedResumeCleanupRepository.class);
-        var files = mock(GeneratedResumeFileRepository.class);
-        when(repository.claim(TASK_ID, NOW, NOW.plus(GeneratedResumeCleanupExecutor.CLAIM_LEASE)))
-                .thenReturn(Optional.of("/Users/jh/private/resume.pdf"));
+        var preparation = mock(GeneratedResumeCleanupPreparation.class);
+        var deletion = mock(GeneratedResumeCleanupFileDeletion.class);
+        var finalizer = mock(GeneratedResumeCleanupFinalizer.class);
+        var prepared = new GeneratedResumeCleanupPreparation.PreparedCleanup(
+                "/Users/jh/private/resume.pdf",
+                true
+        );
+        when(preparation.prepare(TASK_ID)).thenReturn(Optional.of(prepared));
         doThrow(new IllegalStateException("cannot delete /Users/jh/private/resume.pdf secret-token"))
-                .when(files).deleteIfExists("/Users/jh/private/resume.pdf");
+                .when(deletion).deleteIfRequired(prepared);
         var appender = captureCleanupLogs();
 
         new GeneratedResumeCleanupExecutor(
-                repository, files, Clock.fixed(NOW, ZoneOffset.UTC)
+                preparation,
+                deletion,
+                finalizer,
+                Clock.fixed(NOW, ZoneOffset.UTC)
         ).attemptSafely(TASK_ID);
 
         assertEquals(1, appender.list.size());
@@ -51,13 +56,16 @@ class GeneratedResumeCleanupDiagnosticsTests {
 
     @Test
     void durableStateFailureLogsSanitizedErrorWithoutStackTrace() {
-        var repository = mock(GeneratedResumeCleanupRepository.class);
-        when(repository.claim(TASK_ID, NOW, NOW.plus(GeneratedResumeCleanupExecutor.CLAIM_LEASE)))
+        var preparation = mock(GeneratedResumeCleanupPreparation.class);
+        when(preparation.prepare(TASK_ID))
                 .thenThrow(new IllegalStateException("jdbc:postgresql://private password=secret"));
         var appender = captureCleanupLogs();
 
         new GeneratedResumeCleanupExecutor(
-                repository, mock(GeneratedResumeFileRepository.class), Clock.fixed(NOW, ZoneOffset.UTC)
+                preparation,
+                mock(GeneratedResumeCleanupFileDeletion.class),
+                mock(GeneratedResumeCleanupFinalizer.class),
+                Clock.fixed(NOW, ZoneOffset.UTC)
         ).attemptSafely(TASK_ID);
 
         ILoggingEvent event = appender.list.getFirst();

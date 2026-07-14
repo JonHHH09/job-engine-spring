@@ -81,6 +81,15 @@ class PostgresGeneratedResumeCleanupRepositoryIntegrationTests {
     }
 
     @Test
+    void cleanupTaskRetainsExactGeneratedDocumentId() {
+        UUID documentId = UUID.randomUUID();
+
+        UUID taskId = repository.enqueue(documentId, "private.pdf", NOW);
+
+        assertEquals(documentId, repository.findDocumentId(taskId).orElseThrow());
+    }
+
+    @Test
     void reportsSanitizedBacklogMetricsAndRepeatedFailures() {
         UUID pending = repository.enqueue("/private/users/jh/pending.pdf", NOW.minusSeconds(600));
         UUID processing = repository.enqueue("/private/users/jh/processing.pdf", NOW.minusSeconds(300));

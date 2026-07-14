@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
+import org.instruct.jobenginespring.application.document.port.DocumentRepository;
 import org.instruct.jobenginespring.application.document.port.GeneratedResumeCleanupRepository;
 import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.instruct.jobenginespring.application.document.port.TransactionLifecycle;
@@ -27,6 +28,7 @@ public class GeneratedResumeCleanupService {
     private final GeneratedResumeCleanupRepository cleanupRepository;
     private final TransactionLifecycle transactionLifecycle;
     private final GeneratedResumeCleanupExecutor cleanupExecutor;
+    private final GeneratedResumeCleanupTaskCreator taskCreator;
     private final Duration completedRetention;
     private final int retentionBatchSize;
     private final int retentionMaxBatchesPerRun;
@@ -37,6 +39,7 @@ public class GeneratedResumeCleanupService {
             GeneratedResumeCleanupRepository cleanupRepository,
             TransactionLifecycle transactionLifecycle,
             GeneratedResumeCleanupExecutor cleanupExecutor,
+            GeneratedResumeCleanupTaskCreator taskCreator,
             @Value("${job-engine.pdf-generation.cleanup-completed-retention:30d}") Duration completedRetention,
             @Value("${job-engine.pdf-generation.cleanup-retention-batch-size:1000}") int retentionBatchSize,
             @Value("${job-engine.pdf-generation.cleanup-retention-max-batches-per-run:10}")
@@ -45,6 +48,7 @@ public class GeneratedResumeCleanupService {
         this.cleanupRepository = Objects.requireNonNull(cleanupRepository, "cleanupRepository must not be null");
         this.transactionLifecycle = Objects.requireNonNull(transactionLifecycle, "transactionLifecycle must not be null");
         this.cleanupExecutor = Objects.requireNonNull(cleanupExecutor, "cleanupExecutor must not be null");
+        this.taskCreator = Objects.requireNonNull(taskCreator, "taskCreator must not be null");
         this.completedRetention = requirePositive(completedRetention, "completedRetention");
         if (retentionBatchSize <= 0) {
             throw new IllegalArgumentException("retentionBatchSize must be positive");
@@ -60,17 +64,38 @@ public class GeneratedResumeCleanupService {
             GeneratedResumeCleanupRepository cleanupRepository,
             TransactionLifecycle transactionLifecycle,
             GeneratedResumeCleanupExecutor cleanupExecutor,
+            GeneratedResumeCleanupTaskCreator taskCreator,
             Clock clock
     ) {
         this(
                 cleanupRepository,
                 transactionLifecycle,
                 cleanupExecutor,
+                taskCreator,
                 COMPLETED_RETENTION,
                 RETENTION_BATCH_SIZE,
                 RETENTION_MAX_BATCHES_PER_RUN
         );
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
+    }
+
+    GeneratedResumeCleanupService(
+            GeneratedResumeCleanupRepository cleanupRepository,
+            TransactionLifecycle transactionLifecycle,
+            GeneratedResumeCleanupExecutor cleanupExecutor,
+            Duration completedRetention,
+            int retentionBatchSize,
+            int retentionMaxBatchesPerRun
+    ) {
+        this(
+                cleanupRepository,
+                transactionLifecycle,
+                cleanupExecutor,
+                new GeneratedResumeCleanupTaskCreator(cleanupRepository),
+                completedRetention,
+                retentionBatchSize,
+                retentionMaxBatchesPerRun
+        );
     }
 
     GeneratedResumeCleanupService(
@@ -86,6 +111,7 @@ public class GeneratedResumeCleanupService {
                 cleanupRepository,
                 transactionLifecycle,
                 cleanupExecutor,
+                new GeneratedResumeCleanupTaskCreator(cleanupRepository),
                 completedRetention,
                 retentionBatchSize,
                 retentionMaxBatchesPerRun
@@ -95,6 +121,7 @@ public class GeneratedResumeCleanupService {
 
     GeneratedResumeCleanupService(
             GeneratedResumeCleanupRepository cleanupRepository,
+            DocumentRepository documentRepository,
             GeneratedResumeFileRepository fileRepository,
             TransactionLifecycle transactionLifecycle,
             Clock clock
@@ -102,7 +129,13 @@ public class GeneratedResumeCleanupService {
         this(
                 cleanupRepository,
                 transactionLifecycle,
-                new GeneratedResumeCleanupExecutor(cleanupRepository, fileRepository, clock),
+                new GeneratedResumeCleanupExecutor(
+                        new GeneratedResumeCleanupPreparation(cleanupRepository, documentRepository, clock),
+                        new GeneratedResumeCleanupFileDeletion(fileRepository),
+                        new GeneratedResumeCleanupFinalizer(cleanupRepository),
+                        clock
+                ),
+                new GeneratedResumeCleanupTaskCreator(cleanupRepository),
                 clock
         );
     }
@@ -114,6 +147,46 @@ public class GeneratedResumeCleanupService {
                 now
         );
         transactionLifecycle.afterCommit(() -> cleanupExecutor.attemptSafely(taskId));
+        return taskId;
+    }
+
+    public UUID enqueueAfterCommit(UUID documentId, String filePath) {
+        Instant now = clock.instant();
+        UUID taskId = cleanupRepository.enqueue(
+                documentId,
+                Objects.requireNonNull(filePath, "filePath must not be null"),
+                now
+        );
+        transactionLifecycle.afterCommit(() -> cleanupExecutor.attemptSafely(taskId));
+        return taskId;
+    }
+
+    public void enqueueAfterCompletion(String filePath) {
+        String safeFilePath = Objects.requireNonNull(filePath, "filePath must not be null");
+        transactionLifecycle.afterCompletion(() -> enqueueNow(safeFilePath));
+    }
+
+    public void enqueueAfterCompletion(UUID documentId, String filePath) {
+        String safeFilePath = Objects.requireNonNull(filePath, "filePath must not be null");
+        transactionLifecycle.afterCompletion(() -> enqueueNow(documentId, safeFilePath));
+    }
+
+    public UUID enqueueNow(String filePath) {
+        UUID taskId = taskCreator.enqueue(
+                Objects.requireNonNull(filePath, "filePath must not be null"),
+                clock.instant()
+        );
+        cleanupExecutor.attemptSafely(taskId);
+        return taskId;
+    }
+
+    public UUID enqueueNow(UUID documentId, String filePath) {
+        UUID taskId = taskCreator.enqueue(
+                documentId,
+                Objects.requireNonNull(filePath, "filePath must not be null"),
+                clock.instant()
+        );
+        cleanupExecutor.attemptSafely(taskId);
         return taskId;
     }
 

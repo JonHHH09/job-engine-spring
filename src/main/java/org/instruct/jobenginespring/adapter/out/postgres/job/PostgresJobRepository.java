@@ -14,6 +14,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -104,6 +105,7 @@ public class PostgresJobRepository implements JobRepository {
     }
 
     @Override
+    @Transactional
     public JobAggregate saveJobAggregate(JobAggregate aggregate) {
         JobPosting job = aggregate.job();
         boolean inserted = insertJobWithMatchingProvenance(aggregate);
@@ -122,6 +124,7 @@ public class PostgresJobRepository implements JobRepository {
     }
 
     @Override
+    @Transactional
     public JobAggregate updateJobAggregate(JobAggregate aggregate) {
         JobPosting job = aggregate.job();
         int updatedJobs = jdbc.sql("""

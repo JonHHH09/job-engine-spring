@@ -14,10 +14,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -54,6 +57,7 @@ class PostgresDocumentRepositoryIntegrationTests {
             .withPassword("test");
 
     private static JdbcTemplate jdbc;
+    private static TransactionTemplate transactions;
 
     private PostgresDocumentRepository repository;
 
@@ -73,6 +77,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 POSTGRES.getPassword()
         );
         jdbc = new JdbcTemplate(dataSource);
+        transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     }
 
     @BeforeEach
@@ -155,6 +160,94 @@ class PostgresDocumentRepositoryIntegrationTests {
         assertTrue(repository.findFileMetadataById(duplicateId).isPresent());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.blobs", Integer.class));
         assertFalse(repository.deleteFileIfUnreferenced(UUID.randomUUID()));
+    }
+
+    @Test
+    void germanResumePathIsPreservedWhileReferencedAndPreparedAfterReferenceRemoval() {
+        String filePath = "/private/generated/germany_candidate_aaaaaaaa_de_unique.pdf";
+        StoredDocumentFile germanPdf = new StoredDocumentFile(
+                FILE_ID,
+                "germany_candidate_aaaaaaaa_de_unique.pdf",
+                "application/pdf",
+                PDF_CONTENT.length,
+                SHA256,
+                PDF_CONTENT,
+                NOW,
+                NOW
+        );
+        repository.saveFile(germanPdf);
+        UUID profileId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        UUID resumeId = UUID.randomUUID();
+        transactions.executeWithoutResult(status -> {
+            jdbc.update("""
+                    INSERT INTO profile.profiles (id, full_name, email, created_at, updated_at)
+                    VALUES (?, 'German Candidate', ?, ?, ?)
+                    """, profileId, profileId + "@example.test", Timestamp.from(NOW), Timestamp.from(NOW));
+            jdbc.update("""
+                    INSERT INTO job_schema.jobs (
+                        id, source_method, title, description, canonical_fingerprint, created_at, updated_at
+                    ) VALUES (?, 'text', 'Engineer', 'Description', ?, ?, ?)
+                    """, jobId, jobId.toString(), Timestamp.from(NOW), Timestamp.from(NOW));
+            jdbc.update("""
+                    INSERT INTO job_schema.job_text_ingestions (
+                        id, job_id, input_text_hash, created_at
+                    ) VALUES (?, ?, ?, ?)
+                    """, UUID.randomUUID(), jobId, "hash-" + jobId, Timestamp.from(NOW));
+            jdbc.update("""
+                    INSERT INTO resume.resumes (
+                        id, profile_id, job_id, format, profile_revision, job_revision, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'germany', ?, ?, ?, ?)
+                    """, resumeId, profileId, jobId, Timestamp.from(NOW), Timestamp.from(NOW),
+                    Timestamp.from(NOW), Timestamp.from(NOW));
+            jdbc.update("""
+                    INSERT INTO resume.resume_variants (
+                        id, resume_id, language, document_id, file_path, created_at, updated_at
+                    ) VALUES (?, ?, 'de', ?, ?, ?, ?)
+                    """, UUID.randomUUID(), resumeId, FILE_ID, filePath, Timestamp.from(NOW), Timestamp.from(NOW));
+        });
+
+        assertTrue(repository.prepareGeneratedFileCleanup(
+                "/alternate/germany_candidate_aaaaaaaa_de_unique.pdf"
+        ));
+        assertFalse(repository.prepareGeneratedFileCleanup(filePath));
+        assertTrue(repository.findFileMetadataById(FILE_ID).isPresent());
+
+        jdbc.update("DELETE FROM resume.resumes WHERE id = ?", resumeId);
+
+        assertTrue(repository.prepareGeneratedFileCleanup(filePath));
+        assertTrue(repository.findFileMetadataById(FILE_ID).isPresent());
+        assertTrue(repository.deleteFileIfUnreferenced(FILE_ID));
+        assertFalse(repository.findFileMetadataById(FILE_ID).isPresent());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM document.blobs", Integer.class));
+    }
+
+    @Test
+    void generatedCleanupPreservesUnrelatedStoredDocumentWithSameFileName() {
+        String fileName = "germany_candidate_aaaaaaaa_de_unique.pdf";
+        StoredDocumentFile generatedPdf = new StoredDocumentFile(
+                FILE_ID, fileName, "application/pdf", PDF_CONTENT.length, SHA256, PDF_CONTENT, NOW, NOW
+        );
+        UUID unrelatedId = UUID.randomUUID();
+        byte[] unrelatedContent = "%PDF-1.3\nunrelated".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        StoredDocumentFile unrelatedPdf = new StoredDocumentFile(
+                unrelatedId,
+                fileName,
+                "application/pdf",
+                unrelatedContent.length,
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                unrelatedContent,
+                NOW,
+                NOW
+        );
+        repository.saveFile(generatedPdf);
+        repository.saveFile(unrelatedPdf);
+
+        assertTrue(repository.deleteFileIfUnreferenced(FILE_ID));
+        assertTrue(repository.prepareGeneratedFileCleanup("/private/generated/" + fileName));
+
+        assertFalse(repository.findFileMetadataById(FILE_ID).isPresent());
+        assertTrue(repository.findFileMetadataById(unrelatedId).isPresent());
     }
 
     @Test

@@ -1,17 +1,12 @@
 package org.instruct.jobenginespring.application.document;
 
-import org.instruct.jobenginespring.application.document.port.GeneratedResumeCleanupRepository;
-import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -26,29 +21,32 @@ public class GeneratedResumeCleanupExecutor {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GeneratedResumeCleanupExecutor.class);
 
-    private final GeneratedResumeCleanupRepository cleanupRepository;
-    private final GeneratedResumeFileRepository fileRepository;
+    private final GeneratedResumeCleanupPreparation preparation;
+    private final GeneratedResumeCleanupFileDeletion fileDeletion;
+    private final GeneratedResumeCleanupFinalizer finalizer;
     private Clock clock = Clock.systemUTC();
 
     @Autowired
     public GeneratedResumeCleanupExecutor(
-            GeneratedResumeCleanupRepository cleanupRepository,
-            GeneratedResumeFileRepository fileRepository
+            GeneratedResumeCleanupPreparation preparation,
+            GeneratedResumeCleanupFileDeletion fileDeletion,
+            GeneratedResumeCleanupFinalizer finalizer
     ) {
-        this.cleanupRepository = Objects.requireNonNull(cleanupRepository, "cleanupRepository must not be null");
-        this.fileRepository = Objects.requireNonNull(fileRepository, "fileRepository must not be null");
+        this.preparation = Objects.requireNonNull(preparation, "preparation must not be null");
+        this.fileDeletion = Objects.requireNonNull(fileDeletion, "fileDeletion must not be null");
+        this.finalizer = Objects.requireNonNull(finalizer, "finalizer must not be null");
     }
 
     GeneratedResumeCleanupExecutor(
-            GeneratedResumeCleanupRepository cleanupRepository,
-            GeneratedResumeFileRepository fileRepository,
+            GeneratedResumeCleanupPreparation preparation,
+            GeneratedResumeCleanupFileDeletion fileDeletion,
+            GeneratedResumeCleanupFinalizer finalizer,
             Clock clock
     ) {
-        this(cleanupRepository, fileRepository);
+        this(preparation, fileDeletion, finalizer);
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void attemptSafely(UUID taskId) {
         try {
             attempt(taskId);
@@ -61,13 +59,12 @@ public class GeneratedResumeCleanupExecutor {
     }
 
     private void attempt(UUID taskId) {
-        Instant now = clock.instant();
-        cleanupRepository.claim(taskId, now, now.plus(CLAIM_LEASE)).ifPresent(filePath -> {
+        preparation.prepare(taskId).ifPresent(prepared -> {
             try {
-                fileRepository.deleteIfExists(filePath);
-                cleanupRepository.markCompleted(taskId, clock.instant());
+                fileDeletion.deleteIfRequired(prepared);
+                finalizer.markCompleted(taskId, clock.instant());
             } catch (RuntimeException exception) {
-                cleanupRepository.markPending(
+                finalizer.markPending(
                         taskId,
                         clock.instant().plus(RETRY_DELAY),
                         FILE_DELETE_FAILED
