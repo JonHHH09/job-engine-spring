@@ -1,9 +1,9 @@
 package org.instruct.jobenginespring.application.document;
 
 import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratedPdfFileResult;
+import org.instruct.jobenginespring.application.document.GermanResumePersistenceService.GeneratedAsset;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
 import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
-import org.instruct.jobenginespring.application.document.port.TransactionLifecycle;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.JobService.JobNotFoundException;
@@ -16,7 +16,6 @@ import org.instruct.jobenginespring.application.resume.GermanLebenslaufContentBu
 import org.instruct.jobenginespring.application.resume.GermanLebenslaufContentReview;
 import org.instruct.jobenginespring.application.resume.OfflineGermanResumeTranslator;
 import org.instruct.jobenginespring.application.resume.StructuredResumeContent;
-import org.instruct.jobenginespring.application.resume.port.ResumeRepository;
 import org.instruct.jobenginespring.application.resume.port.ResumeRepository.EntryWrite;
 import org.instruct.jobenginespring.application.resume.port.ResumeRepository.ReplaceResult;
 import org.instruct.jobenginespring.application.resume.port.ResumeRepository.ResumeAggregateWrite;
@@ -34,7 +33,6 @@ import org.instruct.jobenginespring.domain.resume.ResumeVariant;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -55,12 +53,10 @@ public class GenerateGermanTailoredResumeService {
     private final ProfileRepository profileRepository;
     private final JobRepository jobRepository;
     private final ProfilePersonalDetailsRepository personalDetailsRepository;
-    private final ResumeRepository resumeRepository;
+    private final GermanResumePersistenceService persistenceService;
     private final DocumentStorageService documentStorageService;
     private final DocumentRepository documentRepository;
     private final GeneratedResumeFileRepository fileRepository;
-    private final GeneratedResumeCleanupService cleanupService;
-    private final TransactionLifecycle transactionLifecycle;
     private final OfflineGermanResumeTranslator translator;
     private final Path outputDirectory;
     private Clock clock = Clock.systemUTC();
@@ -70,24 +66,20 @@ public class GenerateGermanTailoredResumeService {
             ProfileRepository profileRepository,
             JobRepository jobRepository,
             ProfilePersonalDetailsRepository personalDetailsRepository,
-            ResumeRepository resumeRepository,
+            GermanResumePersistenceService persistenceService,
             DocumentStorageService documentStorageService,
             DocumentRepository documentRepository,
             GeneratedResumeFileRepository fileRepository,
-            GeneratedResumeCleanupService cleanupService,
-            TransactionLifecycle transactionLifecycle,
             OfflineGermanResumeTranslator translator,
             @Value("${job-engine.pdf-generation.german-resume-output-dir:" + DEFAULT_OUTPUT_DIRECTORY + "}") String outputDirectory
     ) {
         this.profileRepository = Objects.requireNonNull(profileRepository, "profileRepository must not be null");
         this.jobRepository = Objects.requireNonNull(jobRepository, "jobRepository must not be null");
         this.personalDetailsRepository = Objects.requireNonNull(personalDetailsRepository, "personalDetailsRepository must not be null");
-        this.resumeRepository = Objects.requireNonNull(resumeRepository, "resumeRepository must not be null");
+        this.persistenceService = Objects.requireNonNull(persistenceService, "persistenceService must not be null");
         this.documentStorageService = Objects.requireNonNull(documentStorageService, "documentStorageService must not be null");
         this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
         this.fileRepository = Objects.requireNonNull(fileRepository, "fileRepository must not be null");
-        this.cleanupService = Objects.requireNonNull(cleanupService, "cleanupService must not be null");
-        this.transactionLifecycle = Objects.requireNonNull(transactionLifecycle, "transactionLifecycle must not be null");
         this.translator = Objects.requireNonNull(translator, "translator must not be null");
         this.outputDirectory = GeneratePdfResumeService.toPath(outputDirectory, DEFAULT_OUTPUT_DIRECTORY);
     }
@@ -96,12 +88,10 @@ public class GenerateGermanTailoredResumeService {
             ProfileRepository profileRepository,
             JobRepository jobRepository,
             ProfilePersonalDetailsRepository personalDetailsRepository,
-            ResumeRepository resumeRepository,
+            GermanResumePersistenceService persistenceService,
             DocumentStorageService documentStorageService,
             DocumentRepository documentRepository,
             GeneratedResumeFileRepository fileRepository,
-            GeneratedResumeCleanupService cleanupService,
-            TransactionLifecycle transactionLifecycle,
             OfflineGermanResumeTranslator translator,
             Path outputDirectory,
             Clock clock
@@ -109,18 +99,15 @@ public class GenerateGermanTailoredResumeService {
         this.profileRepository = Objects.requireNonNull(profileRepository, "profileRepository must not be null");
         this.jobRepository = Objects.requireNonNull(jobRepository, "jobRepository must not be null");
         this.personalDetailsRepository = Objects.requireNonNull(personalDetailsRepository, "personalDetailsRepository must not be null");
-        this.resumeRepository = Objects.requireNonNull(resumeRepository, "resumeRepository must not be null");
+        this.persistenceService = Objects.requireNonNull(persistenceService, "persistenceService must not be null");
         this.documentStorageService = Objects.requireNonNull(documentStorageService, "documentStorageService must not be null");
         this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
         this.fileRepository = Objects.requireNonNull(fileRepository, "fileRepository must not be null");
-        this.cleanupService = Objects.requireNonNull(cleanupService, "cleanupService must not be null");
-        this.transactionLifecycle = Objects.requireNonNull(transactionLifecycle, "transactionLifecycle must not be null");
         this.translator = Objects.requireNonNull(translator, "translator must not be null");
         this.outputDirectory = Objects.requireNonNull(outputDirectory, "outputDirectory must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
-    @Transactional
     public GenerateGermanTailoredResumeResult generate(GenerateGermanTailoredResumeRequest request) {
         GenerateGermanTailoredResumeRequest safe = Objects.requireNonNull(request, "request must not be null");
         UUID profileId = requireId(safe.profileId(), "profileId");
@@ -166,18 +153,19 @@ public class GenerateGermanTailoredResumeService {
                     germanPdf.document().id(), germanPdf.generatedFile().path(), now, now
             );
 
-            ReplaceResult replaced = resumeRepository.replaceGermanyResume(new ResumeAggregateWrite(
-                    resume,
+            ReplaceResult replaced = persistenceService.replace(
+                    new ResumeAggregateWrite(
+                            resume,
+                            List.of(
+                                    toVariantWrite(enVariant, english),
+                                    toVariantWrite(deVariant, german)
+                            )
+                    ),
                     List.of(
-                            toVariantWrite(enVariant, english),
-                            toVariantWrite(deVariant, german)
+                            new GeneratedAsset(englishPdf.document().id(), englishPdf.generatedFile().path()),
+                            new GeneratedAsset(germanPdf.document().id(), germanPdf.generatedFile().path())
                     )
-            ));
-
-            for (ResumeVariant previous : replaced.previousVariants()) {
-                documentRepository.deleteFileIfUnreferenced(previous.documentId());
-                cleanupService.enqueueAfterCommit(previous.filePath());
-            }
+            );
 
             return new GenerateGermanTailoredResumeResult(
                     resume.id(),
@@ -209,7 +197,6 @@ public class GenerateGermanTailoredResumeService {
         GeneratedPdfFileResult generatedFile = new PdfGenerationService(outputDirectory).generateCompactResumePdfFile(
                 new PdfGenerationService.GeneratePdfFileRequest(fileName, title, GermanLebenslaufBodyRenderer.render(content))
         );
-        transactionLifecycle.afterRollback(() -> fileRepository.deleteIfExists(generatedFile.path()));
         try {
             StoredDocumentMetadata document = documentStorageService.storeGeneratedDocumentFile(
                     Path.of(generatedFile.path()),
@@ -365,6 +352,11 @@ public class GenerateGermanTailoredResumeService {
     private void discard(GeneratedPdfAssets assets) {
         if (assets == null) {
             return;
+        }
+        try {
+            documentRepository.deleteFileIfUnreferenced(assets.document().id());
+        } catch (RuntimeException ignored) {
+            // best-effort database compensation
         }
         try {
             fileRepository.deleteIfExists(assets.generatedFile().path());

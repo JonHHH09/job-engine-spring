@@ -11,7 +11,6 @@ import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.file.Path;
 import java.util.Map;
@@ -50,7 +49,6 @@ public class GenerateCanadianFrenchPdfResumeService {
         this.outputDirectory = Objects.requireNonNull(outputDirectory, "outputDirectory must not be null");
     }
 
-    @Transactional
     public GeneratePdfResumeResult generateCanadianFrenchPdfResume(GenerateCanadianFrenchPdfResumeRequest request) {
         GenerateCanadianFrenchPdfResumeRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
         UUID profileId = safeRequest.profileId();

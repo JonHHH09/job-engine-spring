@@ -8,7 +8,6 @@ import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -38,7 +37,6 @@ public class GeneratePdfResumeService {
     }
 
 
-    @Transactional
     public GeneratePdfResumeResult generatePdfResume(GeneratePdfResumeRequest request) {
         GeneratePdfResumeRequest safeRequest = java.util.Objects.requireNonNull(request, "request must not be null");
         UUID profileId = safeRequest.profileId();

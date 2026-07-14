@@ -49,6 +49,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -87,10 +88,13 @@ class GenerateGermanTailoredResumeServiceTests {
             invocation.getArgument(0, Runnable.class).run();
             return null;
         }).when(transactionLifecycle).afterRollback(org.mockito.ArgumentMatchers.any(Runnable.class));
+        GermanResumePersistenceService persistenceService = new GermanResumePersistenceService(
+                resumeRepository, documentRepository, fileRepository, cleanupService, transactionLifecycle
+        );
         service = new GenerateGermanTailoredResumeService(
-                profileRepository, jobRepository, personalDetailsRepository, resumeRepository,
-                documentStorageService, documentRepository, fileRepository, cleanupService,
-                transactionLifecycle, new OfflineGermanResumeTranslator(), tempDir,
+                profileRepository, jobRepository, personalDetailsRepository, persistenceService,
+                documentStorageService, documentRepository, fileRepository,
+                new OfflineGermanResumeTranslator(), tempDir,
                 Clock.fixed(NOW, ZoneOffset.UTC)
         );
     }
@@ -170,6 +174,43 @@ class GenerateGermanTailoredResumeServiceTests {
         when(documentStorageService.storeGeneratedDocumentFile(any(), any())).thenThrow(new RuntimeException("store failed"));
         assertThrows(RuntimeException.class, () -> service.generate(new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)));
         verify(fileRepository, org.mockito.Mockito.atLeastOnce()).deleteIfExists(any());
+    }
+
+    @Test
+    void suppressesFileCleanupFailureWhenDocumentStorageFails() {
+        when(profileRepository.findProfileAggregate(PROFILE_ID)).thenReturn(Optional.of(richProfile()));
+        when(jobRepository.findJobAggregate(JOB_ID)).thenReturn(Optional.of(job()));
+        when(personalDetailsRepository.findByProfileId(PROFILE_ID)).thenReturn(Optional.empty());
+        RuntimeException storageFailure = new RuntimeException("store failed");
+        RuntimeException cleanupFailure = new RuntimeException("cleanup failed");
+        when(documentStorageService.storeGeneratedDocumentFile(any(), any())).thenThrow(storageFailure);
+        doThrow(cleanupFailure).when(fileRepository).deleteIfExists(anyString());
+
+        RuntimeException thrown = assertThrows(RuntimeException.class, () -> service.generate(
+                new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)
+        ));
+
+        assertEquals(List.of(cleanupFailure), List.of(thrown.getSuppressed()));
+    }
+
+    @Test
+    void persistenceFailureRemainsPrimaryWhenBestEffortCompensationFails() {
+        when(profileRepository.findProfileAggregate(PROFILE_ID)).thenReturn(Optional.of(richProfile()));
+        when(jobRepository.findJobAggregate(JOB_ID)).thenReturn(Optional.of(job()));
+        when(personalDetailsRepository.findByProfileId(PROFILE_ID)).thenReturn(Optional.empty());
+        when(documentStorageService.storeGeneratedDocumentFile(any(), any())).thenAnswer(invocation ->
+                new StoredDocumentMetadata(UUID.randomUUID(), "resume.pdf", DocumentStorageService.PDF_MEDIA_TYPE, 10L, "sha", NOW, NOW));
+        org.mockito.Mockito.doNothing().when(transactionLifecycle).afterRollback(any());
+        RuntimeException persistenceFailure = new RuntimeException("db down");
+        when(resumeRepository.replaceGermanyResume(any())).thenThrow(persistenceFailure);
+        when(documentRepository.deleteFileIfUnreferenced(any())).thenThrow(new RuntimeException("document cleanup failed"));
+        doThrow(new RuntimeException("file cleanup failed")).when(fileRepository).deleteIfExists(anyString());
+
+        RuntimeException thrown = assertThrows(RuntimeException.class, () -> service.generate(
+                new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)
+        ));
+
+        assertEquals("db down", thrown.getMessage());
     }
 
     @Test

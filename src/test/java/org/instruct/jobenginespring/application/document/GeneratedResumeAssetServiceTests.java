@@ -59,11 +59,14 @@ class GeneratedResumeAssetServiceTests {
         when(resumeDocumentRepository.replace(saved)).thenReturn(replacement);
         when(documentRepository.deleteFileIfUnreferenced(OLD_DOCUMENT_ID)).thenReturn(true);
 
-        assertSame(replacement, service.replace(saved));
+        assertSame(replacement, service.replace(saved, "new.pdf"));
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
         verify(cleanupService).enqueueAfterCommit("old.pdf");
-        verifyNoInteractions(fileRepository);
+        ArgumentCaptor<Runnable> rollback = ArgumentCaptor.forClass(Runnable.class);
+        verify(transactionLifecycle).afterRollback(rollback.capture());
+        rollback.getValue().run();
+        verify(fileRepository).deleteIfExists("new.pdf");
     }
 
     @Test
@@ -129,6 +132,10 @@ class GeneratedResumeAssetServiceTests {
 
         service.discardFailedGeneratedFile("failed.pdf");
         verify(fileRepository).deleteIfExists("failed.pdf");
+
+        service.discardFailedGeneratedAsset(NEW_DOCUMENT_ID, "failed-asset.pdf");
+        verify(documentRepository).deleteFileIfUnreferenced(NEW_DOCUMENT_ID);
+        verify(fileRepository).deleteIfExists("failed-asset.pdf");
     }
 
     private static ProfileResumeDocument link(UUID documentId, String path) {

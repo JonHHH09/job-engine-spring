@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -35,6 +36,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public StoredDocumentMetadata saveFile(StoredDocumentFile file) {
         Objects.requireNonNull(file, "file must not be null");
         namedJdbc.update("""
@@ -126,6 +128,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction) {
         Objects.requireNonNull(extraction, "extraction must not be null");
         MapSqlParameterSource parameters = extractionParameters(extraction);
@@ -144,6 +147,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
         Objects.requireNonNull(extraction, "extraction must not be null");
         namedJdbc.update("""
@@ -171,6 +175,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public boolean deleteFileIfUnreferenced(UUID fileId) {
         Optional<UUID> deletedBlobId = jdbc.sql("""
                         DELETE FROM document.documents stored_document

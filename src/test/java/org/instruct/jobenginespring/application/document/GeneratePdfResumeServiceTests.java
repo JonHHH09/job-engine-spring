@@ -702,6 +702,30 @@ class GeneratePdfResumeServiceTests {
         assertEquals(List.of(cleanupFailure), List.of(thrown.getSuppressed()));
     }
 
+    @Test
+    void replacementFailureCompensatesStoredDocumentAndGeneratedFile() {
+        DocumentStorageService storage = mock(DocumentStorageService.class);
+        GeneratedResumeAssetService assets = mock(GeneratedResumeAssetService.class);
+        StoredDocumentMetadata document = new StoredDocumentMetadata(
+                UUID.randomUUID(), "resume.pdf", DocumentStorageService.PDF_MEDIA_TYPE, 10, "sha", NOW, NOW
+        );
+        IllegalStateException replacementFailure = new IllegalStateException("replacement failed");
+        when(storage.storeGeneratedDocumentFile(any(), eq(DocumentStorageService.PDF_MEDIA_TYPE)))
+                .thenReturn(document);
+        when(assets.replace(any(), any())).thenThrow(replacementFailure);
+        ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
+                profileRepository, storage, assets, Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> workflow.generateAndLink(command(tempDir.resolve("replacement-failed")))
+        );
+
+        assertSame(replacementFailure, thrown);
+        verify(assets).discardFailedGeneratedAsset(eq(document.id()), any());
+    }
+
     private static ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand command(Path outputDirectory) {
         return new ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand(
                 PROFILE_ID, "master_resume", outputDirectory, "resume.pdf", "Resume", "Body"

@@ -7,6 +7,7 @@ import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileResumeDocumentRepository;
 import org.instruct.jobenginespring.domain.profile.ProfileResumeDocument;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Objects;
 import java.util.UUID;
@@ -39,6 +40,19 @@ public class GeneratedResumeAssetService {
     }
 
     ProfileResumeDocumentRepository.Replacement replace(ProfileResumeDocument resumeDocument) {
+        return replaceWithinTransaction(resumeDocument);
+    }
+
+    @Transactional
+    public ProfileResumeDocumentRepository.Replacement replace(
+            ProfileResumeDocument resumeDocument,
+            String generatedFilePath
+    ) {
+        deleteGeneratedFileOnRollback(generatedFilePath);
+        return replaceWithinTransaction(resumeDocument);
+    }
+
+    private ProfileResumeDocumentRepository.Replacement replaceWithinTransaction(ProfileResumeDocument resumeDocument) {
         ProfileResumeDocumentRepository.Replacement replacement = resumeDocumentRepository.replace(resumeDocument);
         replacement.previous()
                 .filter(previous -> !previous.documentId().equals(replacement.saved().documentId()))
@@ -60,6 +74,11 @@ public class GeneratedResumeAssetService {
     }
 
     void discardFailedGeneratedFile(String filePath) {
+        fileRepository.deleteIfExists(filePath);
+    }
+
+    void discardFailedGeneratedAsset(UUID documentId, String filePath) {
+        documentRepository.deleteFileIfUnreferenced(documentId);
         fileRepository.deleteIfExists(filePath);
     }
 
