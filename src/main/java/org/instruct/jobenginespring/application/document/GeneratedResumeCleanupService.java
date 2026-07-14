@@ -22,12 +22,14 @@ public class GeneratedResumeCleanupService {
     static final int RETRY_BATCH_SIZE = GeneratedResumeCleanupExecutor.RETRY_BATCH_SIZE;
     static final Duration COMPLETED_RETENTION = Duration.ofDays(30);
     static final int RETENTION_BATCH_SIZE = 1_000;
+    static final int RETENTION_MAX_BATCHES_PER_RUN = 10;
 
     private final GeneratedResumeCleanupRepository cleanupRepository;
     private final TransactionLifecycle transactionLifecycle;
     private final GeneratedResumeCleanupExecutor cleanupExecutor;
     private final Duration completedRetention;
     private final int retentionBatchSize;
+    private final int retentionMaxBatchesPerRun;
     private Clock clock = Clock.systemUTC();
 
     @Autowired
@@ -36,7 +38,9 @@ public class GeneratedResumeCleanupService {
             TransactionLifecycle transactionLifecycle,
             GeneratedResumeCleanupExecutor cleanupExecutor,
             @Value("${job-engine.pdf-generation.cleanup-completed-retention:30d}") Duration completedRetention,
-            @Value("${job-engine.pdf-generation.cleanup-retention-batch-size:1000}") int retentionBatchSize
+            @Value("${job-engine.pdf-generation.cleanup-retention-batch-size:1000}") int retentionBatchSize,
+            @Value("${job-engine.pdf-generation.cleanup-retention-max-batches-per-run:10}")
+            int retentionMaxBatchesPerRun
     ) {
         this.cleanupRepository = Objects.requireNonNull(cleanupRepository, "cleanupRepository must not be null");
         this.transactionLifecycle = Objects.requireNonNull(transactionLifecycle, "transactionLifecycle must not be null");
@@ -46,6 +50,10 @@ public class GeneratedResumeCleanupService {
             throw new IllegalArgumentException("retentionBatchSize must be positive");
         }
         this.retentionBatchSize = retentionBatchSize;
+        if (retentionMaxBatchesPerRun <= 0) {
+            throw new IllegalArgumentException("retentionMaxBatchesPerRun must be positive");
+        }
+        this.retentionMaxBatchesPerRun = retentionMaxBatchesPerRun;
     }
 
     GeneratedResumeCleanupService(
@@ -59,7 +67,8 @@ public class GeneratedResumeCleanupService {
                 transactionLifecycle,
                 cleanupExecutor,
                 COMPLETED_RETENTION,
-                RETENTION_BATCH_SIZE
+                RETENTION_BATCH_SIZE,
+                RETENTION_MAX_BATCHES_PER_RUN
         );
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
@@ -70,9 +79,17 @@ public class GeneratedResumeCleanupService {
             GeneratedResumeCleanupExecutor cleanupExecutor,
             Clock clock,
             Duration completedRetention,
-            int retentionBatchSize
+            int retentionBatchSize,
+            int retentionMaxBatchesPerRun
     ) {
-        this(cleanupRepository, transactionLifecycle, cleanupExecutor, completedRetention, retentionBatchSize);
+        this(
+                cleanupRepository,
+                transactionLifecycle,
+                cleanupExecutor,
+                completedRetention,
+                retentionBatchSize,
+                retentionMaxBatchesPerRun
+        );
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
@@ -105,8 +122,20 @@ public class GeneratedResumeCleanupService {
                 .forEach(cleanupExecutor::attemptSafely);
     }
 
-    public int purgeCompletedTasks() {
-        return cleanupRepository.deleteCompletedBefore(clock.instant().minus(completedRetention), retentionBatchSize);
+    public long purgeCompletedTasks() {
+        var cutoff = clock.instant().minus(completedRetention);
+        long totalDeleted = 0;
+        for (int batch = 0; batch < retentionMaxBatchesPerRun; batch++) {
+            int deleted = cleanupRepository.deleteCompletedBefore(cutoff, retentionBatchSize);
+            if (deleted < 0 || deleted > retentionBatchSize) {
+                throw new IllegalStateException("repository returned an invalid retention deletion count");
+            }
+            totalDeleted = Math.addExact(totalDeleted, deleted);
+            if (deleted < retentionBatchSize) {
+                break;
+            }
+        }
+        return totalDeleted;
     }
 
     private static Duration requirePositive(Duration duration, String name) {

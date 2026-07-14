@@ -45,11 +45,15 @@ class HealthMcpAdapterTests {
                 DatabaseHealthStatus.UP,
                 DatabaseHealthErrorCategory.NONE,
                 new DatabaseHealthMetadata(CHECKED_AT, 1, 1, 0),
-                new CleanupHealthReport(CleanupHealthStatus.HEALTHY, 0, 0, 0, false)
+                new CleanupHealthReport(CleanupHealthStatus.DEGRADED, 0, 0, 7, 0, false)
         );
         when(applicationHealthService.checkHealth()).thenReturn(report);
 
-        assertSame(report, adapter.health());
+        var actual = adapter.health();
+
+        assertSame(report, actual);
+        assertEquals(7, actual.generatedResumeCleanup().expiredCompletedCount());
+        assertEquals(CleanupHealthStatus.DEGRADED, actual.generatedResumeCleanup().status());
 
         verify(applicationHealthService).checkHealth();
     }

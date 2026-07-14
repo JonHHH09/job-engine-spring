@@ -84,6 +84,8 @@ class PostgresGeneratedResumeCleanupRepositoryIntegrationTests {
     void reportsSanitizedBacklogMetricsAndRepeatedFailures() {
         UUID pending = repository.enqueue("/private/users/jh/pending.pdf", NOW.minusSeconds(600));
         UUID processing = repository.enqueue("/private/users/jh/processing.pdf", NOW.minusSeconds(300));
+        completedTask("/private/users/jh/expired.pdf", NOW.minusSeconds(10_000));
+        completedTask("/private/users/jh/recent.pdf", NOW.minusSeconds(100));
         repository.claim(processing, NOW, NOW.plusSeconds(300));
         jdbc.update("""
                 UPDATE document.generated_resume_file_cleanups
@@ -91,10 +93,11 @@ class PostgresGeneratedResumeCleanupRepositoryIntegrationTests {
                 WHERE id = ?
                 """, java.sql.Timestamp.from(NOW.minusSeconds(120)), pending);
 
-        var snapshot = repository.readQueueSnapshot(NOW, 3);
+        var snapshot = repository.readQueueSnapshot(NOW, 3, NOW.minusSeconds(1_000));
 
         assertEquals(1, snapshot.pendingCount());
         assertEquals(1, snapshot.processingCount());
+        assertEquals(1, snapshot.expiredCompletedCount());
         assertEquals(NOW.minusSeconds(120), snapshot.oldestDueAt());
         assertTrue(snapshot.repeatedFailure());
         assertTrue(snapshot.toString().contains("pendingCount=1"));
@@ -103,16 +106,17 @@ class PostgresGeneratedResumeCleanupRepositoryIntegrationTests {
 
     @Test
     void emptyQueueHasNoOldestDueTask() {
-        var snapshot = repository.readQueueSnapshot(NOW, 3);
+        var snapshot = repository.readQueueSnapshot(NOW, 3, NOW.minusSeconds(1_000));
 
         assertEquals(0, snapshot.pendingCount());
         assertEquals(0, snapshot.processingCount());
+        assertEquals(0, snapshot.expiredCompletedCount());
         assertNull(snapshot.oldestDueAt());
     }
 
     @Test
     void rejectsInvalidObservationAndRetentionLimits() {
-        assertThrows(IllegalArgumentException.class, () -> repository.readQueueSnapshot(NOW, 0));
+        assertThrows(IllegalArgumentException.class, () -> repository.readQueueSnapshot(NOW, 0, NOW));
         assertThrows(IllegalArgumentException.class, () -> repository.deleteCompletedBefore(NOW, 0));
     }
 

@@ -44,9 +44,9 @@ mcp_servers:
     connect_timeout: 60
 ```
 
-Reload the client's MCP connections, then call `health`. A successful response reports database readiness plus sanitized generated-resume cleanup queue counts, oldest-due age, and repeated-failure state without returning credentials, file paths, or failure details.
+Reload the client's MCP connections, then call `health`. A successful response reports database readiness plus sanitized generated-resume cleanup queue counts, expired completed-row count, oldest-due age, and repeated-failure state without returning credentials, file paths, timestamps, or failure details. Cleanup health is degraded while any completed rows are older than the configured retention window.
 
-Completed generated-resume cleanup audit rows are retained for 30 days and then deleted daily in batches of at most 1,000. Operators can override the retention window, batch size, schedule, five-minute oldest-due health threshold, and three-attempt repeated-failure threshold with the `JOB_ENGINE_CLEANUP_*` environment variables documented in `application.yaml`. Cleanup warnings and errors use a dedicated stderr-only logger so STDIO stdout remains reserved for MCP JSON-RPC.
+Completed generated-resume cleanup audit rows are retained for 30 days and then deleted daily. Each run drains up to 10 batches of 1,000 rows by default, for a capacity of 10,000 rows per run, and stops early after a short or empty batch. Operators can tune the retention window, batch size, maximum batches per run, schedule, five-minute oldest-due health threshold, and three-attempt repeated-failure threshold with the `JOB_ENGINE_CLEANUP_*` environment variables documented in `application.yaml`. Increase batch size, maximum batches, or schedule frequency when completed-row throughput can exceed the configured per-run capacity. Cleanup warnings and errors use a dedicated stderr-only logger so STDIO stdout remains reserved for MCP JSON-RPC.
 
 ### First useful workflow
 

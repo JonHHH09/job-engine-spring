@@ -48,9 +48,10 @@ job-engine:
   document:
     import-root: ${JOB_ENGINE_DOCUMENT_IMPORT_ROOT:tmp/imports}
   pdf-generation:
-    # Completed cleanup audit rows are retained for 30 days, then deleted daily in bounded batches.
+    # Completed cleanup audit rows are retained for 30 days, then deleted daily with a bounded per-run capacity.
     cleanup-completed-retention: ${JOB_ENGINE_CLEANUP_COMPLETED_RETENTION:30d}
     cleanup-retention-batch-size: ${JOB_ENGINE_CLEANUP_RETENTION_BATCH_SIZE:1000}
+    cleanup-retention-max-batches-per-run: ${JOB_ENGINE_CLEANUP_RETENTION_MAX_BATCHES_PER_RUN:10}
     cleanup-retention-delay: ${JOB_ENGINE_CLEANUP_RETENTION_DELAY:PT24H}
     cleanup-retention-initial-delay: ${JOB_ENGINE_CLEANUP_RETENTION_INITIAL_DELAY:PT5M}
     # Health degrades when the oldest due task reaches five minutes or a task reaches three failed attempts.

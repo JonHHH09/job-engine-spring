@@ -103,7 +103,11 @@ public class PostgresGeneratedResumeCleanupRepository implements GeneratedResume
     }
 
     @Override
-    public CleanupQueueSnapshot readQueueSnapshot(Instant now, int repeatedFailureAttemptThreshold) {
+    public CleanupQueueSnapshot readQueueSnapshot(
+            Instant now,
+            int repeatedFailureAttemptThreshold,
+            Instant completedRetentionCutoff
+    ) {
         if (repeatedFailureAttemptThreshold < 1) {
             throw new IllegalArgumentException("repeatedFailureAttemptThreshold must be positive");
         }
@@ -115,17 +119,23 @@ public class PostgresGeneratedResumeCleanupRepository implements GeneratedResume
                                ) AS oldest_due_at,
                                COALESCE(BOOL_OR(
                                    attempt_count >= :failureThreshold AND last_failure_type IS NOT NULL
-                               ), FALSE) AS repeated_failure
+                               ), FALSE) AS repeated_failure,
+                               (SELECT COUNT(*)
+                                FROM document.generated_resume_file_cleanups
+                                WHERE status = 'COMPLETED' AND completed_at < :completedRetentionCutoff
+                               ) AS expired_completed_count
                         FROM document.generated_resume_file_cleanups
                         WHERE status IN ('PENDING', 'PROCESSING')
                         """)
                 .param("now", Timestamp.from(now))
                 .param("failureThreshold", repeatedFailureAttemptThreshold)
+                .param("completedRetentionCutoff", Timestamp.from(completedRetentionCutoff))
                 .query((resultSet, rowNumber) -> {
                     var oldestDue = resultSet.getTimestamp("oldest_due_at");
                     return new CleanupQueueSnapshot(
                             resultSet.getLong("pending_count"),
                             resultSet.getLong("processing_count"),
+                            resultSet.getLong("expired_completed_count"),
                             oldestDue == null ? null : oldestDue.toInstant(),
                             resultSet.getBoolean("repeated_failure")
                     );

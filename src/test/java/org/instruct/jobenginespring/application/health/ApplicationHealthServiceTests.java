@@ -20,7 +20,7 @@ class ApplicationHealthServiceTests {
         var now = Instant.parse("2026-07-14T16:00:00Z");
         var database = new DatabaseHealthService(DatabaseHealthCheckResult::up, Clock.fixed(now, ZoneOffset.UTC));
         var cleanup = mock(GeneratedResumeCleanupHealthService.class);
-        var cleanupReport = new CleanupHealthReport(CleanupHealthStatus.DEGRADED, 2, 1, 300, true);
+        var cleanupReport = new CleanupHealthReport(CleanupHealthStatus.DEGRADED, 2, 1, 4, 300, true);
         when(cleanup.checkHealth()).thenReturn(cleanupReport);
 
         var report = new ApplicationHealthService(database, cleanup).checkHealth();

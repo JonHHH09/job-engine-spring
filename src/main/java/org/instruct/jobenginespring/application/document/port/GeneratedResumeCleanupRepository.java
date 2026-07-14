@@ -18,7 +18,11 @@ public interface GeneratedResumeCleanupRepository {
 
     void markPending(UUID taskId, Instant nextAttemptAt, String failureType);
 
-    CleanupQueueSnapshot readQueueSnapshot(Instant now, int repeatedFailureAttemptThreshold);
+    CleanupQueueSnapshot readQueueSnapshot(
+            Instant now,
+            int repeatedFailureAttemptThreshold,
+            Instant completedRetentionCutoff
+    );
 
     int deleteCompletedBefore(Instant cutoff, int limit);
 
@@ -26,11 +30,12 @@ public interface GeneratedResumeCleanupRepository {
     record CleanupQueueSnapshot(
             long pendingCount,
             long processingCount,
+            long expiredCompletedCount,
             Instant oldestDueAt,
             boolean repeatedFailure
     ) {
         public CleanupQueueSnapshot {
-            if (pendingCount < 0 || processingCount < 0) {
+            if (pendingCount < 0 || processingCount < 0 || expiredCompletedCount < 0) {
                 throw new IllegalArgumentException("cleanup queue counts must not be negative");
             }
         }

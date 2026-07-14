@@ -16,6 +16,7 @@ public final class GeneratedResumeCleanupHealthService {
     private final GeneratedResumeCleanupRepository cleanupRepository;
     private final Duration oldestDueDegradedThreshold;
     private final int repeatedFailureAttemptThreshold;
+    private final Duration completedRetention;
     private final Clock clock;
 
     @Autowired
@@ -24,15 +25,23 @@ public final class GeneratedResumeCleanupHealthService {
             @Value("${job-engine.pdf-generation.cleanup-health-oldest-due-threshold:PT5M}")
             Duration oldestDueDegradedThreshold,
             @Value("${job-engine.pdf-generation.cleanup-health-repeated-failure-attempts:3}")
-            int repeatedFailureAttemptThreshold
+            int repeatedFailureAttemptThreshold,
+            @Value("${job-engine.pdf-generation.cleanup-completed-retention:30d}") Duration completedRetention
     ) {
-        this(cleanupRepository, oldestDueDegradedThreshold, repeatedFailureAttemptThreshold, Clock.systemUTC());
+        this(
+                cleanupRepository,
+                oldestDueDegradedThreshold,
+                repeatedFailureAttemptThreshold,
+                completedRetention,
+                Clock.systemUTC()
+        );
     }
 
     GeneratedResumeCleanupHealthService(
             GeneratedResumeCleanupRepository cleanupRepository,
             Duration oldestDueDegradedThreshold,
             int repeatedFailureAttemptThreshold,
+            Duration completedRetention,
             Clock clock
     ) {
         this.cleanupRepository = Objects.requireNonNull(cleanupRepository, "cleanupRepository must not be null");
@@ -46,17 +55,23 @@ public final class GeneratedResumeCleanupHealthService {
             throw new IllegalArgumentException("repeatedFailureAttemptThreshold must be positive");
         }
         this.repeatedFailureAttemptThreshold = repeatedFailureAttemptThreshold;
+        this.completedRetention = requirePositive(completedRetention, "completedRetention");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
     public CleanupHealthReport checkHealth() {
         var now = clock.instant();
         try {
-            var snapshot = cleanupRepository.readQueueSnapshot(now, repeatedFailureAttemptThreshold);
+            var snapshot = cleanupRepository.readQueueSnapshot(
+                    now,
+                    repeatedFailureAttemptThreshold,
+                    now.minus(completedRetention)
+            );
             long oldestDueAgeSeconds = snapshot.oldestDueAt() == null
                     ? 0
                     : Math.max(0, Duration.between(snapshot.oldestDueAt(), now).toSeconds());
             var status = snapshot.repeatedFailure()
+                    || snapshot.expiredCompletedCount() > 0
                     || oldestDueAgeSeconds >= oldestDueDegradedThreshold.toSeconds()
                     ? CleanupHealthStatus.DEGRADED
                     : CleanupHealthStatus.HEALTHY;
@@ -64,12 +79,21 @@ public final class GeneratedResumeCleanupHealthService {
                     status,
                     snapshot.pendingCount(),
                     snapshot.processingCount(),
+                    snapshot.expiredCompletedCount(),
                     oldestDueAgeSeconds,
                     snapshot.repeatedFailure()
             );
         } catch (RuntimeException exception) {
-            return new CleanupHealthReport(CleanupHealthStatus.UNKNOWN, 0, 0, 0, false);
+            return new CleanupHealthReport(CleanupHealthStatus.UNKNOWN, 0, 0, 0, 0, false);
         }
+    }
+
+    private static Duration requirePositive(Duration duration, String name) {
+        Objects.requireNonNull(duration, name + " must not be null");
+        if (duration.isZero() || duration.isNegative()) {
+            throw new IllegalArgumentException(name + " must be positive");
+        }
+        return duration;
     }
 
     public enum CleanupHealthStatus {
@@ -82,12 +106,13 @@ public final class GeneratedResumeCleanupHealthService {
             CleanupHealthStatus status,
             long pendingCount,
             long processingCount,
+            long expiredCompletedCount,
             long oldestDueAgeSeconds,
             boolean repeatedFailure
     ) {
         public CleanupHealthReport {
             Objects.requireNonNull(status, "status must not be null");
-            if (pendingCount < 0 || processingCount < 0 || oldestDueAgeSeconds < 0) {
+            if (pendingCount < 0 || processingCount < 0 || expiredCompletedCount < 0 || oldestDueAgeSeconds < 0) {
                 throw new IllegalArgumentException("cleanup health metrics must not be negative");
             }
         }

@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -108,18 +109,69 @@ class GeneratedResumeCleanupServiceTests {
     }
 
     @Test
-    void purgesOnlyCompletedTasksOutsideTheRetentionWindowInBoundedBatches() {
-        service.purgeCompletedTasks();
+    void drainsCompletedTasksUntilAShortBatch() {
+        when(cleanupRepository.deleteCompletedBefore(
+                NOW.minus(GeneratedResumeCleanupService.COMPLETED_RETENTION),
+                GeneratedResumeCleanupService.RETENTION_BATCH_SIZE
+        )).thenReturn(
+                GeneratedResumeCleanupService.RETENTION_BATCH_SIZE,
+                GeneratedResumeCleanupService.RETENTION_BATCH_SIZE,
+                17
+        );
 
-        verify(cleanupRepository).deleteCompletedBefore(
+        assertEquals(2_017, service.purgeCompletedTasks());
+
+        verify(cleanupRepository, times(3)).deleteCompletedBefore(
                 NOW.minus(GeneratedResumeCleanupService.COMPLETED_RETENTION),
                 GeneratedResumeCleanupService.RETENTION_BATCH_SIZE
         );
     }
 
     @Test
+    void boundsFullBatchDrainingByConfiguredMaximum() {
+        var boundedService = serviceWithRetention(Duration.ofDays(1), 2, 3);
+        when(cleanupRepository.deleteCompletedBefore(NOW.minus(Duration.ofDays(1)), 2)).thenReturn(2);
+
+        assertEquals(6, boundedService.purgeCompletedTasks());
+
+        verify(cleanupRepository, times(3)).deleteCompletedBefore(NOW.minus(Duration.ofDays(1)), 2);
+    }
+
+    @Test
+    void stopsAfterAnEmptyBatchWithoutLooping() {
+        var boundedService = serviceWithRetention(Duration.ofDays(1), 2, Integer.MAX_VALUE);
+
+        assertEquals(0, boundedService.purgeCompletedTasks());
+
+        verify(cleanupRepository).deleteCompletedBefore(NOW.minus(Duration.ofDays(1)), 2);
+    }
+
+    @Test
+    void totalsMoreThanIntegerMaxValueWithoutOverflow() {
+        var boundedService = serviceWithRetention(Duration.ofDays(1), Integer.MAX_VALUE, 2);
+        when(cleanupRepository.deleteCompletedBefore(
+                NOW.minus(Duration.ofDays(1)), Integer.MAX_VALUE
+        )).thenReturn(Integer.MAX_VALUE);
+
+        assertEquals(4_294_967_294L, boundedService.purgeCompletedTasks());
+    }
+
+    @Test
+    void rejectsInvalidRepositoryDeletionCounts() {
+        var boundedService = serviceWithRetention(Duration.ofDays(1), 10, 1);
+        when(cleanupRepository.deleteCompletedBefore(NOW.minus(Duration.ofDays(1)), 10)).thenReturn(11);
+
+        assertThrows(IllegalStateException.class, boundedService::purgeCompletedTasks);
+
+        var negativeCountService = serviceWithRetention(Duration.ofDays(2), 10, 1);
+        when(cleanupRepository.deleteCompletedBefore(NOW.minus(Duration.ofDays(2)), 10)).thenReturn(-1);
+
+        assertThrows(IllegalStateException.class, negativeCountService::purgeCompletedTasks);
+    }
+
+    @Test
     void acceptsStrictlyPositiveRetentionBoundariesWithoutMovingCutoffIntoFuture() {
-        var boundaryService = serviceWithRetention(Duration.ofNanos(1), 1);
+        var boundaryService = serviceWithRetention(Duration.ofNanos(1), 1, 1);
 
         boundaryService.purgeCompletedTasks();
 
@@ -128,34 +180,42 @@ class GeneratedResumeCleanupServiceTests {
 
     @Test
     void rejectsNonPositiveConfiguredCompletedRetentionAtConstruction() {
-        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ZERO, 1));
-        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofNanos(-1), 1));
+        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ZERO, 1, 1));
+        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofNanos(-1), 1, 1));
     }
 
     @Test
     void rejectsNonPositiveConfiguredRetentionBatchSizeAtConstruction() {
-        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofDays(1), 0));
-        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofDays(1), -1));
+        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofDays(1), 0, 1));
+        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofDays(1), -1, 1));
     }
 
-    private GeneratedResumeCleanupService serviceWithRetention(Duration retention, int batchSize) {
+    @Test
+    void rejectsNonPositiveConfiguredRetentionMaxBatchesPerRunAtConstruction() {
+        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofDays(1), 1, 0));
+        assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofDays(1), 1, -1));
+    }
+
+    private GeneratedResumeCleanupService serviceWithRetention(Duration retention, int batchSize, int maxBatches) {
         return new GeneratedResumeCleanupService(
                 cleanupRepository,
                 transactionLifecycle,
                 mock(GeneratedResumeCleanupExecutor.class),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 retention,
-                batchSize
+                batchSize,
+                maxBatches
         );
     }
 
-    private GeneratedResumeCleanupService configuredService(Duration retention, int batchSize) {
+    private GeneratedResumeCleanupService configuredService(Duration retention, int batchSize, int maxBatches) {
         return new GeneratedResumeCleanupService(
                 cleanupRepository,
                 transactionLifecycle,
                 mock(GeneratedResumeCleanupExecutor.class),
                 retention,
-                batchSize
+                batchSize,
+                maxBatches
         );
     }
 }
