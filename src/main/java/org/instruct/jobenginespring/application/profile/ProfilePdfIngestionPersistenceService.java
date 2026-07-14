@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.profile;
 
+import org.apache.commons.codec.digest.DigestUtils;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.StoredPdfTextExtractionResult;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
@@ -58,29 +59,24 @@ public class ProfilePdfIngestionPersistenceService {
             ProfileWriteRequest profileWriteRequest
     ) {
         UUID extractionId = Objects.requireNonNull(storedExtraction.extractionId(), "extractionId must not be null");
-        var existingResult = profilePdfSourceRepository.findByPdfExtractionId(extractionId)
-                .map(existing -> ProfilePdfIngestionService.toResult(
-                        existing, storedExtraction, IngestionStatus.REUSED_EXISTING_SOURCE, false, true
-                ))
-                .or(() -> profilePdfSourceRepository.findByDocumentSha256(storedExtraction.document().sha256())
-                        .map(existing -> ProfilePdfIngestionService.toResult(
-                                existing, storedExtraction, IngestionStatus.REUSED_EXISTING_SOURCE, false, true
-                        )));
+        acquireLock("document:" + storedExtraction.document().sha256());
+        var existingResult = profilePdfSourceRepository.findLinkedByPdfExtractionId(extractionId)
+                .map(ProfilePdfIngestionService::reusedResult)
+                .or(() -> profilePdfSourceRepository.findLinkedByDocumentSha256(storedExtraction.document().sha256())
+                        .map(ProfilePdfIngestionService::reusedResult));
         if (existingResult.isPresent()) {
             return existingResult.orElseThrow();
         }
 
+        Objects.requireNonNull(profileWriteRequest, "profileWriteRequest must not be null");
+        profileIdentityMatcher.concurrencyKeys(profileWriteRequest)
+                .forEach(profilePdfSourceRepository::acquireIngestionLock);
         UUID existingProfileId = request.existingProfileId();
         if (existingProfileId != null) {
-            profilePdfSourceRepository.findByProfileId(existingProfileId)
-                    .ifPresent(existing -> {
-                        throw new ApplicationException(
-                                ApplicationErrorCode.VALIDATION_ERROR,
-                                "Profile is already linked to a PDF extraction",
-                                Map.of("profileId", String.valueOf(existingProfileId)),
-                                null
-                        );
-                    });
+            acquireLock("profile:" + existingProfileId);
+            if (profilePdfSourceRepository.findLinkedByProfileId(existingProfileId).isPresent()) {
+                return ProfilePdfIngestionService.alreadyLinkedResult(existingProfileId, storedExtraction);
+            }
         }
 
         boolean overwriteExisting = request.overwriteExistingProfile() != null && request.overwriteExistingProfile();
@@ -97,7 +93,9 @@ public class ProfilePdfIngestionPersistenceService {
             createdProfile = true;
             status = IngestionStatus.CREATED_PROFILE;
         } else if (overwriteExisting) {
-            profileAggregate = profileService.updateProfile(existingProfileId, profileWriteRequest);
+            profileAggregate = profileService.updateProfile(
+                    existingProfileId, request.expectedRevision(), profileWriteRequest
+            );
             createdProfile = false;
             status = IngestionStatus.UPDATED_PROFILE;
         } else {
@@ -136,5 +134,9 @@ public class ProfilePdfIngestionPersistenceService {
         return ProfilePdfIngestionService.toResult(
                 inserted.source(), storedExtraction, IngestionStatus.REUSED_EXISTING_SOURCE, false, true
         );
+    }
+
+    private void acquireLock(String rawLockKey) {
+        profilePdfSourceRepository.acquireIngestionLock(DigestUtils.sha256Hex(rawLockKey));
     }
 }

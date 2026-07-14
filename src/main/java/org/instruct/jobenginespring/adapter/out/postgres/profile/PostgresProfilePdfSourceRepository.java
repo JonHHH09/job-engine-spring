@@ -1,6 +1,7 @@
 package org.instruct.jobenginespring.adapter.out.postgres.profile;
 
 import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
+import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository.LinkedPdfSource;
 import org.instruct.jobenginespring.domain.profile.ProfilePdfSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.RowMapper;
@@ -27,9 +28,18 @@ public class PostgresProfilePdfSourceRepository implements ProfilePdfSourceRepos
     }
 
     @Override
+    public void acquireIngestionLock(String hashedLockKey) {
+        Objects.requireNonNull(hashedLockKey, "hashedLockKey must not be null");
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(:lockKey, 0))")
+                .param("lockKey", hashedLockKey)
+                .query((resultSet, rowNumber) -> Boolean.TRUE)
+                .single();
+    }
+
+    @Override
     public ProfilePdfSource save(ProfilePdfSource source) {
         Objects.requireNonNull(source, "source must not be null");
-        jdbc.sql("""
+        int inserted = jdbc.sql("""
                         INSERT INTO profile.profile_pdf_sources (id, profile_id, pdf_extraction_id, source_type, created_at)
                         VALUES (:id, :profileId, :pdfExtractionId, :sourceType, :createdAt)
                         """)
@@ -39,6 +49,9 @@ public class PostgresProfilePdfSourceRepository implements ProfilePdfSourceRepos
                 .param("sourceType", source.sourceType())
                 .param("createdAt", Timestamp.from(source.createdAt()))
                 .update();
+        if (inserted != 1) {
+            throw new IllegalStateException("Profile PDF source insert count was not one");
+        }
         return findByProfileId(source.profileId()).orElseThrow();
     }
 
@@ -110,6 +123,46 @@ public class PostgresProfilePdfSourceRepository implements ProfilePdfSourceRepos
                         """)
                 .param("sha256", sha256)
                 .query(SOURCE_MAPPER)
+                .optional();
+    }
+
+    @Override
+    public Optional<LinkedPdfSource> findLinkedByProfileId(UUID profileId) {
+        return findLinked("source.profile_id = :value", profileId);
+    }
+
+    @Override
+    public Optional<LinkedPdfSource> findLinkedByPdfExtractionId(UUID pdfExtractionId) {
+        return findLinked("source.pdf_extraction_id = :value", pdfExtractionId);
+    }
+
+    @Override
+    public Optional<LinkedPdfSource> findLinkedByDocumentSha256(String sha256) {
+        return findLinked("blob.sha256 = :value", sha256);
+    }
+
+    private Optional<LinkedPdfSource> findLinked(String predicate, Object value) {
+        return jdbc.sql("""
+                        SELECT source.id, source.profile_id, source.pdf_extraction_id, source.source_type, source.created_at,
+                               document.id AS document_id, document.original_file_name,
+                               extraction.page_count, extraction.character_count, extraction.truncated
+                        FROM profile.profile_pdf_sources source
+                        JOIN document.pdf_extractions extraction ON extraction.id = source.pdf_extraction_id
+                        JOIN document.documents document ON document.id = extraction.file_id
+                        JOIN document.blobs blob ON blob.id = document.blob_id
+                        WHERE %s
+                        ORDER BY source.created_at DESC, source.id
+                        LIMIT 1
+                        """.formatted(predicate))
+                .param("value", value)
+                .query((resultSet, rowNumber) -> new LinkedPdfSource(
+                        mapSource(resultSet, rowNumber),
+                        resultSet.getObject("document_id", UUID.class),
+                        resultSet.getString("original_file_name"),
+                        resultSet.getInt("page_count"),
+                        resultSet.getInt("character_count"),
+                        resultSet.getBoolean("truncated")
+                ))
                 .optional();
     }
 

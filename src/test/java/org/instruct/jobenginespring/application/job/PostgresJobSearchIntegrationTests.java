@@ -181,8 +181,9 @@ class PostgresJobSearchIntegrationTests {
         repository.updateJobAggregate(new JobAggregate(new JobPosting(renamed.id(), renamed.sourceMethod(),
                 renamed.sourceLabel(), "Renamed", renamed.company(), renamed.location(), renamed.description(),
                 renamed.experienceRequirement(), renamed.employmentType(), renamed.seniority(), renamed.postedAt(),
-                renamed.canonicalFingerprint(), renamed.createdAt(), renamed.updatedAt().plusSeconds(1)),
-                second.skills(), second.linkIngestion(), second.textIngestion()));
+                renamed.canonicalFingerprint(), renamed.createdAt(), renamed.updatedAt().plusSeconds(1),
+                renamed.revision() + 1), second.skills(), second.linkIngestion(), second.textIngestion()),
+                renamed.revision());
         repository.saveJobAggregate(textAggregate(UUID.randomUUID(), "Later", "Java", "cursor-later",
                 resumed.cursor().snapshotAt().plusSeconds(1)));
 

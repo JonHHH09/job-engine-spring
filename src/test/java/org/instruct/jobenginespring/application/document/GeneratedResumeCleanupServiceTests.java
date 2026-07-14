@@ -334,6 +334,11 @@ class GeneratedResumeCleanupServiceTests {
         assertThrows(IllegalArgumentException.class, () -> configuredService(Duration.ofDays(1), 1, -1));
     }
 
+    @Test
+    void acceptsPositiveConfiguredRetentionConstruction() {
+        assertDoesNotThrow(() -> configuredService(Duration.ofDays(1), 1, 1));
+    }
+
     private GeneratedResumeCleanupService serviceWithRetention(Duration retention, int batchSize, int maxBatches) {
         return new GeneratedResumeCleanupService(
                 cleanupRepository,

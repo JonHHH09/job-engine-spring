@@ -32,7 +32,7 @@ public interface JobRepository {
 
     JobAggregate saveJobAggregate(JobAggregate aggregate);
 
-    JobAggregate updateJobAggregate(JobAggregate aggregate);
+    Optional<JobAggregate> updateJobAggregate(JobAggregate aggregate, long expectedRevision);
 
     boolean deleteJob(UUID jobId);
 }

@@ -226,6 +226,21 @@ class JobEngineSpringApplicationTests {
                 public Optional<ProfilePdfSource> findByDocumentSha256(String sha256) {
                     return Optional.empty();
                 }
+
+                @Override
+                public Optional<ProfilePdfSourceRepository.LinkedPdfSource> findLinkedByProfileId(UUID profileId) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public Optional<ProfilePdfSourceRepository.LinkedPdfSource> findLinkedByPdfExtractionId(UUID pdfExtractionId) {
+                    return Optional.empty();
+                }
+
+                @Override
+                public Optional<ProfilePdfSourceRepository.LinkedPdfSource> findLinkedByDocumentSha256(String sha256) {
+                    return Optional.empty();
+                }
             };
         }
 

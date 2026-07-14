@@ -20,6 +20,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -29,6 +31,11 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -52,6 +59,7 @@ class PostgresProfileRepositoryIntegrationTests {
             .withPassword("test");
 
     private static JdbcTemplate jdbc;
+    private static DriverManagerDataSource dataSource;
 
     private PostgresProfileRepository repository;
 
@@ -65,7 +73,7 @@ class PostgresProfileRepositoryIntegrationTests {
                 .load()
                 .migrate();
 
-        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+        dataSource = new DriverManagerDataSource(
                 POSTGRES.getJdbcUrl(),
                 POSTGRES.getUsername(),
                 POSTGRES.getPassword()
@@ -242,6 +250,59 @@ class PostgresProfileRepositoryIntegrationTests {
     }
 
     @Test
+    void concurrentAggregateReplacementsAllowExactlyOneRevisionWinnerWithoutMixedChildren() throws Exception {
+        ProfileAggregate original = repository.saveProfileAggregate(sampleAggregate(
+                "Agentic Dev", "agentic-dev@example.test", "Initial",
+                List.of(new ProfileContact(CONTACT_ID, PROFILE_ID, "location", "Remote", null, NOW, NOW)),
+                List.of(new ProfileSkill(SKILL_ID, PROFILE_ID, "Java", "java", "backend", 0, NOW))
+        ));
+        ProfileAggregate first = replacement(original, "First winner", "first", "First Skill");
+        ProfileAggregate second = replacement(original, "Second winner", "second", "Second Skill");
+        CountDownLatch firstWriteReturned = new CountDownLatch(1);
+        CountDownLatch allowFirstCommit = new CountDownLatch(1);
+        CountDownLatch secondWriteStarted = new CountDownLatch(1);
+        AtomicInteger writeReturnOrder = new AtomicInteger();
+        TransactionTemplate transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<Optional<ProfileAggregate>> firstResult = executor.submit(() -> transactions.execute(status -> {
+                jdbc.execute("SET LOCAL application_name = 'profile-cas-first'");
+                Optional<ProfileAggregate> result = repository.replaceProfileAggregate(first, 0);
+                assertEquals(1, writeReturnOrder.incrementAndGet());
+                firstWriteReturned.countDown();
+                await(allowFirstCommit);
+                return result;
+            }));
+            await(firstWriteReturned);
+            Future<Optional<ProfileAggregate>> secondResult = executor.submit(() -> transactions.execute(status -> {
+                jdbc.execute("SET LOCAL application_name = 'profile-cas-second'");
+                secondWriteStarted.countDown();
+                Optional<ProfileAggregate> result = repository.replaceProfileAggregate(second, 0);
+                assertEquals(2, writeReturnOrder.incrementAndGet());
+                return result;
+            }));
+            await(secondWriteStarted);
+            awaitDatabaseLock("profile-cas-second");
+            assertFalse(secondResult.isDone());
+            allowFirstCommit.countDown();
+
+            assertTrue(firstResult.get().isPresent());
+            assertTrue(secondResult.get().isEmpty());
+        }
+
+        ProfileAggregate persisted = repository.findProfileAggregate(PROFILE_ID).orElseThrow();
+        assertEquals(1, persisted.profile().revision());
+        if (persisted.profile().summary().equals("First winner")) {
+            assertEquals(List.of("first"), persisted.contacts().stream().map(ProfileContact::contactValue).toList());
+            assertEquals(List.of("first skill"), persisted.skills().stream().map(ProfileSkill::normalizedSkill).toList());
+        } else {
+            assertEquals("Second winner", persisted.profile().summary());
+            assertEquals(List.of("second"), persisted.contacts().stream().map(ProfileContact::contactValue).toList());
+            assertEquals(List.of("second skill"), persisted.skills().stream().map(ProfileSkill::normalizedSkill).toList());
+        }
+    }
+
+    @Test
     void deleteProfileCascadesChildren() {
         repository.saveProfileAggregate(sampleAggregate(
                 "Agentic Dev",
@@ -307,6 +368,50 @@ class PostgresProfileRepositoryIntegrationTests {
                 List.of(project),
                 List.of(technology)
         );
+    }
+
+    private static ProfileAggregate replacement(
+            ProfileAggregate original,
+            String summary,
+            String contactValue,
+            String skill
+    ) {
+        UserProfile current = original.profile();
+        return new ProfileAggregate(
+                new UserProfile(
+                        current.id(), current.fullName(), current.email(), summary, null,
+                        current.createdAt(), NOW.plusSeconds(1), null, 1
+                ),
+                List.of(new ProfileContact(UUID.randomUUID(), PROFILE_ID, "label", contactValue, null, NOW, NOW.plusSeconds(1))),
+                List.of(),
+                List.of(new ProfileSkill(UUID.randomUUID(), PROFILE_ID, skill, skill.toLowerCase(), "test", 0, NOW.plusSeconds(1))),
+                List.of(), List.of(), List.of(), List.of(), List.of()
+        );
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(10, TimeUnit.SECONDS), "Timed out waiting for concurrency boundary");
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Concurrency latch interrupted", exception);
+        }
+    }
+
+    private static void awaitDatabaseLock(String applicationName) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            Integer waiting = jdbc.queryForObject("""
+                    SELECT count(*)
+                    FROM pg_stat_activity
+                    WHERE application_name = ? AND wait_event_type = 'Lock'
+                    """, Integer.class, applicationName);
+            if (waiting != null && waiting == 1) {
+                return;
+            }
+            Thread.onSpinWait();
+        }
+        throw new AssertionError("Timed out waiting for database lock: " + applicationName);
     }
 
     private static ProfileAggregate completeAggregate() {

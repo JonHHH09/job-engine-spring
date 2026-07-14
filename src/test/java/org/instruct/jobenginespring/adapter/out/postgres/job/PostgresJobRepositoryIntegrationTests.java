@@ -15,6 +15,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -26,6 +28,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -46,6 +53,7 @@ class PostgresJobRepositoryIntegrationTests {
             .withPassword("test");
 
     private static JdbcTemplate jdbc;
+    private static DriverManagerDataSource dataSource;
 
     private PostgresJobRepository repository;
     private PostgresJobAnalysisRunRepository analysisRunRepository;
@@ -60,7 +68,7 @@ class PostgresJobRepositoryIntegrationTests {
                 .load()
                 .migrate();
 
-        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+        dataSource = new DriverManagerDataSource(
                 POSTGRES.getJdbcUrl(),
                 POSTGRES.getUsername(),
                 POSTGRES.getPassword()
@@ -384,7 +392,8 @@ class PostgresJobRepositoryIntegrationTests {
                 NOW.plusSeconds(30),
                 "fingerprint-after-update",
                 NOW,
-                NOW.plusSeconds(60)
+                NOW.plusSeconds(60),
+                1
         );
         JobAggregate updated = repository.updateJobAggregate(new JobAggregate(
                 updatedPosting,
@@ -400,7 +409,7 @@ class PostgresJobRepositoryIntegrationTests {
                         "hash-before-update",
                         NOW
                 )
-        ));
+        ), 0).orElseThrow();
 
         JobAggregate found = repository.findJobAggregate(JOB_ID).orElseThrow();
 
@@ -419,6 +428,53 @@ class PostgresJobRepositoryIntegrationTests {
     }
 
     @Test
+    void concurrentAggregateReplacementsAllowExactlyOneRevisionWinnerWithoutMixedChildren() throws Exception {
+        JobAggregate original = repository.saveJobAggregate(textAggregate("concurrent-job", "concurrent-hash"));
+        JobAggregate first = replacement(original, "First winner", "first-skill");
+        JobAggregate second = replacement(original, "Second winner", "second-skill");
+        CountDownLatch firstWriteReturned = new CountDownLatch(1);
+        CountDownLatch allowFirstCommit = new CountDownLatch(1);
+        CountDownLatch secondWriteStarted = new CountDownLatch(1);
+        AtomicInteger writeReturnOrder = new AtomicInteger();
+        TransactionTemplate transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<Optional<JobAggregate>> firstResult = executor.submit(() -> transactions.execute(status -> {
+                jdbc.execute("SET LOCAL application_name = 'job-cas-first'");
+                Optional<JobAggregate> result = repository.updateJobAggregate(first, 0);
+                assertEquals(1, writeReturnOrder.incrementAndGet());
+                firstWriteReturned.countDown();
+                await(allowFirstCommit);
+                return result;
+            }));
+            await(firstWriteReturned);
+            Future<Optional<JobAggregate>> secondResult = executor.submit(() -> transactions.execute(status -> {
+                jdbc.execute("SET LOCAL application_name = 'job-cas-second'");
+                secondWriteStarted.countDown();
+                Optional<JobAggregate> result = repository.updateJobAggregate(second, 0);
+                assertEquals(2, writeReturnOrder.incrementAndGet());
+                return result;
+            }));
+            await(secondWriteStarted);
+            awaitDatabaseLock("job-cas-second");
+            assertFalse(secondResult.isDone());
+            allowFirstCommit.countDown();
+
+            assertTrue(firstResult.get().isPresent());
+            assertTrue(secondResult.get().isEmpty());
+        }
+
+        JobAggregate persisted = repository.findJobAggregate(JOB_ID).orElseThrow();
+        assertEquals(1, persisted.job().revision());
+        if (persisted.job().title().equals("First winner")) {
+            assertEquals(List.of("first-skill"), persisted.skills().stream().map(JobSkill::normalizedSkill).toList());
+        } else {
+            assertEquals("Second winner", persisted.job().title());
+            assertEquals(List.of("second-skill"), persisted.skills().stream().map(JobSkill::normalizedSkill).toList());
+        }
+    }
+
+    @Test
     void updateJobAggregateFailsWhenJobRowIsMissing() {
         UUID missingJobId = UUID.fromString("44444444-2222-3333-4444-555555555555");
         JobAggregate missingAggregate = new JobAggregate(
@@ -434,13 +490,48 @@ class PostgresJobRepositoryIntegrationTests {
                 )
         );
 
-        IllegalStateException exception = assertThrows(
-                IllegalStateException.class,
-                () -> repository.updateJobAggregate(missingAggregate)
-        );
-
-        assertEquals("Job disappeared during update: " + missingJobId, exception.getMessage());
+        assertTrue(repository.updateJobAggregate(missingAggregate, 0).isEmpty());
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_skills", Integer.class));
+    }
+
+    private static JobAggregate replacement(JobAggregate original, String title, String skill) {
+        JobPosting current = original.job();
+        JobPosting posting = new JobPosting(
+                current.id(), current.sourceMethod(), current.sourceLabel(), title, current.company(), current.location(),
+                current.description(), current.experienceRequirement(), current.employmentType(), current.seniority(),
+                current.postedAt(), current.canonicalFingerprint() + "-" + skill, current.createdAt(), NOW.plusSeconds(1), 1
+        );
+        return new JobAggregate(
+                posting,
+                List.of(new JobSkill(UUID.randomUUID(), current.id(), skill, skill, true, 0, NOW.plusSeconds(1))),
+                original.linkIngestion(),
+                original.textIngestion()
+        );
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            assertTrue(latch.await(10, TimeUnit.SECONDS), "Timed out waiting for concurrency boundary");
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Concurrency latch interrupted", exception);
+        }
+    }
+
+    private static void awaitDatabaseLock(String applicationName) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            Integer waiting = jdbc.queryForObject("""
+                    SELECT count(*)
+                    FROM pg_stat_activity
+                    WHERE application_name = ? AND wait_event_type = 'Lock'
+                    """, Integer.class, applicationName);
+            if (waiting != null && waiting == 1) {
+                return;
+            }
+            Thread.onSpinWait();
+        }
+        throw new AssertionError("Timed out waiting for database lock: " + applicationName);
     }
 
     @Test

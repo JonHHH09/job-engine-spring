@@ -133,7 +133,7 @@ public class PostgresJobRepository implements JobRepository {
         return jdbc.sql("""
                         SELECT id, source_method, source_label, title, company, location, description,
                                experience_requirement, employment_type, seniority, posted_at,
-                               canonical_fingerprint, created_at, updated_at
+                               canonical_fingerprint, created_at, updated_at, revision
                         FROM job_schema.jobs
                         ORDER BY posted_at DESC NULLS LAST, created_at DESC, title, id
                         LIMIT :limit
@@ -151,7 +151,7 @@ public class PostgresJobRepository implements JobRepository {
                         )
                         SELECT job.id, job.source_method, job.source_label, job.title, job.company, job.location,
                                job.description, job.experience_requirement, job.employment_type, job.seniority,
-                               job.posted_at, job.canonical_fingerprint, job.created_at, job.updated_at,
+                               job.posted_at, job.canonical_fingerprint, job.created_at, job.updated_at, job.revision,
                                bounds.snapshot_at
                         FROM job_schema.jobs job
                         CROSS JOIN bounds
@@ -271,7 +271,7 @@ public class PostgresJobRepository implements JobRepository {
 
     @Override
     @Transactional
-    public JobAggregate updateJobAggregate(JobAggregate aggregate) {
+    public Optional<JobAggregate> updateJobAggregate(JobAggregate aggregate, long expectedRevision) {
         JobPosting job = aggregate.job();
         int updatedJobs = jdbc.sql("""
                         UPDATE job_schema.jobs
@@ -285,8 +285,10 @@ public class PostgresJobRepository implements JobRepository {
                             seniority = :seniority,
                             posted_at = :postedAt,
                             canonical_fingerprint = :canonicalFingerprint,
-                            updated_at = :updatedAt
+                            updated_at = :updatedAt,
+                            revision = :revision
                         WHERE id = :id
+                          AND revision = :expectedRevision
                         """)
                 .param("id", job.id())
                 .param("sourceLabel", job.sourceLabel())
@@ -300,13 +302,15 @@ public class PostgresJobRepository implements JobRepository {
                 .param("postedAt", timestamp(job.postedAt()))
                 .param("canonicalFingerprint", job.canonicalFingerprint())
                 .param("updatedAt", Timestamp.from(job.updatedAt()))
+                .param("revision", job.revision())
+                .param("expectedRevision", expectedRevision)
                 .update();
-        if (updatedJobs == 0) {
-            throw new IllegalStateException("Job disappeared during update: " + job.id());
+        if (updatedJobs != 1) {
+            return Optional.empty();
         }
         replaceSkills(job.id(), aggregate.skills());
         rebuildSearchTerms(aggregate);
-        return findJobAggregate(job.id()).orElseThrow();
+        return findJobAggregate(job.id());
     }
 
     @Override
@@ -333,11 +337,11 @@ public class PostgresJobRepository implements JobRepository {
                             INSERT INTO job_schema.jobs
                                 (id, source_method, source_label, title, company, location, description,
                                  experience_requirement, employment_type, seniority, posted_at,
-                                 canonical_fingerprint, created_at, updated_at)
+                                 canonical_fingerprint, created_at, updated_at, revision)
                             SELECT
                                 :id, :sourceMethod, :sourceLabel, :title, :company, :location, :description,
                                 :experienceRequirement, :employmentType, :seniority, :postedAt,
-                                :canonicalFingerprint, :createdAt, :updatedAt
+                                :canonicalFingerprint, :createdAt, :updatedAt, :revision
                             WHERE NOT EXISTS (SELECT 1 FROM existing_source)
                             ON CONFLICT ON CONSTRAINT jobs_canonical_fingerprint_unique DO NOTHING
                             RETURNING id
@@ -382,11 +386,11 @@ public class PostgresJobRepository implements JobRepository {
                             INSERT INTO job_schema.jobs
                                 (id, source_method, source_label, title, company, location, description,
                                  experience_requirement, employment_type, seniority, posted_at,
-                                 canonical_fingerprint, created_at, updated_at)
+                                 canonical_fingerprint, created_at, updated_at, revision)
                             SELECT
                                 :id, :sourceMethod, :sourceLabel, :title, :company, :location, :description,
                                 :experienceRequirement, :employmentType, :seniority, :postedAt,
-                                :canonicalFingerprint, :createdAt, :updatedAt
+                                :canonicalFingerprint, :createdAt, :updatedAt, :revision
                             WHERE NOT EXISTS (SELECT 1 FROM existing_source)
                             ON CONFLICT ON CONSTRAINT jobs_canonical_fingerprint_unique DO NOTHING
                             RETURNING id
@@ -450,7 +454,7 @@ public class PostgresJobRepository implements JobRepository {
         return jdbc.sql("""
                         SELECT id, source_method, source_label, title, company, location, description,
                                experience_requirement, employment_type, seniority, posted_at,
-                               canonical_fingerprint, created_at, updated_at
+                               canonical_fingerprint, created_at, updated_at, revision
                         FROM job_schema.jobs
                         WHERE id = :jobId
                         """)
@@ -530,7 +534,8 @@ public class PostgresJobRepository implements JobRepository {
                 instantOrNull(resultSet, "posted_at"),
                 resultSet.getString("canonical_fingerprint"),
                 instant(resultSet, "created_at"),
-                instant(resultSet, "updated_at")
+                instant(resultSet, "updated_at"),
+                resultSet.getLong("revision")
         );
     }
 
@@ -595,7 +600,8 @@ public class PostgresJobRepository implements JobRepository {
                 .addValue("postedAt", timestamp(job.postedAt()))
                 .addValue("canonicalFingerprint", job.canonicalFingerprint())
                 .addValue("createdAt", Timestamp.from(job.createdAt()))
-                .addValue("updatedAt", Timestamp.from(job.updatedAt()));
+                .addValue("updatedAt", Timestamp.from(job.updatedAt()))
+                .addValue("revision", job.revision());
     }
 
     private static Timestamp timestamp(Instant instant) {

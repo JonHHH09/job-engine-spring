@@ -5,6 +5,7 @@ public enum ApplicationErrorCode {
     VALIDATION_ERROR("validation_error", "Request validation failed"),
     AUTHORIZATION_ERROR("authorization_error", "Request is not authorized"),
     NOT_FOUND("not_found", "Requested resource was not found"),
+    CONFLICT("conflict", "Resource revision conflict"),
     INTERNAL_ERROR("internal_error", "Unexpected application error");
 
     private final String code;

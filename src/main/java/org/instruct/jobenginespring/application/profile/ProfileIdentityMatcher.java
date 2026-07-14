@@ -1,6 +1,7 @@
 package org.instruct.jobenginespring.application.profile;
 
 import lombok.NonNull;
+import org.apache.commons.codec.digest.DigestUtils;
 import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch.LinkIdentity;
 import org.instruct.jobenginespring.application.profile.ProfileService.LinkWriteRequest;
@@ -9,14 +10,12 @@ import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 /** Finds existing profiles that appear to represent the same person as an extracted profile draft. */
 @Service
@@ -50,34 +49,30 @@ public class ProfileIdentityMatcher {
         ));
     }
 
+    /** Returns sorted, one-way keys suitable only for serializing competing identity mutations. */
+    public List<String> concurrencyKeys(ProfileWriteRequest request) {
+        ProfileWriteValidator.validate(request);
+        ProfileWriteRequest canonical = ProfileWriteCanonicalizer.canonicalize(request);
+        return Stream.concat(
+                        Stream.of("email:" + canonical.email()),
+                        identityLinks(canonical.links()).stream()
+                                .map(link -> "link:" + link.linkType() + ":" + link.normalizedUrl())
+                )
+                .map(DigestUtils::sha256Hex)
+                .distinct()
+                .sorted()
+                .toList();
+    }
+
     private static List<LinkIdentity> identityLinks(List<LinkWriteRequest> links) {
         return links.stream()
-                .map(link -> new LinkIdentity(link.linkType(), normalizeUrl(link.url())))
+                .map(link -> new LinkIdentity(link.linkType(), ProfileWriteCanonicalizer.canonicalUrl(link.url())))
                 .distinct()
                 .toList();
     }
 
     static String normalizeUrl(String rawUrl) {
-        if (rawUrl == null || rawUrl.isBlank()) {
-            return "";
-        }
-        String prepared = rawUrl.strip().replaceAll("[.,;]+$", "");
-        if (!prepared.toLowerCase(Locale.ROOT).startsWith("http://")
-                && !prepared.toLowerCase(Locale.ROOT).startsWith("https://")) {
-            prepared = "https://" + prepared;
-        }
-        try {
-            URI uri = new URI(prepared);
-            String host = uri.getHost();
-            if (host == null) {
-                return prepared.replaceAll("[?#].*$", "").replaceAll("/+$", "").toLowerCase(Locale.ROOT);
-            }
-            String scheme = uri.getScheme().toLowerCase(Locale.ROOT);
-            String path = uri.getRawPath().replaceAll("/+$", "");
-            return new URI(scheme, null, host, uri.getPort(), path, null, null).toString().toLowerCase(Locale.ROOT);
-        } catch (URISyntaxException exception) {
-            return prepared.replaceAll("[?#].*$", "").replaceAll("/+$", "").toLowerCase(Locale.ROOT);
-        }
+        return ProfileWriteCanonicalizer.canonicalUrl(rawUrl);
     }
 
     public record ProfileIdentityMatch(UUID profileId, List<String> matchedOn, boolean ambiguous) {

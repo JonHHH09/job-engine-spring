@@ -64,6 +64,7 @@ class ProfileMcpAdapterTests {
         Method updateProfile = ProfileMcpAdapter.class.getDeclaredMethod(
                 "updateProfile",
                 UUID.class,
+                Long.class,
                 ProfileWriteRequest.class
         );
 
@@ -72,6 +73,7 @@ class ProfileMcpAdapterTests {
         assertEquals(1, createProfile.getParameterAnnotations()[0].length);
         assertEquals(1, updateProfile.getParameterAnnotations()[0].length);
         assertEquals(1, updateProfile.getParameterAnnotations()[1].length);
+        assertEquals(1, updateProfile.getParameterAnnotations()[2].length);
     }
 
     @Test
@@ -144,12 +146,12 @@ class ProfileMcpAdapterTests {
     void updateProfileToolDelegatesAndReturnsUpdatedAggregate() {
         ProfileWriteRequest request = sampleRequest();
         ProfileAggregate aggregate = sampleAggregate();
-        when(profileService.updateProfile(PROFILE_ID, request)).thenReturn(aggregate);
+        when(profileService.updateProfile(PROFILE_ID, 0L, request)).thenReturn(aggregate);
 
-        CallToolResult result = adapter.updateProfile(PROFILE_ID, request);
+        CallToolResult result = adapter.updateProfile(PROFILE_ID, 0L, request);
 
         assertSuccessfulContent(aggregate, result);
-        verify(profileService).updateProfile(PROFILE_ID, request);
+        verify(profileService).updateProfile(PROFILE_ID, 0L, request);
     }
 
     @Test

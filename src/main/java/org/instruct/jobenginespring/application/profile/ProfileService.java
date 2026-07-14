@@ -76,19 +76,35 @@ public class ProfileService {
         ProfileWriteRequest safeRequest = ProfileWriteCanonicalizer.canonicalize(request);
         Instant now = clock.instant();
         UUID profileId = UUID.randomUUID();
-        ProfileAggregate aggregate = toAggregate(profileId, safeRequest, now, now);
+        ProfileAggregate aggregate = toAggregate(profileId, safeRequest, now, now, 0);
         return profileRepository.saveProfileAggregate(aggregate);
     }
 
     @Transactional
-    public ProfileAggregate updateProfile(UUID profileId, ProfileWriteRequest request) {
+    public ProfileAggregate updateProfile(UUID profileId, Long expectedRevision, ProfileWriteRequest request) {
         Objects.requireNonNull(profileId, "profileId must not be null");
         ProfileWriteValidator.validate(request);
+        if (expectedRevision == null) {
+            throw validation("expectedRevision", "must not be null");
+        }
+        if (expectedRevision < 0) {
+            throw validation("expectedRevision", "must not be negative");
+        }
         ProfileWriteRequest safeRequest = ProfileWriteCanonicalizer.canonicalize(request);
         UserProfile existing = profileRepository.findProfileById(profileId)
                 .orElseThrow(() -> new ProfileNotFoundException(profileId));
-        ProfileAggregate aggregate = toAggregate(profileId, safeRequest, existing.createdAt(), clock.instant());
-        return profileRepository.saveProfileAggregate(aggregate);
+        if (existing.revision() != expectedRevision) {
+            throw updateConflict(profileId, expectedRevision);
+        }
+        ProfileAggregate aggregate = toAggregate(
+                profileId,
+                safeRequest,
+                existing.createdAt(),
+                clock.instant(),
+                nextRevision(existing.revision(), profileId, expectedRevision)
+        );
+        return profileRepository.replaceProfileAggregate(aggregate, expectedRevision)
+                .orElseThrow(() -> updateConflict(profileId, expectedRevision));
     }
 
     @Transactional
@@ -97,7 +113,13 @@ public class ProfileService {
         return generatedResumeAssetService.deleteProfile(profileId);
     }
 
-    private ProfileAggregate toAggregate(UUID profileId, ProfileWriteRequest request, Instant createdAt, Instant updatedAt) {
+    private ProfileAggregate toAggregate(
+            UUID profileId,
+            ProfileWriteRequest request,
+            Instant createdAt,
+            Instant updatedAt,
+            long revision
+    ) {
         UserProfile profile = new UserProfile(
                 profileId,
                 request.fullName(),
@@ -106,7 +128,8 @@ public class ProfileService {
                 null,
                 createdAt,
                 updatedAt,
-                null
+                null,
+                revision
         );
         List<ProfileProject> projectRecords = projects(profileId, request.projects(), createdAt);
         return new ProfileAggregate(
@@ -320,5 +343,35 @@ public class ProfileService {
                     null
             );
         }
+    }
+
+    private static ApplicationException updateConflict(UUID profileId, long expectedRevision) {
+        return new ApplicationException(
+                ApplicationErrorCode.CONFLICT,
+                "Profile revision conflict",
+                Map.of(
+                        "resource", "profile",
+                        "profileId", profileId.toString(),
+                        "expectedRevision", Long.toString(expectedRevision)
+                ),
+                null
+        );
+    }
+
+    private static long nextRevision(long revision, UUID profileId, long expectedRevision) {
+        try {
+            return Math.incrementExact(revision);
+        } catch (ArithmeticException exception) {
+            throw updateConflict(profileId, expectedRevision);
+        }
+    }
+
+    private static ApplicationException validation(String field, String reason) {
+        return new ApplicationException(
+                ApplicationErrorCode.VALIDATION_ERROR,
+                "Invalid profile request",
+                Map.of("field", field, "reason", reason),
+                null
+        );
     }
 }

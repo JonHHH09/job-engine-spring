@@ -80,4 +80,15 @@ class ProfileWriteCanonicalizerTests {
         assertNull(canonical.projects().getFirst().url());
         assertEquals(List.of(), canonical.projects().getFirst().technologies());
     }
+
+    @Test
+    void persistsCanonicalProfileLinkIdentity() {
+        ProfileWriteRequest canonical = ProfileWriteCanonicalizer.canonicalize(new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", null, List.of(),
+                List.of(new LinkWriteRequest(null, "Portfolio", "HTTP://EXAMPLE.test/me/?q=1#bio", null)),
+                List.of(), List.of(), List.of(), List.of(), List.of()
+        ));
+
+        assertEquals("https://example.test/me", canonical.links().getFirst().url());
+    }
 }

@@ -60,14 +60,15 @@ public class ProfileMcpAdapter {
 
     @McpTool(
             name = "update_profile",
-            description = "Replace a normalized profile aggregate by profile UUID and return the persisted profile graph."
+            description = "Replace a normalized profile aggregate by profile UUID and expected revision, then return the persisted profile graph."
     )
     public CallToolResult updateProfile(
             @McpToolParam(required = true, description = "Profile UUID") UUID profileId,
+            @McpToolParam(required = true, description = "Revision returned by the latest profile read") Long expectedRevision,
             @McpToolParam(required = true, description = "Replacement profile fields and optional child collections")
             ProfileWriteRequest request
     ) {
-        return call(() -> profileService.updateProfile(profileId, request));
+        return call(() -> profileService.updateProfile(profileId, expectedRevision, request));
     }
 
     @McpTool(
