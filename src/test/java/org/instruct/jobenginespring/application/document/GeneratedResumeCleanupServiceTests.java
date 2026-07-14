@@ -72,7 +72,7 @@ class GeneratedResumeCleanupServiceTests {
         verify(cleanupRepository).markPending(
                 TASK_ID,
                 NOW.plus(GeneratedResumeCleanupService.RETRY_DELAY),
-                IllegalStateException.class.getSimpleName()
+                GeneratedResumeCleanupExecutor.FILE_DELETE_FAILED
         );
     }
 
@@ -103,5 +103,15 @@ class GeneratedResumeCleanupServiceTests {
 
         verify(fileRepository).deleteIfExists("old.pdf");
         verify(cleanupRepository).markCompleted(TASK_ID, NOW);
+    }
+
+    @Test
+    void purgesOnlyCompletedTasksOutsideTheRetentionWindowInBoundedBatches() {
+        service.purgeCompletedTasks();
+
+        verify(cleanupRepository).deleteCompletedBefore(
+                NOW.minus(GeneratedResumeCleanupService.COMPLETED_RETENTION),
+                GeneratedResumeCleanupService.RETENTION_BATCH_SIZE
+        );
     }
 }

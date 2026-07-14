@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <appender name="CLEANUP_STDERR" class="ch.qos.logback.core.ConsoleAppender">
+        <target>System.err</target>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level %logger - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <logger name="org.instruct.jobenginespring.application.document.GeneratedResumeCleanupExecutor"
+            level="WARN" additivity="false">
+        <appender-ref ref="CLEANUP_STDERR"/>
+    </logger>
+
+    <root level="OFF"/>
+</configuration>

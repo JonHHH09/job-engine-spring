@@ -16,4 +16,13 @@ class GeneratedResumeCleanupSchedulerTests {
 
         verify(service).retryDueTasks();
     }
+
+    @Test
+    void delegatesScheduledRetentionToApplicationService() {
+        GeneratedResumeCleanupService service = mock(GeneratedResumeCleanupService.class);
+
+        new GeneratedResumeCleanupScheduler(service).purgeCompletedTasks();
+
+        verify(service).purgeCompletedTasks();
+    }
 }

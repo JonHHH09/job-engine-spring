@@ -22,4 +22,12 @@ public class GeneratedResumeCleanupScheduler {
     public void retryDueTasks() {
         cleanupService.retryDueTasks();
     }
+
+    @Scheduled(
+            fixedDelayString = "${job-engine.pdf-generation.cleanup-retention-delay:PT24H}",
+            initialDelayString = "${job-engine.pdf-generation.cleanup-retention-initial-delay:PT5M}"
+    )
+    public void purgeCompletedTasks() {
+        cleanupService.purgeCompletedTasks();
+    }
 }

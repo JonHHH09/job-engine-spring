@@ -1,10 +1,12 @@
 package org.instruct.jobenginespring.adapter.in.mcp.health;
 
-import org.instruct.jobenginespring.application.health.DatabaseHealthService;
+import org.instruct.jobenginespring.application.health.ApplicationHealthService;
+import org.instruct.jobenginespring.application.health.ApplicationHealthService.ApplicationHealthReport;
 import org.instruct.jobenginespring.application.health.DatabaseHealthService.DatabaseHealthErrorCategory;
 import org.instruct.jobenginespring.application.health.DatabaseHealthService.DatabaseHealthMetadata;
-import org.instruct.jobenginespring.application.health.DatabaseHealthService.DatabaseHealthReport;
 import org.instruct.jobenginespring.application.health.DatabaseHealthService.DatabaseHealthStatus;
+import org.instruct.jobenginespring.application.health.GeneratedResumeCleanupHealthService.CleanupHealthReport;
+import org.instruct.jobenginespring.application.health.GeneratedResumeCleanupHealthService.CleanupHealthStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.mcp.annotation.McpTool;
 
@@ -23,8 +25,8 @@ class HealthMcpAdapterTests {
 
     private static final Instant CHECKED_AT = Instant.parse("2026-07-02T21:15:00Z");
 
-    private final DatabaseHealthService databaseHealthService = mock(DatabaseHealthService.class);
-    private final HealthMcpAdapter adapter = new HealthMcpAdapter(databaseHealthService);
+    private final ApplicationHealthService applicationHealthService = mock(ApplicationHealthService.class);
+    private final HealthMcpAdapter adapter = new HealthMcpAdapter(applicationHealthService);
 
     @Test
     void exposesStableHealthToolName() {
@@ -39,15 +41,16 @@ class HealthMcpAdapterTests {
 
     @Test
     void healthToolDelegatesToService() {
-        DatabaseHealthReport report = new DatabaseHealthReport(
+        ApplicationHealthReport report = new ApplicationHealthReport(
                 DatabaseHealthStatus.UP,
                 DatabaseHealthErrorCategory.NONE,
-                new DatabaseHealthMetadata(CHECKED_AT, 1, 1, 0)
+                new DatabaseHealthMetadata(CHECKED_AT, 1, 1, 0),
+                new CleanupHealthReport(CleanupHealthStatus.HEALTHY, 0, 0, 0, false)
         );
-        when(databaseHealthService.checkHealth()).thenReturn(report);
+        when(applicationHealthService.checkHealth()).thenReturn(report);
 
         assertSame(report, adapter.health());
 
-        verify(databaseHealthService).checkHealth();
+        verify(applicationHealthService).checkHealth();
     }
 }

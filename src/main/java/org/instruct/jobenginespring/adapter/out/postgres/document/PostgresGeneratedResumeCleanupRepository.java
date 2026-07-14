@@ -101,4 +101,57 @@ public class PostgresGeneratedResumeCleanupRepository implements GeneratedResume
                 .param("failureType", failureType)
                 .update();
     }
+
+    @Override
+    public CleanupQueueSnapshot readQueueSnapshot(Instant now, int repeatedFailureAttemptThreshold) {
+        if (repeatedFailureAttemptThreshold < 1) {
+            throw new IllegalArgumentException("repeatedFailureAttemptThreshold must be positive");
+        }
+        return jdbc.sql("""
+                        SELECT COUNT(*) FILTER (WHERE status = 'PENDING') AS pending_count,
+                               COUNT(*) FILTER (WHERE status = 'PROCESSING') AS processing_count,
+                               MIN(next_attempt_at) FILTER (
+                                   WHERE status IN ('PENDING', 'PROCESSING') AND next_attempt_at <= :now
+                               ) AS oldest_due_at,
+                               COALESCE(BOOL_OR(
+                                   attempt_count >= :failureThreshold AND last_failure_type IS NOT NULL
+                               ), FALSE) AS repeated_failure
+                        FROM document.generated_resume_file_cleanups
+                        WHERE status IN ('PENDING', 'PROCESSING')
+                        """)
+                .param("now", Timestamp.from(now))
+                .param("failureThreshold", repeatedFailureAttemptThreshold)
+                .query((resultSet, rowNumber) -> {
+                    var oldestDue = resultSet.getTimestamp("oldest_due_at");
+                    return new CleanupQueueSnapshot(
+                            resultSet.getLong("pending_count"),
+                            resultSet.getLong("processing_count"),
+                            oldestDue == null ? null : oldestDue.toInstant(),
+                            resultSet.getBoolean("repeated_failure")
+                    );
+                })
+                .single();
+    }
+
+    @Override
+    public int deleteCompletedBefore(Instant cutoff, int limit) {
+        if (limit < 1) {
+            throw new IllegalArgumentException("limit must be positive");
+        }
+        return jdbc.sql("""
+                        WITH expired AS (
+                            SELECT id
+                            FROM document.generated_resume_file_cleanups
+                            WHERE status = 'COMPLETED' AND completed_at < :cutoff
+                            ORDER BY completed_at, id
+                            LIMIT :limit
+                        )
+                        DELETE FROM document.generated_resume_file_cleanups cleanup
+                        USING expired
+                        WHERE cleanup.id = expired.id
+                        """)
+                .param("cutoff", Timestamp.from(cutoff))
+                .param("limit", limit)
+                .update();
+    }
 }
