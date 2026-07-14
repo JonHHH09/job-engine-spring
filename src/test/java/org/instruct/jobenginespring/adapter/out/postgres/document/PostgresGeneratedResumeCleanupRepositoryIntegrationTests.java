@@ -12,9 +12,12 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Testcontainers
@@ -75,5 +78,68 @@ class PostgresGeneratedResumeCleanupRepositoryIntegrationTests {
         assertEquals(2, jdbc.queryForObject(
                 "SELECT attempt_count FROM document.generated_resume_file_cleanups WHERE id = ?", Integer.class, taskId
         ));
+    }
+
+    @Test
+    void reportsSanitizedBacklogMetricsAndRepeatedFailures() {
+        UUID pending = repository.enqueue("/private/users/jh/pending.pdf", NOW.minusSeconds(600));
+        UUID processing = repository.enqueue("/private/users/jh/processing.pdf", NOW.minusSeconds(300));
+        completedTask("/private/users/jh/expired.pdf", NOW.minusSeconds(10_000));
+        completedTask("/private/users/jh/recent.pdf", NOW.minusSeconds(100));
+        repository.claim(processing, NOW, NOW.plusSeconds(300));
+        jdbc.update("""
+                UPDATE document.generated_resume_file_cleanups
+                SET attempt_count = 3, last_failure_type = 'FILE_DELETE_FAILED', next_attempt_at = ?
+                WHERE id = ?
+                """, java.sql.Timestamp.from(NOW.minusSeconds(120)), pending);
+
+        var snapshot = repository.readQueueSnapshot(NOW, 3, NOW.minusSeconds(1_000));
+
+        assertEquals(1, snapshot.pendingCount());
+        assertEquals(1, snapshot.processingCount());
+        assertEquals(1, snapshot.expiredCompletedCount());
+        assertEquals(NOW.minusSeconds(120), snapshot.oldestDueAt());
+        assertTrue(snapshot.repeatedFailure());
+        assertTrue(snapshot.toString().contains("pendingCount=1"));
+        assertTrue(!snapshot.toString().contains("/private/users"));
+    }
+
+    @Test
+    void emptyQueueHasNoOldestDueTask() {
+        var snapshot = repository.readQueueSnapshot(NOW, 3, NOW.minusSeconds(1_000));
+
+        assertEquals(0, snapshot.pendingCount());
+        assertEquals(0, snapshot.processingCount());
+        assertEquals(0, snapshot.expiredCompletedCount());
+        assertNull(snapshot.oldestDueAt());
+    }
+
+    @Test
+    void rejectsInvalidObservationAndRetentionLimits() {
+        assertThrows(IllegalArgumentException.class, () -> repository.readQueueSnapshot(NOW, 0, NOW));
+        assertThrows(IllegalArgumentException.class, () -> repository.deleteCompletedBefore(NOW, 0));
+    }
+
+    @Test
+    void retentionDeletesOnlyOldCompletedRowsAndHonorsBatchLimit() {
+        UUID first = completedTask("first.pdf", NOW.minusSeconds(10_000));
+        UUID second = completedTask("second.pdf", NOW.minusSeconds(9_000));
+        UUID recent = completedTask("recent.pdf", NOW.minusSeconds(100));
+        UUID pending = repository.enqueue("pending.pdf", NOW.minusSeconds(20_000));
+
+        assertEquals(1, repository.deleteCompletedBefore(NOW.minusSeconds(1_000), 1));
+        assertEquals(1, repository.deleteCompletedBefore(NOW.minusSeconds(1_000), 10));
+
+        assertEquals(List.of(recent, pending), jdbc.queryForList("""
+                SELECT id FROM document.generated_resume_file_cleanups ORDER BY created_at DESC, id
+                """, UUID.class));
+        assertTrue(!List.of(first, second).contains(recent));
+    }
+
+    private UUID completedTask(String path, Instant completedAt) {
+        UUID taskId = repository.enqueue(path, completedAt.minusSeconds(60));
+        repository.claim(taskId, completedAt.minusSeconds(60), completedAt.plusSeconds(240));
+        repository.markCompleted(taskId, completedAt);
+        return taskId;
     }
 }
