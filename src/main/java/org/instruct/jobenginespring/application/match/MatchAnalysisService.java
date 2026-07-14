@@ -7,7 +7,6 @@ import org.instruct.jobenginespring.domain.match.*;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -23,35 +22,44 @@ public class MatchAnalysisService {
     private final ProfileRepository profiles;
     private final JobRepository jobs;
     private final MatchAnalysisRepository matches;
-    private final DeterministicMatchScorer scorer;
+    private final MatchPairAnalyzer pairAnalyzer;
     private final Clock clock;
 
     @Autowired
+    public MatchAnalysisService(ProfileRepository profiles, JobRepository jobs, MatchAnalysisRepository matches,
+                                MatchPairAnalyzer pairAnalyzer) {
+        this(profiles, jobs, matches, pairAnalyzer, Clock.systemUTC());
+    }
+
     public MatchAnalysisService(ProfileRepository profiles, JobRepository jobs, MatchAnalysisRepository matches) {
-        this(profiles, jobs, matches, new DeterministicMatchScorer(), Clock.systemUTC());
+        this(profiles, jobs, matches, new TransactionalMatchPairAnalyzer(profiles, jobs, matches), Clock.systemUTC());
     }
 
     MatchAnalysisService(ProfileRepository profiles, JobRepository jobs, MatchAnalysisRepository matches,
                          DeterministicMatchScorer scorer, Clock clock) {
-        this.profiles = Objects.requireNonNull(profiles); this.jobs = Objects.requireNonNull(jobs);
-        this.matches = Objects.requireNonNull(matches); this.scorer = Objects.requireNonNull(scorer); this.clock = Objects.requireNonNull(clock);
+        this(profiles, jobs, matches, new TransactionalMatchPairAnalyzer(profiles, jobs, matches, scorer, clock), clock);
     }
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    MatchAnalysisService(ProfileRepository profiles, JobRepository jobs, MatchAnalysisRepository matches,
+                         MatchPairAnalyzer pairAnalyzer, Clock clock) {
+        this.profiles = Objects.requireNonNull(profiles); this.jobs = Objects.requireNonNull(jobs);
+        this.matches = Objects.requireNonNull(matches); this.pairAnalyzer = Objects.requireNonNull(pairAnalyzer);
+        this.clock = Objects.requireNonNull(clock);
+    }
+
     public ReportView analyze(UUID profileId, UUID jobId) {
-        var profile = profiles.findProfileAggregate(requireId(profileId, "profileId"))
-                .orElseThrow(() -> new IllegalArgumentException("profile not found: " + profileId));
-        var job = jobs.findJobAggregate(requireId(jobId, "jobId"))
-                .orElseThrow(() -> new IllegalArgumentException("job not found: " + jobId));
-        return new ReportView(matches.saveReport(scorer.score(profile, job, clock.instant())), false);
+        return new ReportView(pairAnalyzer.analyze(
+                requireId(profileId, "profileId"), requireId(jobId, "jobId")), false);
     }
 
     public BatchResult analyzeAll(UUID profileId) {
-        requireId(profileId, "profileId");
+        var requiredProfileId = requireId(profileId, "profileId");
+        var profile = profiles.findProfileAggregate(requiredProfileId)
+                .orElseThrow(() -> new IllegalArgumentException("profile not found: " + profileId));
         var succeeded = new ArrayList<ReportView>();
         var failed = new ArrayList<PairFailure>();
         for (var job : jobs.listJobAggregates()) {
-            try { succeeded.add(analyze(profileId, job.job().id())); }
+            try { succeeded.add(new ReportView(pairAnalyzer.analyze(profile, job), false)); }
             catch (RuntimeException exception) { failed.add(new PairFailure(profileId, job.job().id(), "analysis failed")); }
         }
         return new BatchResult(succeeded, failed);
