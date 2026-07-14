@@ -13,8 +13,6 @@ public interface DocumentRepository {
 
     Optional<StoredDocumentMetadata> findFileMetadataById(UUID fileId);
 
-    Optional<StoredDocumentMetadata> findFileMetadataBySha256(String sha256);
-
     Optional<StoredDocumentFile> findFileContentById(UUID fileId);
 
     Optional<PdfExtractionRecord> findPdfExtractionByFileId(UUID fileId);
@@ -28,4 +26,11 @@ public interface DocumentRepository {
      * An underlying blob is removed only when the deleted document was its final reference.
      */
     boolean deleteFileIfUnreferenced(UUID fileId);
+
+    /**
+     * Checks whether any generated-resume reference still requires {@code filePath}.
+     *
+     * @return {@code true} when physical deletion is safe, or {@code false} when the path must be preserved
+     */
+    boolean prepareGeneratedFileCleanup(String filePath);
 }

@@ -173,11 +173,6 @@ class JobEngineSpringApplicationTests {
                 }
 
                 @Override
-                public Optional<StoredDocumentMetadata> findFileMetadataBySha256(String sha256) {
-                    return Optional.empty();
-                }
-
-                @Override
                 public Optional<StoredDocumentFile> findFileContentById(UUID fileId) {
                     return Optional.empty();
                 }
@@ -199,6 +194,11 @@ class JobEngineSpringApplicationTests {
 
                 @Override
                 public boolean deleteFileIfUnreferenced(UUID fileId) {
+                    return false;
+                }
+
+                @Override
+                public boolean prepareGeneratedFileCleanup(String filePath) {
                     return false;
                 }
             };
@@ -239,11 +239,6 @@ class JobEngineSpringApplicationTests {
 
                 @Override
                 public Optional<ProfileResumeDocument> findByProfileIdAndResumeType(UUID profileId, String resumeType) {
-                    return Optional.empty();
-                }
-
-                @Override
-                public Optional<ProfileResumeDocument> findByDocumentId(UUID documentId) {
                     return Optional.empty();
                 }
 

@@ -6,18 +6,24 @@ import org.instruct.jobenginespring.application.document.DocumentStorageService.
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
+import org.instruct.jobenginespring.domain.document.PdfExtractionRecord.PageProjection;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -54,6 +60,7 @@ class PostgresDocumentRepositoryIntegrationTests {
             .withPassword("test");
 
     private static JdbcTemplate jdbc;
+    private static TransactionTemplate transactions;
 
     private PostgresDocumentRepository repository;
 
@@ -73,6 +80,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 POSTGRES.getPassword()
         );
         jdbc = new JdbcTemplate(dataSource);
+        transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     }
 
     @BeforeEach
@@ -101,10 +109,17 @@ class PostgresDocumentRepositoryIntegrationTests {
 
         assertEquals(file.metadata(), saved);
         assertEquals(saved, repository.findFileMetadataById(FILE_ID).orElseThrow());
-        assertEquals(saved, repository.findFileMetadataBySha256(SHA256).orElseThrow());
         StoredDocumentFile found = repository.findFileContentById(FILE_ID).orElseThrow();
         assertEquals(file.metadata(), found.metadata());
         assertArrayEquals(PDF_CONTENT, found.content());
+    }
+
+    @Test
+    void databaseRejectsBlobByteSizeThatDoesNotMatchContent() {
+        assertThrows(DataIntegrityViolationException.class, () -> jdbc.update("""
+                INSERT INTO document.blobs (id, sha256, byte_size, content, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """, UUID.randomUUID(), SHA256, PDF_CONTENT.length + 1L, PDF_CONTENT, java.sql.Timestamp.from(NOW)));
     }
 
     @Test
@@ -158,6 +173,94 @@ class PostgresDocumentRepositoryIntegrationTests {
     }
 
     @Test
+    void germanResumePathIsPreservedWhileReferencedAndPreparedAfterReferenceRemoval() {
+        String filePath = "/private/generated/germany_candidate_aaaaaaaa_de_unique.pdf";
+        StoredDocumentFile germanPdf = new StoredDocumentFile(
+                FILE_ID,
+                "germany_candidate_aaaaaaaa_de_unique.pdf",
+                "application/pdf",
+                PDF_CONTENT.length,
+                SHA256,
+                PDF_CONTENT,
+                NOW,
+                NOW
+        );
+        repository.saveFile(germanPdf);
+        UUID profileId = UUID.randomUUID();
+        UUID jobId = UUID.randomUUID();
+        UUID resumeId = UUID.randomUUID();
+        transactions.executeWithoutResult(status -> {
+            jdbc.update("""
+                    INSERT INTO profile.profiles (id, full_name, email, created_at, updated_at)
+                    VALUES (?, 'German Candidate', ?, ?, ?)
+                    """, profileId, profileId + "@example.test", Timestamp.from(NOW), Timestamp.from(NOW));
+            jdbc.update("""
+                    INSERT INTO job_schema.jobs (
+                        id, source_method, title, description, canonical_fingerprint, created_at, updated_at
+                    ) VALUES (?, 'text', 'Engineer', 'Description', ?, ?, ?)
+                    """, jobId, jobId.toString(), Timestamp.from(NOW), Timestamp.from(NOW));
+            jdbc.update("""
+                    INSERT INTO job_schema.job_text_ingestions (
+                        id, job_id, input_text_hash, created_at
+                    ) VALUES (?, ?, ?, ?)
+                    """, UUID.randomUUID(), jobId, "hash-" + jobId, Timestamp.from(NOW));
+            jdbc.update("""
+                    INSERT INTO resume.resumes (
+                        id, profile_id, job_id, format, profile_revision, job_revision, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'germany', ?, ?, ?, ?)
+                    """, resumeId, profileId, jobId, Timestamp.from(NOW), Timestamp.from(NOW),
+                    Timestamp.from(NOW), Timestamp.from(NOW));
+            jdbc.update("""
+                    INSERT INTO resume.resume_variants (
+                        id, resume_id, language, document_id, file_path, created_at, updated_at
+                    ) VALUES (?, ?, 'de', ?, ?, ?, ?)
+                    """, UUID.randomUUID(), resumeId, FILE_ID, filePath, Timestamp.from(NOW), Timestamp.from(NOW));
+        });
+
+        assertTrue(repository.prepareGeneratedFileCleanup(
+                "/alternate/germany_candidate_aaaaaaaa_de_unique.pdf"
+        ));
+        assertFalse(repository.prepareGeneratedFileCleanup(filePath));
+        assertTrue(repository.findFileMetadataById(FILE_ID).isPresent());
+
+        jdbc.update("DELETE FROM resume.resumes WHERE id = ?", resumeId);
+
+        assertTrue(repository.prepareGeneratedFileCleanup(filePath));
+        assertTrue(repository.findFileMetadataById(FILE_ID).isPresent());
+        assertTrue(repository.deleteFileIfUnreferenced(FILE_ID));
+        assertFalse(repository.findFileMetadataById(FILE_ID).isPresent());
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM document.blobs", Integer.class));
+    }
+
+    @Test
+    void generatedCleanupPreservesUnrelatedStoredDocumentWithSameFileName() {
+        String fileName = "germany_candidate_aaaaaaaa_de_unique.pdf";
+        StoredDocumentFile generatedPdf = new StoredDocumentFile(
+                FILE_ID, fileName, "application/pdf", PDF_CONTENT.length, SHA256, PDF_CONTENT, NOW, NOW
+        );
+        UUID unrelatedId = UUID.randomUUID();
+        byte[] unrelatedContent = "%PDF-1.3\nunrelated".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        StoredDocumentFile unrelatedPdf = new StoredDocumentFile(
+                unrelatedId,
+                fileName,
+                "application/pdf",
+                unrelatedContent.length,
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                unrelatedContent,
+                NOW,
+                NOW
+        );
+        repository.saveFile(generatedPdf);
+        repository.saveFile(unrelatedPdf);
+
+        assertTrue(repository.deleteFileIfUnreferenced(FILE_ID));
+        assertTrue(repository.prepareGeneratedFileCleanup("/private/generated/" + fileName));
+
+        assertFalse(repository.findFileMetadataById(FILE_ID).isPresent());
+        assertTrue(repository.findFileMetadataById(unrelatedId).isPresent());
+    }
+
+    @Test
     void duplicatePrimaryKeyWithoutMatchingSha256RethrowsConstraintFailure() {
         repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
         StoredDocumentFile conflictingId = sampleFile(
@@ -179,6 +282,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 1,
                 false,
                 "sample text",
+                List.of(new PageProjection(1, "sample text")),
                 NOW
         );
 
@@ -186,6 +290,7 @@ class PostgresDocumentRepositoryIntegrationTests {
 
         assertEquals(extraction, saved);
         assertEquals(extraction, repository.findPdfExtractionByFileId(FILE_ID).orElseThrow());
+        assertEquals(List.of(new PageProjection(1, "sample text")), saved.pages());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
         jdbc.update("DELETE FROM document.documents WHERE id = ?", FILE_ID);
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
@@ -206,6 +311,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 1,
                 false,
                 "sample text",
+                List.of(new PageProjection(1, "sample text")),
                 refreshedAt
         );
 
@@ -214,6 +320,20 @@ class PostgresDocumentRepositoryIntegrationTests {
         assertEquals(canonical, updated);
         assertEquals(canonical, repository.findPdfExtractionByFileId(FILE_ID).orElseThrow());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
+    }
+
+    @Test
+    void rejectsMalformedPersistedPageProjections() {
+        repository.saveFile(sampleFile(SHA256, PDF_CONTENT));
+        repository.savePdfExtraction(new PdfExtractionRecord(
+                EXTRACTION_ID, FILE_ID, "test-extractor", 11, 1, false, "sample text", NOW
+        ));
+        jdbc.update(
+                "UPDATE document.pdf_extractions SET page_projections = '[\"invalid\"]'::jsonb WHERE id = ?",
+                EXTRACTION_ID
+        );
+
+        assertThrows(DataAccessException.class, () -> repository.findPdfExtractionByFileId(FILE_ID));
     }
 
     @Test
@@ -229,8 +349,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 List.of()
         );
         when(extractionService.extractText(
-                any(byte[].class),
-                eq("sample.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         )).thenReturn(canonical);
@@ -245,7 +364,7 @@ class PostgresDocumentRepositoryIntegrationTests {
         PdfExtractionRecord persisted = repository.findPdfExtractionByFileId(FILE_ID).orElseThrow();
         assertEquals(20, persisted.characterCount());
         assertEquals("0123456789abcdefghij", persisted.extractedText());
-        verify(extractionService, times(1)).extractText(any(byte[].class), any(), any(), any());
+        verify(extractionService, times(1)).extractText(any(StoredDocumentFile.class), any(), any());
     }
 
     @Test
@@ -258,8 +377,7 @@ class PostgresDocumentRepositoryIntegrationTests {
         CountDownLatch start = new CountDownLatch(1);
         CyclicBarrier bothExtracted = new CyclicBarrier(2);
         when(extractionService.extractText(
-                any(byte[].class),
-                eq("sample.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         )).thenAnswer(invocation -> {
@@ -286,7 +404,7 @@ class PostgresDocumentRepositoryIntegrationTests {
             assertEquals("sample text", firstResult.extraction().text());
             assertEquals("sample text", secondResult.extraction().text());
             assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
-            verify(extractionService, times(2)).extractText(any(byte[].class), any(), any(), any());
+            verify(extractionService, times(2)).extractText(any(StoredDocumentFile.class), any(), any());
         }
     }
 

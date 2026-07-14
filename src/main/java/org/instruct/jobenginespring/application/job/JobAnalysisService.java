@@ -77,7 +77,6 @@ public class JobAnalysisService {
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
-    @Transactional
     public AnalyzeJobLinkResult analyzeJobLink(AnalyzeJobLinkRequest request) {
         AnalyzeJobLinkRequest safeRequest = validateAnalyzeRequest(request);
         String retrievalUrl = clean(safeRequest.url());

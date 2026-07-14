@@ -1,7 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
-import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.instruct.jobenginespring.application.document.port.TransactionLifecycle;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileResumeDocumentRepository;
@@ -34,7 +33,6 @@ class GeneratedResumeAssetServiceTests {
     private final ProfileRepository profileRepository = mock(ProfileRepository.class);
     private final ProfileResumeDocumentRepository resumeDocumentRepository = mock(ProfileResumeDocumentRepository.class);
     private final DocumentRepository documentRepository = mock(DocumentRepository.class);
-    private final GeneratedResumeFileRepository fileRepository = mock(GeneratedResumeFileRepository.class);
     private final TransactionLifecycle transactionLifecycle = mock(TransactionLifecycle.class);
     private final GeneratedResumeCleanupService cleanupService = mock(GeneratedResumeCleanupService.class);
     private GeneratedResumeAssetService service;
@@ -45,7 +43,6 @@ class GeneratedResumeAssetServiceTests {
                 profileRepository,
                 resumeDocumentRepository,
                 documentRepository,
-                fileRepository,
                 transactionLifecycle,
                 cleanupService
         );
@@ -59,11 +56,14 @@ class GeneratedResumeAssetServiceTests {
         when(resumeDocumentRepository.replace(saved)).thenReturn(replacement);
         when(documentRepository.deleteFileIfUnreferenced(OLD_DOCUMENT_ID)).thenReturn(true);
 
-        assertSame(replacement, service.replace(saved));
+        assertSame(replacement, service.replace(saved, "new.pdf"));
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
-        verify(cleanupService).enqueueAfterCommit("old.pdf");
-        verifyNoInteractions(fileRepository);
+        verify(cleanupService).enqueueAfterCommit(OLD_DOCUMENT_ID, "old.pdf");
+        ArgumentCaptor<Runnable> rollback = ArgumentCaptor.forClass(Runnable.class);
+        verify(transactionLifecycle).afterRollback(rollback.capture());
+        rollback.getValue().run();
+        verify(cleanupService).enqueueNow(NEW_DOCUMENT_ID, "new.pdf");
     }
 
     @Test
@@ -75,7 +75,7 @@ class GeneratedResumeAssetServiceTests {
 
         service.replace(unchanged);
 
-        verifyNoInteractions(documentRepository, fileRepository, transactionLifecycle, cleanupService);
+        verifyNoInteractions(documentRepository, transactionLifecycle, cleanupService);
     }
 
     @Test
@@ -90,7 +90,7 @@ class GeneratedResumeAssetServiceTests {
         service.replace(saved);
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
-        verify(cleanupService).enqueueAfterCommit("old.pdf");
+        verify(cleanupService).enqueueAfterCommit(OLD_DOCUMENT_ID, "old.pdf");
     }
 
     @Test
@@ -108,7 +108,7 @@ class GeneratedResumeAssetServiceTests {
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
         verify(documentRepository).deleteFileIfUnreferenced(NEW_DOCUMENT_ID);
-        verify(cleanupService).enqueueAfterCommit("master.pdf");
+        verify(cleanupService).enqueueAfterCommit(OLD_DOCUMENT_ID, "master.pdf");
 
         UUID missing = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
         when(resumeDocumentRepository.lockAndFindAllByProfileId(missing)).thenReturn(List.of(master));
@@ -120,15 +120,18 @@ class GeneratedResumeAssetServiceTests {
     }
 
     @Test
-    void registersRollbackCleanupAndCanDiscardFailedFileImmediately() {
+    void registersRollbackAndCompensationAsDurableCleanup() {
         service.deleteGeneratedFileOnRollback("rollback.pdf");
         ArgumentCaptor<Runnable> rollback = ArgumentCaptor.forClass(Runnable.class);
         verify(transactionLifecycle).afterRollback(rollback.capture());
         rollback.getValue().run();
-        verify(fileRepository).deleteIfExists("rollback.pdf");
+        verify(cleanupService).enqueueNow("rollback.pdf");
 
         service.discardFailedGeneratedFile("failed.pdf");
-        verify(fileRepository).deleteIfExists("failed.pdf");
+        verify(cleanupService).enqueueAfterCompletion("failed.pdf");
+
+        service.discardFailedGeneratedFile("failed-asset.pdf");
+        verify(cleanupService).enqueueAfterCompletion("failed-asset.pdf");
     }
 
     private static ProfileResumeDocument link(UUID documentId, String path) {

@@ -3,22 +3,26 @@ package org.instruct.jobenginespring.application.document;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
+import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.ExtractedTextFormatter;
 import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.ai.reader.pdf.config.PdfDocumentReaderConfig;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.AbstractResource;
 import org.springframework.core.io.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -49,17 +53,34 @@ public class PdfTextExtractionService {
     public PdfTextExtractionResult extractText(PdfTextExtractionRequest request) {
         PdfTextExtractionRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
         Path pdfPath = validatePath(safeRequest.path());
-        return extractText(new FileSystemResource(pdfPath), pdfPath.getFileName().toString(), safeRequest.maxCharacters(), safeRequest.includePages());
+        PdfContentSnapshot snapshot = readLocalPdfSnapshot(pdfPath);
+        return extractText(snapshot, safeRequest.maxCharacters(), safeRequest.includePages());
     }
 
     public PdfTextExtractionResult extractText(byte[] pdfContent, String fileName, Integer maxCharacters, Boolean includePages) {
         Objects.requireNonNull(pdfContent, "pdfContent must not be null");
-        validateFileSize(pdfContent.length);
-        if (!hasPdfHeader(pdfContent)) {
+        String safeFileName = fileName == null || fileName.isBlank() ? "stored.pdf" : Path.of(fileName).getFileName().toString();
+        PdfContentSnapshot snapshot = validatedSnapshot(pdfContent, safeFileName);
+        return extractText(snapshot, safeFileName, maxCharacters, includePages);
+    }
+
+    public PdfTextExtractionResult extractText(StoredDocumentFile pdfFile, Integer maxCharacters, Boolean includePages) {
+        StoredDocumentFile safeFile = Objects.requireNonNull(pdfFile, "pdfFile must not be null");
+        validateFileSize(safeFile.contentLength());
+        if (!hasPdfHeader(safeFile.openContentStream())) {
             throw validation("path", "file must be a PDF document");
         }
-        String safeFileName = fileName == null || fileName.isBlank() ? "stored.pdf" : Path.of(fileName).getFileName().toString();
-        return extractText(new NamedByteArrayResource(pdfContent, safeFileName), safeFileName, maxCharacters, includePages);
+        return extractText(
+                new StoredDocumentResource(safeFile),
+                safeFile.originalFileName(),
+                maxCharacters,
+                includePages
+        );
+    }
+
+    PdfTextExtractionResult extractText(PdfContentSnapshot snapshot, Integer maxCharacters, Boolean includePages) {
+        PdfContentSnapshot safeSnapshot = Objects.requireNonNull(snapshot, "snapshot must not be null");
+        return extractText(safeSnapshot, safeSnapshot.getFilename(), maxCharacters, includePages);
     }
 
     static PdfTextExtractionResult applyRequestView(
@@ -121,19 +142,7 @@ public class PdfTextExtractionService {
             throw validation("path", "must identify a regular file");
         }
         Path allowedPath = importPolicy.requireAllowed(path);
-        validateFileSize(allowedPath);
-        if (!hasPdfHeader(allowedPath)) {
-            throw validation("path", "file must be a PDF document");
-        }
         return allowedPath;
-    }
-
-    private static void validateFileSize(Path path) {
-        try {
-            validateFileSize(Files.size(path));
-        } catch (IOException exception) {
-            throw validation("path", "file is not readable");
-        }
     }
 
     private static void validateFileSize(long byteSize) {
@@ -142,9 +151,10 @@ public class PdfTextExtractionService {
         }
     }
 
-    private static boolean hasPdfHeader(Path path) {
+    static boolean hasPdfHeader(InputStream content) {
+        Objects.requireNonNull(content, "content must not be null");
         try {
-            return hasPdfHeader(Files.readAllBytes(path));
+            return hasPdfHeader(content.readNBytes(PDF_MAGIC.length));
         } catch (IOException exception) {
             throw validation("path", "file is not readable");
         }
@@ -301,18 +311,88 @@ public class PdfTextExtractionService {
         }
     }
 
-    private static final class NamedByteArrayResource extends ByteArrayResource {
+    static PdfContentSnapshot readLocalPdfSnapshot(Path path) {
+        byte[] content = readBoundedContent(path);
+        return validatedSnapshot(content, path.getFileName().toString());
+    }
 
+    static byte[] readBoundedContent(Path path) {
+        try (InputStream input = Files.newInputStream(
+                path,
+                StandardOpenOption.READ,
+                LinkOption.NOFOLLOW_LINKS
+        )) {
+            return input.readNBytes(Math.toIntExact(MAX_FILE_BYTES + 1));
+        } catch (IOException exception) {
+            throw validation("path", "file is not readable");
+        }
+    }
+
+    private static PdfContentSnapshot validatedSnapshot(byte[] content, String fileName) {
+        validateFileSize(content.length);
+        if (!hasPdfHeader(content)) {
+            throw validation("path", "file must be a PDF document");
+        }
+        return new PdfContentSnapshot(content, fileName);
+    }
+
+    static final class PdfContentSnapshot extends AbstractResource {
+
+        private final byte[] content;
         private final String filename;
 
-        private NamedByteArrayResource(byte[] byteArray, String filename) {
-            super(byteArray);
+        private PdfContentSnapshot(byte[] byteArray, String filename) {
+            this.content = Arrays.copyOf(byteArray, byteArray.length);
             this.filename = filename;
+        }
+
+        @Override
+        public String getDescription() {
+            return filename;
         }
 
         @Override
         public String getFilename() {
             return filename;
+        }
+
+        @Override
+        public long contentLength() {
+            return content.length;
+        }
+
+        @Override
+        public InputStream getInputStream() {
+            return new java.io.ByteArrayInputStream(content);
+        }
+    }
+
+    static final class StoredDocumentResource extends AbstractResource {
+
+        private final StoredDocumentFile file;
+
+        StoredDocumentResource(StoredDocumentFile file) {
+            this.file = file;
+        }
+
+        @Override
+        public String getDescription() {
+            return file.originalFileName();
+        }
+
+        @Override
+        public String getFilename() {
+            return file.originalFileName();
+        }
+
+        @Override
+        public long contentLength() {
+            return file.contentLength();
+        }
+
+        @Override
+        public InputStream getInputStream() {
+            return file.openContentStream();
         }
     }
 }

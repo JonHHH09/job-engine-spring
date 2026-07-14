@@ -172,7 +172,6 @@ public class JobService {
         ));
     }
 
-    @Transactional
     public AddJobResult addJobFromLink(AddJobFromLinkRequest request) {
         AddJobFromLinkRequest safeRequest = validateLinkRequest(request);
         String retrievalUrl = clean(safeRequest.url());

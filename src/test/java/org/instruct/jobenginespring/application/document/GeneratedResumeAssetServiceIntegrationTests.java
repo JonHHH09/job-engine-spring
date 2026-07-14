@@ -8,6 +8,7 @@ import org.instruct.jobenginespring.adapter.out.postgres.profile.PostgresProfile
 import org.instruct.jobenginespring.adapter.out.postgres.profile.PostgresProfileResumeDocumentRepository;
 import org.instruct.jobenginespring.adapter.out.transaction.SpringTransactionLifecycle;
 import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
+import org.instruct.jobenginespring.application.profile.port.ProfileResumeDocumentRepository;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
 import org.junit.jupiter.api.BeforeAll;
@@ -95,6 +96,7 @@ class GeneratedResumeAssetServiceIntegrationTests {
         SpringTransactionLifecycle transactionLifecycle = new SpringTransactionLifecycle();
         GeneratedResumeCleanupService cleanupService = new GeneratedResumeCleanupService(
                 new PostgresGeneratedResumeCleanupRepository(JdbcClient.create(namedJdbc)),
+                documentRepository,
                 fileRepository,
                 transactionLifecycle,
                 Clock.fixed(NOW, ZoneOffset.UTC)
@@ -103,7 +105,6 @@ class GeneratedResumeAssetServiceIntegrationTests {
                 profileRepository,
                 resumeDocumentRepository,
                 documentRepository,
-                fileRepository,
                 transactionLifecycle,
                 cleanupService
         );
@@ -166,7 +167,78 @@ class GeneratedResumeAssetServiceIntegrationTests {
         assertEquals(0, count("profile.profile_resume_documents"));
         assertEquals(0, count("document.documents"));
         assertEquals(0, count("document.blobs"));
+        assertEquals(1, jdbc.queryForObject(
+                "SELECT count(*) FROM document.generated_resume_file_cleanups WHERE status = 'COMPLETED'",
+                Integer.class
+        ));
         assertEquals(1, count("profile.profiles"));
+    }
+
+    @Test
+    void ambiguousPostCommitFailurePreservesReferencedPdfAndCompletesCompensation() {
+        NamedParameterJdbcTemplate namedJdbc = new NamedParameterJdbcTemplate(jdbc);
+        PostgresDocumentRepository documentRepository = new PostgresDocumentRepository(namedJdbc);
+        var resumeDocuments = new PostgresProfileResumeDocumentRepository(JdbcClient.create(namedJdbc));
+        var fileRepository = new LocalGeneratedResumeFileRepository(tempDir);
+        var transactionLifecycle = new SpringTransactionLifecycle();
+        var cleanupService = new GeneratedResumeCleanupService(
+                new PostgresGeneratedResumeCleanupRepository(JdbcClient.create(namedJdbc)),
+                documentRepository,
+                fileRepository,
+                transactionLifecycle,
+                Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        var committedAssets = new GeneratedResumeAssetService(
+                profileRepository,
+                resumeDocuments,
+                documentRepository,
+                transactionLifecycle,
+                cleanupService
+        );
+        var ambiguousAssets = new GeneratedResumeAssetService(
+                profileRepository,
+                resumeDocuments,
+                documentRepository,
+                transactionLifecycle,
+                cleanupService
+        ) {
+            @Override
+            public ProfileResumeDocumentRepository.Replacement replace(
+                    org.instruct.jobenginespring.domain.profile.ProfileResumeDocument resumeDocument,
+                    String generatedFilePath
+            ) {
+                transactions.execute(status -> committedAssets.replace(resumeDocument, generatedFilePath));
+                throw new IllegalStateException("commit acknowledgement lost");
+            }
+        };
+        var storageService = new DocumentStorageService(
+                documentRepository, mock(PdfTextExtractionService.class), Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        var ambiguousGeneration = new GeneratePdfResumeService(
+                new ProfileResumePdfGenerationWorkflow(
+                        profileRepository, storageService, ambiguousAssets, Clock.fixed(NOW, ZoneOffset.UTC)
+                ),
+                tempDir
+        );
+
+        assertThrows(IllegalStateException.class, () -> ambiguousGeneration.generatePdfResume(
+                new GeneratePdfResumeService.GeneratePdfResumeRequest(PROFILE_ID)
+        ));
+
+        String referencedPath = jdbc.queryForObject(
+                "SELECT file_path FROM profile.profile_resume_documents WHERE profile_id = ?",
+                String.class,
+                PROFILE_ID
+        );
+        assertTrue(Files.exists(Path.of(referencedPath)));
+        assertEquals(1, count("profile.profile_resume_documents"));
+        assertEquals(1, count("document.documents"));
+        assertEquals(1, count("document.blobs"));
+        assertEquals("COMPLETED", jdbc.queryForObject(
+                "SELECT status FROM document.generated_resume_file_cleanups WHERE file_path = ?",
+                String.class,
+                referencedPath
+        ));
     }
 
     @Test
@@ -217,6 +289,7 @@ class GeneratedResumeAssetServiceIntegrationTests {
         SpringTransactionLifecycle transactionLifecycle = new SpringTransactionLifecycle();
         GeneratedResumeCleanupService cleanupService = new GeneratedResumeCleanupService(
                 new PostgresGeneratedResumeCleanupRepository(JdbcClient.create(namedJdbc)),
+                documentRepository,
                 flakyFiles,
                 transactionLifecycle,
                 Clock.fixed(NOW, ZoneOffset.UTC)
@@ -225,7 +298,6 @@ class GeneratedResumeAssetServiceIntegrationTests {
                 profileRepository,
                 new PostgresProfileResumeDocumentRepository(JdbcClient.create(namedJdbc)),
                 documentRepository,
-                flakyFiles,
                 transactionLifecycle,
                 cleanupService
         );
