@@ -723,7 +723,7 @@ class GeneratePdfResumeServiceTests {
         );
 
         assertSame(replacementFailure, thrown);
-        verify(assets).discardFailedGeneratedAsset(eq(document.id()), any());
+        verify(assets).discardFailedGeneratedFile(any());
     }
 
     private static ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand command(Path outputDirectory) {
@@ -750,8 +750,17 @@ class GeneratePdfResumeServiceTests {
             public void afterRollback(Runnable action) {
                 // Unit tests execute without a transaction; failure paths clean up directly.
             }
+
+            @Override
+            public void afterCompletion(Runnable action) {
+                action.run();
+            }
         };
         GeneratedResumeCleanupService cleanupService = mock(GeneratedResumeCleanupService.class);
+        doAnswer(invocation -> {
+            files.deleteIfExists(invocation.getArgument(0));
+            return null;
+        }).when(cleanupService).enqueueAfterCompletion(any(String.class));
         when(cleanupService.enqueueAfterCommit(any(String.class))).thenAnswer(invocation -> {
             files.deleteIfExists(invocation.getArgument(0));
             return UUID.randomUUID();
@@ -760,7 +769,6 @@ class GeneratePdfResumeServiceTests {
                 profileRepository,
                 resumeDocumentRepository,
                 documentRepository,
-                files,
                 transactions,
                 cleanupService
         );
@@ -1018,6 +1026,11 @@ class GeneratePdfResumeServiceTests {
         @Override
         public boolean deleteFileIfUnreferenced(UUID fileId) {
             return files.remove(fileId) != null;
+        }
+
+        @Override
+        public boolean prepareGeneratedFileCleanup(String filePath) {
+            return false;
         }
 
         private int fileCount() {

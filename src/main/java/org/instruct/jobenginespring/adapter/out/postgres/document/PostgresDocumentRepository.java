@@ -12,9 +12,11 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -219,6 +221,50 @@ public class PostgresDocumentRepository implements DocumentRepository {
                 .param("blobId", blobId)
                 .update());
         return deletedBlobId.isPresent();
+    }
+
+    @Override
+    @Transactional
+    public boolean prepareGeneratedFileCleanup(String filePath) {
+        String safeFilePath = Objects.requireNonNull(filePath, "filePath must not be null");
+        String fileName = Path.of(safeFilePath).getFileName().toString();
+        if (generatedResumeReferenceExists(safeFilePath)) {
+            return false;
+        }
+
+        List<UUID> candidateIds = jdbc.sql("""
+                        SELECT id
+                        FROM document.documents
+                        WHERE original_file_name = :fileName
+                        ORDER BY id
+                        FOR UPDATE
+                        """)
+                .param("fileName", fileName)
+                .query(UUID.class)
+                .list();
+        for (UUID candidateId : candidateIds) {
+            if (!deleteFileIfUnreferenced(candidateId)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean generatedResumeReferenceExists(String filePath) {
+        return jdbc.sql("""
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM profile.profile_resume_documents
+                            WHERE file_path = :filePath
+                            UNION ALL
+                            SELECT 1
+                            FROM resume.resume_variants
+                            WHERE file_path = :filePath
+                        )
+                        """)
+                .param("filePath", filePath)
+                .query(Boolean.class)
+                .single();
     }
 
     private static MapSqlParameterSource fileParameters(StoredDocumentFile file) {

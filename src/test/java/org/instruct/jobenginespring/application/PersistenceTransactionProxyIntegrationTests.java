@@ -4,7 +4,6 @@ import org.instruct.jobenginespring.adapter.out.postgres.document.PostgresDocume
 import org.instruct.jobenginespring.adapter.out.postgres.job.PostgresJobRepository;
 import org.instruct.jobenginespring.application.document.GermanResumePersistenceService;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
-import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.instruct.jobenginespring.application.document.port.TransactionLifecycle;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
@@ -112,7 +111,6 @@ class PersistenceTransactionProxyIntegrationTests {
         var resumePersistence = spy(new GermanResumePersistenceService(
                 mock(ResumeRepository.class),
                 mock(DocumentRepository.class),
-                mock(GeneratedResumeFileRepository.class),
                 mock(org.instruct.jobenginespring.application.document.GeneratedResumeCleanupService.class),
                 mock(TransactionLifecycle.class)
         ));

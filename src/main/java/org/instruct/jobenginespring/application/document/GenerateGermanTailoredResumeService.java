@@ -2,8 +2,6 @@ package org.instruct.jobenginespring.application.document;
 
 import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratedPdfFileResult;
 import org.instruct.jobenginespring.application.document.GermanResumePersistenceService.GeneratedAsset;
-import org.instruct.jobenginespring.application.document.port.DocumentRepository;
-import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.JobService.JobNotFoundException;
@@ -55,8 +53,7 @@ public class GenerateGermanTailoredResumeService {
     private final ProfilePersonalDetailsRepository personalDetailsRepository;
     private final GermanResumePersistenceService persistenceService;
     private final DocumentStorageService documentStorageService;
-    private final DocumentRepository documentRepository;
-    private final GeneratedResumeFileRepository fileRepository;
+    private final GeneratedResumeCleanupService cleanupService;
     private final OfflineGermanResumeTranslator translator;
     private final Path outputDirectory;
     private Clock clock = Clock.systemUTC();
@@ -68,8 +65,7 @@ public class GenerateGermanTailoredResumeService {
             ProfilePersonalDetailsRepository personalDetailsRepository,
             GermanResumePersistenceService persistenceService,
             DocumentStorageService documentStorageService,
-            DocumentRepository documentRepository,
-            GeneratedResumeFileRepository fileRepository,
+            GeneratedResumeCleanupService cleanupService,
             OfflineGermanResumeTranslator translator,
             @Value("${job-engine.pdf-generation.german-resume-output-dir:" + DEFAULT_OUTPUT_DIRECTORY + "}") String outputDirectory
     ) {
@@ -78,8 +74,7 @@ public class GenerateGermanTailoredResumeService {
         this.personalDetailsRepository = Objects.requireNonNull(personalDetailsRepository, "personalDetailsRepository must not be null");
         this.persistenceService = Objects.requireNonNull(persistenceService, "persistenceService must not be null");
         this.documentStorageService = Objects.requireNonNull(documentStorageService, "documentStorageService must not be null");
-        this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
-        this.fileRepository = Objects.requireNonNull(fileRepository, "fileRepository must not be null");
+        this.cleanupService = Objects.requireNonNull(cleanupService, "cleanupService must not be null");
         this.translator = Objects.requireNonNull(translator, "translator must not be null");
         this.outputDirectory = GeneratePdfResumeService.toPath(outputDirectory, DEFAULT_OUTPUT_DIRECTORY);
     }
@@ -90,8 +85,7 @@ public class GenerateGermanTailoredResumeService {
             ProfilePersonalDetailsRepository personalDetailsRepository,
             GermanResumePersistenceService persistenceService,
             DocumentStorageService documentStorageService,
-            DocumentRepository documentRepository,
-            GeneratedResumeFileRepository fileRepository,
+            GeneratedResumeCleanupService cleanupService,
             OfflineGermanResumeTranslator translator,
             Path outputDirectory,
             Clock clock
@@ -101,8 +95,7 @@ public class GenerateGermanTailoredResumeService {
         this.personalDetailsRepository = Objects.requireNonNull(personalDetailsRepository, "personalDetailsRepository must not be null");
         this.persistenceService = Objects.requireNonNull(persistenceService, "persistenceService must not be null");
         this.documentStorageService = Objects.requireNonNull(documentStorageService, "documentStorageService must not be null");
-        this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
-        this.fileRepository = Objects.requireNonNull(fileRepository, "fileRepository must not be null");
+        this.cleanupService = Objects.requireNonNull(cleanupService, "cleanupService must not be null");
         this.translator = Objects.requireNonNull(translator, "translator must not be null");
         this.outputDirectory = Objects.requireNonNull(outputDirectory, "outputDirectory must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
@@ -180,8 +173,8 @@ public class GenerateGermanTailoredResumeService {
                     now.toString()
             );
         } catch (RuntimeException | Error failure) {
-            discard(englishPdf);
-            discard(germanPdf);
+            discard(englishPdf, failure);
+            discard(germanPdf, failure);
             throw failure;
         }
     }
@@ -204,11 +197,7 @@ public class GenerateGermanTailoredResumeService {
             );
             return new GeneratedPdfAssets(document, generatedFile);
         } catch (RuntimeException failure) {
-            try {
-                fileRepository.deleteIfExists(generatedFile.path());
-            } catch (RuntimeException cleanupFailure) {
-                failure.addSuppressed(cleanupFailure);
-            }
+            enqueueCleanup(generatedFile.path(), failure);
             throw failure;
         }
     }
@@ -349,19 +338,18 @@ public class GenerateGermanTailoredResumeService {
         );
     }
 
-    private void discard(GeneratedPdfAssets assets) {
+    private void discard(GeneratedPdfAssets assets, Throwable failure) {
         if (assets == null) {
             return;
         }
+        enqueueCleanup(assets.generatedFile().path(), failure);
+    }
+
+    private void enqueueCleanup(String filePath, Throwable failure) {
         try {
-            documentRepository.deleteFileIfUnreferenced(assets.document().id());
-        } catch (RuntimeException ignored) {
-            // best-effort database compensation
-        }
-        try {
-            fileRepository.deleteIfExists(assets.generatedFile().path());
-        } catch (RuntimeException ignored) {
-            // best-effort cleanup
+            cleanupService.enqueueAfterCompletion(filePath);
+        } catch (RuntimeException cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
         }
     }
 

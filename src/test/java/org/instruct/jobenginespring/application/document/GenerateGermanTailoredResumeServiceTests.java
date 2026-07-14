@@ -1,7 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
-import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.instruct.jobenginespring.application.document.port.TransactionLifecycle;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.JobService.JobNotFoundException;
@@ -68,7 +67,6 @@ class GenerateGermanTailoredResumeServiceTests {
     private ResumeRepository resumeRepository;
     private DocumentStorageService documentStorageService;
     private DocumentRepository documentRepository;
-    private GeneratedResumeFileRepository fileRepository;
     private GeneratedResumeCleanupService cleanupService;
     private TransactionLifecycle transactionLifecycle;
     private GenerateGermanTailoredResumeService service;
@@ -81,7 +79,6 @@ class GenerateGermanTailoredResumeServiceTests {
         resumeRepository = mock(ResumeRepository.class);
         documentStorageService = mock(DocumentStorageService.class);
         documentRepository = mock(DocumentRepository.class);
-        fileRepository = mock(GeneratedResumeFileRepository.class);
         cleanupService = mock(GeneratedResumeCleanupService.class);
         transactionLifecycle = mock(TransactionLifecycle.class);
         doAnswer(invocation -> {
@@ -89,11 +86,11 @@ class GenerateGermanTailoredResumeServiceTests {
             return null;
         }).when(transactionLifecycle).afterRollback(org.mockito.ArgumentMatchers.any(Runnable.class));
         GermanResumePersistenceService persistenceService = new GermanResumePersistenceService(
-                resumeRepository, documentRepository, fileRepository, cleanupService, transactionLifecycle
+                resumeRepository, documentRepository, cleanupService, transactionLifecycle
         );
         service = new GenerateGermanTailoredResumeService(
                 profileRepository, jobRepository, personalDetailsRepository, persistenceService,
-                documentStorageService, documentRepository, fileRepository,
+                documentStorageService, cleanupService,
                 new OfflineGermanResumeTranslator(), tempDir,
                 Clock.fixed(NOW, ZoneOffset.UTC)
         );
@@ -163,7 +160,7 @@ class GenerateGermanTailoredResumeServiceTests {
                 new StoredDocumentMetadata(UUID.randomUUID(), "resume.pdf", DocumentStorageService.PDF_MEDIA_TYPE, 10L, "sha", NOW, NOW));
         when(resumeRepository.replaceGermanyResume(any())).thenThrow(new RuntimeException("db down"));
         assertThrows(RuntimeException.class, () -> service.generate(new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)));
-        verify(fileRepository, org.mockito.Mockito.atLeastOnce()).deleteIfExists(any());
+        verify(cleanupService, org.mockito.Mockito.atLeastOnce()).enqueueAfterCompletion(any());
     }
 
     @Test
@@ -173,7 +170,7 @@ class GenerateGermanTailoredResumeServiceTests {
         when(personalDetailsRepository.findByProfileId(PROFILE_ID)).thenReturn(Optional.empty());
         when(documentStorageService.storeGeneratedDocumentFile(any(), any())).thenThrow(new RuntimeException("store failed"));
         assertThrows(RuntimeException.class, () -> service.generate(new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)));
-        verify(fileRepository, org.mockito.Mockito.atLeastOnce()).deleteIfExists(any());
+        verify(cleanupService, org.mockito.Mockito.atLeastOnce()).enqueueAfterCompletion(any());
     }
 
     @Test
@@ -184,7 +181,7 @@ class GenerateGermanTailoredResumeServiceTests {
         RuntimeException storageFailure = new RuntimeException("store failed");
         RuntimeException cleanupFailure = new RuntimeException("cleanup failed");
         when(documentStorageService.storeGeneratedDocumentFile(any(), any())).thenThrow(storageFailure);
-        doThrow(cleanupFailure).when(fileRepository).deleteIfExists(anyString());
+        doThrow(cleanupFailure).when(cleanupService).enqueueAfterCompletion(anyString());
 
         RuntimeException thrown = assertThrows(RuntimeException.class, () -> service.generate(
                 new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)
@@ -203,8 +200,8 @@ class GenerateGermanTailoredResumeServiceTests {
         org.mockito.Mockito.doNothing().when(transactionLifecycle).afterRollback(any());
         RuntimeException persistenceFailure = new RuntimeException("db down");
         when(resumeRepository.replaceGermanyResume(any())).thenThrow(persistenceFailure);
-        when(documentRepository.deleteFileIfUnreferenced(any())).thenThrow(new RuntimeException("document cleanup failed"));
-        doThrow(new RuntimeException("file cleanup failed")).when(fileRepository).deleteIfExists(anyString());
+        doThrow(new RuntimeException("cleanup enqueue failed"))
+                .when(cleanupService).enqueueAfterCompletion(anyString());
 
         RuntimeException thrown = assertThrows(RuntimeException.class, () -> service.generate(
                 new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)
@@ -227,10 +224,10 @@ class GenerateGermanTailoredResumeServiceTests {
                 throw new RuntimeException("cleanup failed");
             }
             return null;
-        }).when(fileRepository).deleteIfExists(anyString());
+        }).when(cleanupService).enqueueAfterCompletion(anyString());
         RuntimeException thrown = assertThrows(RuntimeException.class, () -> service.generate(new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)));
         assertTrue(thrown.getMessage() != null);
-        verify(fileRepository, org.mockito.Mockito.atLeast(2)).deleteIfExists(any());
+        verify(cleanupService, org.mockito.Mockito.atLeast(2)).enqueueAfterCompletion(any());
     }
 
     @Test

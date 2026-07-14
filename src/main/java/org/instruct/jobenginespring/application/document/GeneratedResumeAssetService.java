@@ -1,7 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
-import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.instruct.jobenginespring.application.document.port.TransactionLifecycle;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileResumeDocumentRepository;
@@ -19,7 +18,6 @@ public class GeneratedResumeAssetService {
     private final ProfileRepository profileRepository;
     private final ProfileResumeDocumentRepository resumeDocumentRepository;
     private final DocumentRepository documentRepository;
-    private final GeneratedResumeFileRepository fileRepository;
     private final TransactionLifecycle transactionLifecycle;
     private final GeneratedResumeCleanupService cleanupService;
 
@@ -27,14 +25,12 @@ public class GeneratedResumeAssetService {
             ProfileRepository profileRepository,
             ProfileResumeDocumentRepository resumeDocumentRepository,
             DocumentRepository documentRepository,
-            GeneratedResumeFileRepository fileRepository,
             TransactionLifecycle transactionLifecycle,
             GeneratedResumeCleanupService cleanupService
     ) {
         this.profileRepository = Objects.requireNonNull(profileRepository, "profileRepository must not be null");
         this.resumeDocumentRepository = Objects.requireNonNull(resumeDocumentRepository, "resumeDocumentRepository must not be null");
         this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
-        this.fileRepository = Objects.requireNonNull(fileRepository, "fileRepository must not be null");
         this.transactionLifecycle = Objects.requireNonNull(transactionLifecycle, "transactionLifecycle must not be null");
         this.cleanupService = Objects.requireNonNull(cleanupService, "cleanupService must not be null");
     }
@@ -70,16 +66,11 @@ public class GeneratedResumeAssetService {
     }
 
     void deleteGeneratedFileOnRollback(String filePath) {
-        transactionLifecycle.afterRollback(() -> fileRepository.deleteIfExists(filePath));
+        transactionLifecycle.afterRollback(() -> cleanupService.enqueueNow(filePath));
     }
 
     void discardFailedGeneratedFile(String filePath) {
-        fileRepository.deleteIfExists(filePath);
-    }
-
-    void discardFailedGeneratedAsset(UUID documentId, String filePath) {
-        documentRepository.deleteFileIfUnreferenced(documentId);
-        fileRepository.deleteIfExists(filePath);
+        cleanupService.enqueueAfterCompletion(filePath);
     }
 
     private void deleteUnreferencedAfterReplacement(ProfileResumeDocument previous) {

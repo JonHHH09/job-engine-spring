@@ -465,6 +465,11 @@ class DocumentStorageServiceTests {
             return files.remove(fileId) != null;
         }
 
+        @Override
+        public boolean prepareGeneratedFileCleanup(String filePath) {
+            return false;
+        }
+
         private int fileCount() {
             return files.size();
         }

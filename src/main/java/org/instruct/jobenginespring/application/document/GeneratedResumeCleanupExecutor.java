@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
+import org.instruct.jobenginespring.application.document.port.DocumentRepository;
 import org.instruct.jobenginespring.application.document.port.GeneratedResumeCleanupRepository;
 import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.slf4j.Logger;
@@ -26,24 +27,28 @@ public class GeneratedResumeCleanupExecutor {
     private static final Logger LOGGER = LoggerFactory.getLogger(GeneratedResumeCleanupExecutor.class);
 
     private final GeneratedResumeCleanupRepository cleanupRepository;
+    private final DocumentRepository documentRepository;
     private final GeneratedResumeFileRepository fileRepository;
     private Clock clock = Clock.systemUTC();
 
     @Autowired
     public GeneratedResumeCleanupExecutor(
             GeneratedResumeCleanupRepository cleanupRepository,
+            DocumentRepository documentRepository,
             GeneratedResumeFileRepository fileRepository
     ) {
         this.cleanupRepository = Objects.requireNonNull(cleanupRepository, "cleanupRepository must not be null");
+        this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
         this.fileRepository = Objects.requireNonNull(fileRepository, "fileRepository must not be null");
     }
 
     GeneratedResumeCleanupExecutor(
             GeneratedResumeCleanupRepository cleanupRepository,
+            DocumentRepository documentRepository,
             GeneratedResumeFileRepository fileRepository,
             Clock clock
     ) {
-        this(cleanupRepository, fileRepository);
+        this(cleanupRepository, documentRepository, fileRepository);
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
@@ -60,7 +65,9 @@ public class GeneratedResumeCleanupExecutor {
         Instant now = clock.instant();
         cleanupRepository.claim(taskId, now, now.plus(CLAIM_LEASE)).ifPresent(filePath -> {
             try {
-                fileRepository.deleteIfExists(filePath);
+                if (documentRepository.prepareGeneratedFileCleanup(filePath)) {
+                    fileRepository.deleteIfExists(filePath);
+                }
                 cleanupRepository.markCompleted(taskId, clock.instant());
             } catch (RuntimeException exception) {
                 cleanupRepository.markPending(

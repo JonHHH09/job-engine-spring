@@ -1,7 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
-import org.instruct.jobenginespring.application.document.port.GeneratedResumeFileRepository;
 import org.instruct.jobenginespring.application.document.port.TransactionLifecycle;
 import org.instruct.jobenginespring.application.resume.port.ResumeRepository;
 import org.instruct.jobenginespring.application.resume.port.ResumeRepository.ReplaceResult;
@@ -19,20 +18,17 @@ public class GermanResumePersistenceService {
 
     private final ResumeRepository resumeRepository;
     private final DocumentRepository documentRepository;
-    private final GeneratedResumeFileRepository fileRepository;
     private final GeneratedResumeCleanupService cleanupService;
     private final TransactionLifecycle transactionLifecycle;
 
     public GermanResumePersistenceService(
             ResumeRepository resumeRepository,
             DocumentRepository documentRepository,
-            GeneratedResumeFileRepository fileRepository,
             GeneratedResumeCleanupService cleanupService,
             TransactionLifecycle transactionLifecycle
     ) {
         this.resumeRepository = Objects.requireNonNull(resumeRepository, "resumeRepository must not be null");
         this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
-        this.fileRepository = Objects.requireNonNull(fileRepository, "fileRepository must not be null");
         this.cleanupService = Objects.requireNonNull(cleanupService, "cleanupService must not be null");
         this.transactionLifecycle = Objects.requireNonNull(transactionLifecycle, "transactionLifecycle must not be null");
     }
@@ -42,7 +38,7 @@ public class GermanResumePersistenceService {
         Objects.requireNonNull(write, "write must not be null");
         List<GeneratedAsset> safeAssets = List.copyOf(Objects.requireNonNull(generatedAssets, "generatedAssets must not be null"));
         safeAssets.forEach(asset -> transactionLifecycle.afterRollback(
-                () -> fileRepository.deleteIfExists(asset.filePath())
+                () -> cleanupService.enqueueNow(asset.filePath())
         ));
 
         ReplaceResult replaced = resumeRepository.replaceGermanyResume(write);

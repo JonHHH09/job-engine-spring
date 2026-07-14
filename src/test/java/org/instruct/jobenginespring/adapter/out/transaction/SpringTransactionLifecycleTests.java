@@ -22,23 +22,26 @@ class SpringTransactionLifecycleTests {
     }
 
     @Test
-    void runsCommitImmediatelyAndIgnoresRollbackWithoutSynchronization() {
+    void runsCommitAndCompletionImmediatelyAndIgnoresRollbackWithoutSynchronization() {
         AtomicInteger calls = new AtomicInteger();
 
         lifecycle.afterCommit(calls::incrementAndGet);
         lifecycle.afterRollback(calls::incrementAndGet);
+        lifecycle.afterCompletion(calls::incrementAndGet);
 
-        assertEquals(1, calls.get());
+        assertEquals(2, calls.get());
     }
 
     @Test
     void dispatchesRegisteredActionsForMatchingCompletionStatus() {
         AtomicInteger commitCalls = new AtomicInteger();
         AtomicInteger rollbackCalls = new AtomicInteger();
+        AtomicInteger completionCalls = new AtomicInteger();
         TransactionSynchronizationManager.initSynchronization();
 
         lifecycle.afterCommit(commitCalls::incrementAndGet);
         lifecycle.afterRollback(rollbackCalls::incrementAndGet);
+        lifecycle.afterCompletion(completionCalls::incrementAndGet);
         var synchronizations = TransactionSynchronizationManager.getSynchronizations();
 
         synchronizations.forEach(TransactionSynchronization::afterCommit);
@@ -47,11 +50,13 @@ class SpringTransactionLifecycleTests {
 
         assertEquals(1, commitCalls.get());
         assertEquals(1, rollbackCalls.get());
+        assertEquals(2, completionCalls.get());
     }
 
     @Test
     void rejectsNullActions() {
         assertThrows(NullPointerException.class, () -> lifecycle.afterCommit(null));
         assertThrows(NullPointerException.class, () -> lifecycle.afterRollback(null));
+        assertThrows(NullPointerException.class, () -> lifecycle.afterCompletion(null));
     }
 }

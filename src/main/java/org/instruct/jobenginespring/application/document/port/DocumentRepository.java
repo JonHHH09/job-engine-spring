@@ -28,4 +28,12 @@ public interface DocumentRepository {
      * An underlying blob is removed only when the deleted document was its final reference.
      */
     boolean deleteFileIfUnreferenced(UUID fileId);
+
+    /**
+     * Removes database state for generated documents matching {@code filePath} only when no generated-resume
+     * reference still requires that physical path.
+     *
+     * @return {@code true} when physical deletion is safe, or {@code false} when the path must be preserved
+     */
+    boolean prepareGeneratedFileCleanup(String filePath);
 }
