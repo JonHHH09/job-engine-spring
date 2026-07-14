@@ -2,6 +2,7 @@ package org.instruct.jobenginespring.application.document;
 
 import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratePdfFileRequest;
 import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratedPdfFileResult;
+import org.instruct.jobenginespring.application.document.PdfGenerationService.PageNumberLocale;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileNotFoundException;
@@ -62,11 +63,14 @@ public class ProfileResumePdfGenerationWorkflow {
         String resumeType = validateResumeType(safeCommand.resumeType());
         Path outputDirectory = Objects.requireNonNull(safeCommand.outputDirectory(), "outputDirectory must not be null");
 
-        GeneratedPdfFileResult generatedFile = new PdfGenerationService(outputDirectory).generatePdfFile(new GeneratePdfFileRequest(
-                uniqueFileName(safeCommand.fileName()),
-                safeCommand.title(),
-                safeCommand.body()
-        ));
+        GeneratedPdfFileResult generatedFile = new PdfGenerationService(outputDirectory).generatePdfFile(
+                new GeneratePdfFileRequest(
+                        uniqueFileName(safeCommand.fileName()),
+                        safeCommand.title(),
+                        safeCommand.body()
+                ),
+                safeCommand.pageNumberLocale()
+        );
         generatedResumeAssetService.deleteGeneratedFileOnRollback(generatedFile.path());
         try {
             StoredDocumentMetadata document = documentStorageService.storeGeneratedDocumentFile(
@@ -142,8 +146,19 @@ public class ProfileResumePdfGenerationWorkflow {
             Path outputDirectory,
             String fileName,
             String title,
-            String body
+            String body,
+            PageNumberLocale pageNumberLocale
     ) {
+        GenerateProfileResumePdfCommand(
+                UUID profileId,
+                String resumeType,
+                Path outputDirectory,
+                String fileName,
+                String title,
+                String body
+        ) {
+            this(profileId, resumeType, outputDirectory, fileName, title, body, PageNumberLocale.ENGLISH);
+        }
     }
 
     public record GeneratedProfileResumePdf(

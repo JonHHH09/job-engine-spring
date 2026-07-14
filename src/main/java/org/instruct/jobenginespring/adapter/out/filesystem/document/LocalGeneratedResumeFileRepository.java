@@ -26,12 +26,14 @@ public class LocalGeneratedResumeFileRepository implements GeneratedResumeFileRe
             @Value("${job-engine.pdf-generation.output-dir:tmp/generated-pdfs}") String generalOutputDirectory,
             @Value("${job-engine.pdf-generation.master-resume-output-dir:tmp/generated-pdfs/master-resume}") String masterResumeOutputDirectory,
             @Value("${job-engine.pdf-generation.canadian-resume-output-dir:tmp/generated-pdfs/canadian-resume}") String canadianResumeOutputDirectory,
+            @Value("${job-engine.pdf-generation.canadian-french-resume-output-dir:tmp/generated-pdfs/canadian-resume-fr}") String canadianFrenchResumeOutputDirectory,
             @Value("${job-engine.pdf-generation.german-resume-output-dir:tmp/generated-pdfs/german-resume}") String germanResumeOutputDirectory
     ) {
         this(
                 Path.of(generalOutputDirectory),
                 Path.of(masterResumeOutputDirectory),
                 Path.of(canadianResumeOutputDirectory),
+                Path.of(canadianFrenchResumeOutputDirectory),
                 Path.of(germanResumeOutputDirectory)
         );
     }
