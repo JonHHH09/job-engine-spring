@@ -60,7 +60,12 @@ public class GeneratedResumeCleanupService {
         this(
                 cleanupRepository,
                 transactionLifecycle,
-                new GeneratedResumeCleanupExecutor(cleanupRepository, documentRepository, fileRepository, clock),
+                new GeneratedResumeCleanupExecutor(
+                        new GeneratedResumeCleanupPreparation(cleanupRepository, documentRepository, clock),
+                        new GeneratedResumeCleanupFileDeletion(fileRepository),
+                        new GeneratedResumeCleanupFinalizer(cleanupRepository),
+                        clock
+                ),
                 new GeneratedResumeCleanupTaskCreator(cleanupRepository),
                 clock
         );

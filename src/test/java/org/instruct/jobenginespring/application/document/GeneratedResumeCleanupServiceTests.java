@@ -19,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -143,5 +145,86 @@ class GeneratedResumeCleanupServiceTests {
         verify(cleanupRepository).enqueue("compensation.pdf", NOW);
         verify(fileRepository).deleteIfExists("compensation.pdf");
         verify(cleanupRepository).markCompleted(TASK_ID, NOW);
+    }
+
+    @Test
+    void preparationFailureLeavesTaskReclaimableAndRetryCompletes() {
+        when(cleanupRepository.findDueTaskIds(NOW, GeneratedResumeCleanupService.RETRY_BATCH_SIZE))
+                .thenReturn(List.of(TASK_ID));
+        when(cleanupRepository.claim(TASK_ID, NOW, NOW.plus(GeneratedResumeCleanupService.CLAIM_LEASE)))
+                .thenThrow(new IllegalStateException("database unavailable"))
+                .thenReturn(Optional.of("old.pdf"));
+        when(documentRepository.prepareGeneratedFileCleanup("old.pdf")).thenReturn(true);
+
+        assertDoesNotThrow(service::retryDueTasks);
+        service.retryDueTasks();
+
+        verify(fileRepository).deleteIfExists("old.pdf");
+        verify(cleanupRepository).markCompleted(TASK_ID, NOW);
+    }
+
+    @Test
+    void filesystemFailureMarksPendingAndRetryRepeatsIdempotentDeletion() {
+        when(cleanupRepository.findDueTaskIds(NOW, GeneratedResumeCleanupService.RETRY_BATCH_SIZE))
+                .thenReturn(List.of(TASK_ID));
+        when(cleanupRepository.claim(TASK_ID, NOW, NOW.plus(GeneratedResumeCleanupService.CLAIM_LEASE)))
+                .thenReturn(Optional.of("old.pdf"));
+        when(documentRepository.prepareGeneratedFileCleanup("old.pdf")).thenReturn(true);
+        doThrow(new IllegalStateException("filesystem unavailable"))
+                .doNothing()
+                .when(fileRepository).deleteIfExists("old.pdf");
+
+        service.retryDueTasks();
+        service.retryDueTasks();
+
+        verify(fileRepository, times(2)).deleteIfExists("old.pdf");
+        verify(cleanupRepository).markPending(
+                TASK_ID,
+                NOW.plus(GeneratedResumeCleanupService.RETRY_DELAY),
+                IllegalStateException.class.getSimpleName()
+        );
+        verify(cleanupRepository).markCompleted(TASK_ID, NOW);
+    }
+
+    @Test
+    void completionFailureMovesTaskBackToPendingAndRetryCompletes() {
+        when(cleanupRepository.findDueTaskIds(NOW, GeneratedResumeCleanupService.RETRY_BATCH_SIZE))
+                .thenReturn(List.of(TASK_ID));
+        when(cleanupRepository.claim(TASK_ID, NOW, NOW.plus(GeneratedResumeCleanupService.CLAIM_LEASE)))
+                .thenReturn(Optional.of("old.pdf"));
+        when(documentRepository.prepareGeneratedFileCleanup("old.pdf")).thenReturn(true);
+        doThrow(new IllegalStateException("completion unavailable"))
+                .doNothing()
+                .when(cleanupRepository).markCompleted(TASK_ID, NOW);
+
+        service.retryDueTasks();
+        service.retryDueTasks();
+
+        verify(fileRepository, times(2)).deleteIfExists("old.pdf");
+        verify(cleanupRepository).markPending(
+                TASK_ID,
+                NOW.plus(GeneratedResumeCleanupService.RETRY_DELAY),
+                IllegalStateException.class.getSimpleName()
+        );
+        verify(cleanupRepository, times(2)).markCompleted(TASK_ID, NOW);
+    }
+
+    @Test
+    void pendingStateFailureDoesNotEscapeAndLeaseAllowsLaterReclaim() {
+        when(cleanupRepository.findDueTaskIds(NOW, GeneratedResumeCleanupService.RETRY_BATCH_SIZE))
+                .thenReturn(List.of(TASK_ID));
+        when(cleanupRepository.claim(TASK_ID, NOW, NOW.plus(GeneratedResumeCleanupService.CLAIM_LEASE)))
+                .thenReturn(Optional.of("old.pdf"));
+        when(documentRepository.prepareGeneratedFileCleanup("old.pdf")).thenReturn(true);
+        doThrow(new IllegalStateException("filesystem unavailable"))
+                .when(fileRepository).deleteIfExists("old.pdf");
+        doThrow(new IllegalStateException("database unavailable"))
+                .when(cleanupRepository).markPending(
+                        TASK_ID,
+                        NOW.plus(GeneratedResumeCleanupService.RETRY_DELAY),
+                        IllegalStateException.class.getSimpleName()
+                );
+
+        assertDoesNotThrow(service::retryDueTasks);
     }
 }
