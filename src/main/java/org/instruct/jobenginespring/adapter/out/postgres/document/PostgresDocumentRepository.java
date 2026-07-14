@@ -73,27 +73,6 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
-    public Optional<StoredDocumentMetadata> findFileMetadataBySha256(String sha256) {
-        return jdbc.sql("""
-                        SELECT stored_document.id,
-                               stored_document.original_file_name,
-                               stored_document.media_type,
-                               blob.byte_size,
-                               blob.sha256,
-                               stored_document.created_at,
-                               stored_document.updated_at
-                        FROM document.documents stored_document
-                        JOIN document.blobs blob ON blob.id = stored_document.blob_id
-                        WHERE blob.sha256 = :sha256
-                        ORDER BY stored_document.created_at DESC, stored_document.id
-                        LIMIT 1
-                        """)
-                .param("sha256", sha256)
-                .query(METADATA_MAPPER)
-                .optional();
-    }
-
-    @Override
     public Optional<StoredDocumentFile> findFileContentById(UUID fileId) {
         return jdbc.sql("""
                         SELECT stored_document.id,

@@ -103,8 +103,7 @@ public class DocumentStorageService {
         }
 
         PdfTextExtractionResult extraction = pdfTextExtractionService.extractText(
-                file.content(),
-                file.originalFileName(),
+                file,
                 safeRequest.maxCharacters(),
                 safeRequest.includePages()
         );
@@ -168,10 +167,9 @@ public class DocumentStorageService {
             PdfTextExtractionResult canonical,
             ExtractStoredPdfTextRequest request
     ) {
-        if (request.includePages() == null || request.includePages()) {
+        if (Boolean.TRUE.equals(request.includePages())) {
             PdfTextExtractionResult response = pdfTextExtractionService.extractText(
-                    file.content(),
-                    file.originalFileName(),
+                    file,
                     request.maxCharacters(),
                     true
             );
@@ -187,8 +185,7 @@ public class DocumentStorageService {
 
     private PdfTextExtractionResult extractCanonical(StoredDocumentFile file) {
         return pdfTextExtractionService.extractText(
-                file.content(),
-                file.originalFileName(),
+                file,
                 PdfTextExtractionService.MAX_CHARACTERS_LIMIT,
                 true
         );

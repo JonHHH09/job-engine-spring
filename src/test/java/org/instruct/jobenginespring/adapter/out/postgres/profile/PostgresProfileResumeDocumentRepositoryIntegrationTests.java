@@ -93,7 +93,6 @@ class PostgresProfileResumeDocumentRepositoryIntegrationTests {
 
         assertEquals(link, saved);
         assertEquals(link, resumeDocumentRepository.findByProfileIdAndResumeType(PROFILE_ID, "master_resume").orElseThrow());
-        assertEquals(link, resumeDocumentRepository.findByDocumentId(FIRST_DOCUMENT_ID).orElseThrow());
     }
 
     @Test

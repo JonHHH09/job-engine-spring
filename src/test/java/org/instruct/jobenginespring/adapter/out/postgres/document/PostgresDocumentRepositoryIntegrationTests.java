@@ -101,7 +101,6 @@ class PostgresDocumentRepositoryIntegrationTests {
 
         assertEquals(file.metadata(), saved);
         assertEquals(saved, repository.findFileMetadataById(FILE_ID).orElseThrow());
-        assertEquals(saved, repository.findFileMetadataBySha256(SHA256).orElseThrow());
         StoredDocumentFile found = repository.findFileContentById(FILE_ID).orElseThrow();
         assertEquals(file.metadata(), found.metadata());
         assertArrayEquals(PDF_CONTENT, found.content());
@@ -229,8 +228,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                 List.of()
         );
         when(extractionService.extractText(
-                any(byte[].class),
-                eq("sample.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         )).thenReturn(canonical);
@@ -245,7 +243,7 @@ class PostgresDocumentRepositoryIntegrationTests {
         PdfExtractionRecord persisted = repository.findPdfExtractionByFileId(FILE_ID).orElseThrow();
         assertEquals(20, persisted.characterCount());
         assertEquals("0123456789abcdefghij", persisted.extractedText());
-        verify(extractionService, times(1)).extractText(any(byte[].class), any(), any(), any());
+        verify(extractionService, times(1)).extractText(any(StoredDocumentFile.class), any(), any());
     }
 
     @Test
@@ -258,8 +256,7 @@ class PostgresDocumentRepositoryIntegrationTests {
         CountDownLatch start = new CountDownLatch(1);
         CyclicBarrier bothExtracted = new CyclicBarrier(2);
         when(extractionService.extractText(
-                any(byte[].class),
-                eq("sample.pdf"),
+                any(StoredDocumentFile.class),
                 eq(PdfTextExtractionService.MAX_CHARACTERS_LIMIT),
                 eq(true)
         )).thenAnswer(invocation -> {
@@ -286,7 +283,7 @@ class PostgresDocumentRepositoryIntegrationTests {
             assertEquals("sample text", firstResult.extraction().text());
             assertEquals("sample text", secondResult.extraction().text());
             assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM document.pdf_extractions", Integer.class));
-            verify(extractionService, times(2)).extractText(any(byte[].class), any(), any(), any());
+            verify(extractionService, times(2)).extractText(any(StoredDocumentFile.class), any(), any());
         }
     }
 

@@ -3,11 +3,13 @@ package org.instruct.jobenginespring.application.document;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
+import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.ExtractedTextFormatter;
 import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.ai.reader.pdf.config.PdfDocumentReaderConfig;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.AbstractResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -62,6 +65,20 @@ public class PdfTextExtractionService {
         return extractText(new NamedByteArrayResource(pdfContent, safeFileName), safeFileName, maxCharacters, includePages);
     }
 
+    public PdfTextExtractionResult extractText(StoredDocumentFile pdfFile, Integer maxCharacters, Boolean includePages) {
+        StoredDocumentFile safeFile = Objects.requireNonNull(pdfFile, "pdfFile must not be null");
+        validateFileSize(safeFile.byteSize());
+        if (!hasPdfHeader(safeFile.openContentStream())) {
+            throw validation("path", "file must be a PDF document");
+        }
+        return extractText(
+                new StoredDocumentResource(safeFile),
+                safeFile.originalFileName(),
+                maxCharacters,
+                includePages
+        );
+    }
+
     static PdfTextExtractionResult applyRequestView(
             PdfTextExtractionResult canonical,
             Integer maxCharactersValue,
@@ -69,7 +86,7 @@ public class PdfTextExtractionService {
     ) {
         Objects.requireNonNull(canonical, "canonical must not be null");
         int maxCharacters = resolveMaxCharacters(maxCharactersValue);
-        boolean includePages = includePagesValue == null || includePagesValue;
+        boolean includePages = includePagesValue != null && includePagesValue;
         return new PdfTextExtractionResult(
                 canonical.fileName(),
                 canonical.pageCount(),
@@ -143,8 +160,17 @@ public class PdfTextExtractionService {
     }
 
     private static boolean hasPdfHeader(Path path) {
+        try (InputStream content = Files.newInputStream(path)) {
+            return hasPdfHeader(content);
+        } catch (IOException exception) {
+            throw validation("path", "file is not readable");
+        }
+    }
+
+    static boolean hasPdfHeader(InputStream content) {
+        Objects.requireNonNull(content, "content must not be null");
         try {
-            return hasPdfHeader(Files.readAllBytes(path));
+            return hasPdfHeader(content.readNBytes(PDF_MAGIC.length));
         } catch (IOException exception) {
             throw validation("path", "file is not readable");
         }
@@ -313,6 +339,35 @@ public class PdfTextExtractionService {
         @Override
         public String getFilename() {
             return filename;
+        }
+    }
+
+    static final class StoredDocumentResource extends AbstractResource {
+
+        private final StoredDocumentFile file;
+
+        StoredDocumentResource(StoredDocumentFile file) {
+            this.file = file;
+        }
+
+        @Override
+        public String getDescription() {
+            return file.originalFileName();
+        }
+
+        @Override
+        public String getFilename() {
+            return file.originalFileName();
+        }
+
+        @Override
+        public long contentLength() {
+            return file.byteSize();
+        }
+
+        @Override
+        public InputStream getInputStream() {
+            return file.openContentStream();
         }
     }
 }

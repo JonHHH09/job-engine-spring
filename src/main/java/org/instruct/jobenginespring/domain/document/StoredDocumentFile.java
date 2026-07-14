@@ -1,5 +1,7 @@
 package org.instruct.jobenginespring.domain.document;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Objects;
@@ -23,6 +25,11 @@ public record StoredDocumentFile(
     @Override
     public byte[] content() {
         return Arrays.copyOf(content, content.length);
+    }
+
+    /** Opens an immutable read view without copying the complete stored content. */
+    public InputStream openContentStream() {
+        return new ByteArrayInputStream(content);
     }
 
     public StoredDocumentMetadata metadata() {
