@@ -19,7 +19,7 @@ import java.util.UUID;
  * locks block inserts, updates, and deletes on all source and target tables until the complete
  * backfill commits. Every read is keyset-paged and every JDBC result and insert batch is bounded.
  */
-public final class V20__backfill_indexed_search_terms extends BaseJavaMigration {
+public final class V23__backfill_indexed_search_terms extends BaseJavaMigration {
     static final int ENTITY_BATCH_SIZE = 100;
     static final int CHILD_BATCH_SIZE = 250;
     static final int INSERT_BATCH_SIZE = 1_000;

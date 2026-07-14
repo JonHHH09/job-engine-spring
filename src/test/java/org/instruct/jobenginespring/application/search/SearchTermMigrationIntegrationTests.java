@@ -86,7 +86,7 @@ class SearchTermMigrationIntegrationTests {
     @Test
     void maintenanceLocksBlockConcurrentWriteAndLeaveRuntimeTermsConsistent() throws Exception {
         var dataSource = dataSource();
-        resetTo(dataSource, "19");
+        resetTo(dataSource, "22");
         var jdbc = new JdbcTemplate(dataSource);
         var profileId = UUID.randomUUID();
         var now = Timestamp.from(Instant.parse("2026-07-14T12:00:00Z"));
@@ -114,7 +114,7 @@ class SearchTermMigrationIntegrationTests {
                 lock.execute();
             }
             var migration = executor.submit(() -> configuration(dataSource)
-                    .target(MigrationVersion.fromVersion("20")).load().migrate());
+                    .target(MigrationVersion.fromVersion("23")).load().migrate());
             assertTrue(awaitMigrationTableLock(jdbc), "migration never acquired its maintenance table locks");
 
             var writer = executor.submit(() -> {
