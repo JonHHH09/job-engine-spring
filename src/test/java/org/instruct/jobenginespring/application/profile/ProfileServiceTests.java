@@ -87,6 +87,7 @@ class ProfileServiceTests {
         assertEquals("spring ai", created.skills().getFirst().normalizedSkill());
         assertEquals("backend", created.skills().getFirst().category());
         assertEquals(List.of(created.profile()), service.listProfiles());
+        assertEquals(List.of(created.profile()), service.listProfiles(1, null).items());
     }
 
 
@@ -330,8 +331,10 @@ class ProfileServiceTests {
         private final Map<UUID, ProfileAggregate> aggregates = new LinkedHashMap<>();
 
         @Override
-        public List<UserProfile> listProfiles() {
-            return aggregates.values().stream().map(ProfileAggregate::profile).toList();
+        public org.instruct.jobenginespring.application.pagination.Page<UserProfile> listProfiles(
+                org.instruct.jobenginespring.application.pagination.PageRequest request) {
+            return new org.instruct.jobenginespring.application.pagination.Page<>(aggregates.values().stream()
+                    .limit(request.limit()).map(ProfileAggregate::profile).toList(), null);
         }
 
         @Override
@@ -340,8 +343,10 @@ class ProfileServiceTests {
         }
 
         @Override
-        public List<ProfileAggregate> listProfileAggregates() {
-            return List.copyOf(aggregates.values());
+        public org.instruct.jobenginespring.application.pagination.Page<ProfileAggregate> listProfileAggregates(
+                org.instruct.jobenginespring.application.pagination.PageRequest request) {
+            return new org.instruct.jobenginespring.application.pagination.Page<>(aggregates.values().stream()
+                    .limit(request.limit()).toList(), null);
         }
 
         @Override

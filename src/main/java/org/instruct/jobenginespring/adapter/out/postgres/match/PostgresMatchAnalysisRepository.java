@@ -3,6 +3,8 @@ package org.instruct.jobenginespring.adapter.out.postgres.match;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.match.*;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -20,6 +22,163 @@ import java.util.UUID;
 @Repository
 @ConditionalOnProperty(prefix = "job-engine.job.postgres", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository {
+    static final String REPORT_PAGE_UNFILTERED_SQL = """
+            WITH bounds AS (
+                SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+            ), page AS MATERIALIZED (
+                SELECT report.*, bounds.snapshot_at
+                FROM match.reports report
+                CROSS JOIN bounds
+                WHERE report.created_at <= bounds.snapshot_at
+                  AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                       OR (report.created_at, report.id) < (:cursorCreatedAt, :cursorId))
+                ORDER BY report.created_at DESC, report.id DESC
+                LIMIT :fetchLimit
+            )
+            SELECT page.*, profile.updated_at AS current_profile_revision,
+                   job.updated_at AS current_job_revision
+            FROM page
+            LEFT JOIN profile.profiles profile ON profile.id = page.profile_id
+            LEFT JOIN job_schema.jobs job ON job.id = page.job_id
+            ORDER BY page.created_at DESC, page.id DESC
+            """;
+    static final String REPORT_PAGE_PROFILE_SQL = """
+            WITH bounds AS (
+                SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+            ), page AS MATERIALIZED (
+                SELECT report.*, bounds.snapshot_at
+                FROM match.reports report
+                CROSS JOIN bounds
+                WHERE report.profile_id = :profileId
+                  AND (report.profile_id, report.created_at, report.id)
+                      <= (:profileId, bounds.snapshot_at,
+                          CAST('ffffffff-ffff-ffff-ffff-ffffffffffff' AS uuid))
+                  AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                       OR (report.created_at, report.id) < (:cursorCreatedAt, :cursorId))
+                ORDER BY report.profile_id, report.created_at DESC, report.id DESC
+                LIMIT :fetchLimit
+            )
+            SELECT page.*, profile.updated_at AS current_profile_revision,
+                   job.updated_at AS current_job_revision
+            FROM page
+            LEFT JOIN profile.profiles profile ON profile.id = page.profile_id
+            LEFT JOIN job_schema.jobs job ON job.id = page.job_id
+            ORDER BY page.created_at DESC, page.id DESC
+            """;
+    static final String REPORT_PAGE_JOB_SQL = """
+            WITH bounds AS (
+                SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+            ), page AS MATERIALIZED (
+                SELECT report.*, bounds.snapshot_at
+                FROM match.reports report
+                CROSS JOIN bounds
+                WHERE report.job_id = :jobId
+                  AND (report.job_id, report.created_at, report.id)
+                      <= (:jobId, bounds.snapshot_at,
+                          CAST('ffffffff-ffff-ffff-ffff-ffffffffffff' AS uuid))
+                  AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                       OR (report.created_at, report.id) < (:cursorCreatedAt, :cursorId))
+                ORDER BY report.job_id, report.created_at DESC, report.id DESC
+                LIMIT :fetchLimit
+            )
+            SELECT page.*, profile.updated_at AS current_profile_revision,
+                   job.updated_at AS current_job_revision
+            FROM page
+            LEFT JOIN profile.profiles profile ON profile.id = page.profile_id
+            LEFT JOIN job_schema.jobs job ON job.id = page.job_id
+            ORDER BY page.created_at DESC, page.id DESC
+            """;
+    static final String REPORT_PAGE_PROFILE_JOB_SQL = """
+            WITH bounds AS (
+                SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+            ), keys AS MATERIALIZED (
+                SELECT report.id, report.created_at, bounds.snapshot_at
+                FROM match.reports report
+                CROSS JOIN bounds
+                WHERE report.profile_id = :profileId
+                  AND report.job_id = :jobId
+                  AND ARRAY[report.profile_id, report.job_id]
+                      = ARRAY[CAST(:profileId AS uuid), CAST(:jobId AS uuid)]
+                  AND (ARRAY[report.profile_id, report.job_id], report.created_at, report.id)
+                      < (ARRAY[CAST(:profileId AS uuid), CAST(:jobId AS uuid)],
+                         COALESCE(CAST(:cursorCreatedAt AS timestamptz),
+                                  bounds.snapshot_at + INTERVAL '1 microsecond'),
+                         COALESCE(CAST(:cursorId AS uuid),
+                                  CAST('00000000-0000-0000-0000-000000000000' AS uuid)))
+                ORDER BY ARRAY[report.profile_id, report.job_id], report.created_at DESC, report.id DESC
+                LIMIT :fetchLimit
+            ), page AS MATERIALIZED (
+                SELECT report.*, keys.snapshot_at
+                FROM keys
+                JOIN match.reports report ON report.id = keys.id
+            )
+            SELECT page.*, profile.updated_at AS current_profile_revision,
+                   job.updated_at AS current_job_revision
+            FROM page
+            LEFT JOIN profile.profiles profile ON profile.id = page.profile_id
+            LEFT JOIN job_schema.jobs job ON job.id = page.job_id
+            ORDER BY page.created_at DESC, page.id DESC
+            """;
+    static final String REVIEW_PAGE_UNFILTERED_SQL = """
+            WITH bounds AS (
+                SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+            )
+            SELECT review.*, bounds.snapshot_at
+            FROM match.reviews review
+            CROSS JOIN bounds
+            WHERE review.created_at <= bounds.snapshot_at
+              AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                   OR (review.created_at, review.id) < (:cursorCreatedAt, :cursorId))
+            ORDER BY review.created_at DESC, review.id DESC
+            LIMIT :fetchLimit
+            """;
+    static final String REVIEW_PAGE_FILTERED_SQL = """
+            WITH bounds AS (
+                SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+            )
+            SELECT review.*, bounds.snapshot_at
+            FROM match.reviews review
+            CROSS JOIN bounds
+            WHERE review.report_id = :reportId
+              AND review.created_at <= bounds.snapshot_at
+              AND (review.report_id, review.created_at, review.id)
+                  <= (:reportId, bounds.snapshot_at,
+                      CAST('ffffffff-ffff-ffff-ffff-ffffffffffff' AS uuid))
+              AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                   OR (review.created_at, review.id) < (:cursorCreatedAt, :cursorId))
+            ORDER BY review.report_id, review.created_at DESC, review.id DESC
+            LIMIT :fetchLimit
+            """;
+    static final String DISAGREEMENT_PAGE_UNFILTERED_SQL = """
+            WITH bounds AS (
+                SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+            )
+            SELECT disagreement.*, bounds.snapshot_at
+            FROM match.disagreements disagreement
+            CROSS JOIN bounds
+            WHERE disagreement.created_at <= bounds.snapshot_at
+              AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                   OR (disagreement.created_at, disagreement.id) < (:cursorCreatedAt, :cursorId))
+            ORDER BY disagreement.created_at DESC, disagreement.id DESC
+            LIMIT :fetchLimit
+            """;
+    static final String DISAGREEMENT_PAGE_FILTERED_SQL = """
+            WITH bounds AS (
+                SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+            )
+            SELECT disagreement.*, bounds.snapshot_at
+            FROM match.disagreements disagreement
+            CROSS JOIN bounds
+            WHERE disagreement.report_id = :reportId
+              AND disagreement.created_at <= bounds.snapshot_at
+              AND (disagreement.report_id, disagreement.created_at, disagreement.id)
+                  <= (:reportId, bounds.snapshot_at,
+                      CAST('ffffffff-ffff-ffff-ffff-ffffffffffff' AS uuid))
+              AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                   OR (disagreement.created_at, disagreement.id) < (:cursorCreatedAt, :cursorId))
+            ORDER BY disagreement.report_id, disagreement.created_at DESC, disagreement.id DESC
+            LIMIT :fetchLimit
+            """;
     private static final TypeReference<List<ComponentScore>> COMPONENTS = new TypeReference<>() {};
     private static final TypeReference<List<MatchEvidence>> EVIDENCE = new TypeReference<>() {};
     private static final TypeReference<Set<DisagreementReason>> REASONS = new TypeReference<>() {};
@@ -53,12 +212,48 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
                 .param("jobRevision", Timestamp.from(r.jobRevision())).query(this::report).single();
     }
     @Override public Optional<MatchReport> findReport(UUID id) { return jdbc.sql("SELECT * FROM match.reports WHERE id=:id").param("id",id).query(this::report).optional(); }
-    @Override public List<MatchReport> listReports(UUID profileId, UUID jobId) {
+    @Override public Optional<ReportWithRevisions> findReportWithRevisions(UUID id) {
         return jdbc.sql("""
-                SELECT * FROM match.reports WHERE (CAST(:profileId AS uuid) IS NULL OR profile_id=:profileId)
-                AND (CAST(:jobId AS uuid) IS NULL OR job_id=:jobId) ORDER BY created_at DESC,id
-                """)
-                .param("profileId",profileId).param("jobId",jobId).query(this::report).list();
+                SELECT report.*, profile.updated_at AS current_profile_revision,
+                       job.updated_at AS current_job_revision
+                FROM match.reports report
+                LEFT JOIN profile.profiles profile ON profile.id = report.profile_id
+                LEFT JOIN job_schema.jobs job ON job.id = report.job_id
+                WHERE report.id = :id
+                """).param("id", id).query(this::reportWithRevisions).optional();
+    }
+    @Override public Page<ReportWithRevisions> listReports(UUID profileId, UUID jobId, PageRequest request) {
+        var statement = jdbc.sql(reportPageSql(profileId, jobId))
+                .param("snapshotAt", timestamp(request.cursor() == null ? null : request.cursor().snapshotAt()))
+                .param("cursorCreatedAt", timestamp(request.cursor() == null ? null : request.cursor().createdAt()))
+                .param("cursorId", request.cursor() == null ? null : request.cursor().id())
+                .param("fetchLimit", request.limit() + 1);
+        if (profileId != null) {
+            statement.param("profileId", profileId);
+        }
+        if (jobId != null) {
+            statement.param("jobId", jobId);
+        }
+        var rows = statement
+                .query((resultSet, rowNumber) -> new ReportPageRow(
+                        reportWithRevisions(resultSet, rowNumber), instant(resultSet, "snapshot_at")))
+                .list();
+        boolean hasMore = rows.size() > request.limit();
+        var pageRows = rows.stream().limit(request.limit()).toList();
+        var items = pageRows.stream().map(ReportPageRow::value).toList();
+        var last = hasMore ? pageRows.getLast() : null;
+        return new Page<>(items, last == null ? null : request.nextCursor(last.snapshotAt(),
+                last.value().report().createdAt(), last.value().report().id()));
+    }
+
+    private static String reportPageSql(UUID profileId, UUID jobId) {
+        if (profileId != null && jobId != null) {
+            return REPORT_PAGE_PROFILE_JOB_SQL;
+        }
+        if (profileId != null) {
+            return REPORT_PAGE_PROFILE_SQL;
+        }
+        return jobId == null ? REPORT_PAGE_UNFILTERED_SQL : REPORT_PAGE_JOB_SQL;
     }
     @Override public MatchReview saveReview(MatchReview r) {
         jdbc.sql("""
@@ -75,7 +270,26 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
                 .param("fingerprint", r.fingerprint()).query(this::review).single();
     }
     @Override public Optional<MatchReview> findReview(UUID id) { return jdbc.sql("SELECT * FROM match.reviews WHERE id=:id").param("id",id).query(this::review).optional(); }
-    @Override public List<MatchReview> listReviews(UUID reportId) { return jdbc.sql("SELECT * FROM match.reviews WHERE report_id=:id ORDER BY created_at DESC,id").param("id",reportId).query(this::review).list(); }
+    @Override public Page<MatchReview> listReviews(UUID reportId, PageRequest request) {
+        var statement = jdbc.sql(reportId == null ? REVIEW_PAGE_UNFILTERED_SQL : REVIEW_PAGE_FILTERED_SQL)
+                .param("snapshotAt", timestamp(request.cursor() == null ? null : request.cursor().snapshotAt()))
+                .param("cursorCreatedAt", timestamp(request.cursor() == null ? null : request.cursor().createdAt()))
+                .param("cursorId", request.cursor() == null ? null : request.cursor().id())
+                .param("fetchLimit", request.limit() + 1);
+        if (reportId != null) {
+            statement.param("reportId", reportId);
+        }
+        var rows = statement
+                .query((resultSet, rowNumber) -> new ReviewPageRow(
+                        review(resultSet, rowNumber), instant(resultSet, "snapshot_at")))
+                .list();
+        boolean hasMore = rows.size() > request.limit();
+        var pageRows = rows.stream().limit(request.limit()).toList();
+        var items = pageRows.stream().map(ReviewPageRow::value).toList();
+        var last = hasMore ? pageRows.getLast() : null;
+        return new Page<>(items, last == null ? null
+                : request.nextCursor(last.snapshotAt(), last.value().createdAt(), last.value().id()));
+    }
     @Override public MatchDisagreement saveDisagreement(MatchDisagreement d) {
         jdbc.sql("""
                 INSERT INTO match.disagreements (id,fingerprint,report_id,review_id,policy_version,reasons,evidence_defect_codes,
@@ -92,9 +306,25 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
     @Override public Optional<MatchDisagreement> findDisagreement(UUID id) {
         return jdbc.sql("SELECT * FROM match.disagreements WHERE id=:id").param("id", id).query(this::disagreement).optional();
     }
-    @Override public List<MatchDisagreement> listDisagreements(UUID reportId) {
-        return jdbc.sql("SELECT * FROM match.disagreements WHERE (CAST(:id AS uuid) IS NULL OR report_id=:id) ORDER BY created_at DESC,id")
-                .param("id",reportId).query(this::disagreement).list();
+    @Override public Page<MatchDisagreement> listDisagreements(UUID reportId, PageRequest request) {
+        var statement = jdbc.sql(reportId == null ? DISAGREEMENT_PAGE_UNFILTERED_SQL : DISAGREEMENT_PAGE_FILTERED_SQL)
+                .param("snapshotAt", timestamp(request.cursor() == null ? null : request.cursor().snapshotAt()))
+                .param("cursorCreatedAt", timestamp(request.cursor() == null ? null : request.cursor().createdAt()))
+                .param("cursorId", request.cursor() == null ? null : request.cursor().id())
+                .param("fetchLimit", request.limit() + 1);
+        if (reportId != null) {
+            statement.param("reportId", reportId);
+        }
+        var rows = statement
+                .query((resultSet, rowNumber) -> new DisagreementPageRow(
+                        disagreement(resultSet, rowNumber), instant(resultSet, "snapshot_at")))
+                .list();
+        boolean hasMore = rows.size() > request.limit();
+        var pageRows = rows.stream().limit(request.limit()).toList();
+        var items = pageRows.stream().map(DisagreementPageRow::value).toList();
+        var last = hasMore ? pageRows.getLast() : null;
+        return new Page<>(items, last == null ? null
+                : request.nextCursor(last.snapshotAt(), last.value().createdAt(), last.value().id()));
     }
     @Override public MatchDisagreement updateDisagreement(MatchDisagreement d) {
         var updated = jdbc.sql("UPDATE match.disagreements SET status=:status,linear_issue_id=:issue,updated_at=:updatedAt WHERE id=:id")
@@ -105,6 +335,10 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
     private MatchReport report(ResultSet rs, int row) throws SQLException { return new MatchReport(uuid(rs,"id"),uuid(rs,"profile_id"),uuid(rs,"job_id"),
             instant(rs,"profile_revision"),instant(rs,"job_revision"),rs.getString("algorithm_version"),rs.getInt("overall_score"),rs.getInt("confidence"),
             MatchOutcome.valueOf(rs.getString("outcome")),rs.getBoolean("blocker_mismatch"),read(rs,"components",COMPONENTS),read(rs,"evidence",EVIDENCE),instant(rs,"created_at")); }
+    private ReportWithRevisions reportWithRevisions(ResultSet rs, int row) throws SQLException {
+        return new ReportWithRevisions(report(rs, row), nullableInstant(rs, "current_profile_revision"),
+                nullableInstant(rs, "current_job_revision"));
+    }
     private MatchReview review(ResultSet rs,int row)throws SQLException{return new MatchReview(uuid(rs,"id"),uuid(rs,"report_id"),rs.getString("reviewer"),rs.getString("model"),
             rs.getString("review_version"),rs.getInt("overall_score"),MatchOutcome.valueOf(rs.getString("outcome")),rs.getBoolean("blocker_mismatch"),read(rs,"components",COMPONENTS),read(rs,"evidence",EVIDENCE),rs.getString("summary"),instant(rs,"created_at"));}
     private MatchDisagreement disagreement(ResultSet rs,int row)throws SQLException{return new MatchDisagreement(uuid(rs,"id"),uuid(rs,"report_id"),uuid(rs,"review_id"),
@@ -113,4 +347,12 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
     private String jsonb(Object value){try{return json.writeValueAsString(value);}catch(Exception e){throw new IllegalArgumentException("match data cannot be serialized",e);}}
     private <T>T read(ResultSet rs,String column,TypeReference<T> type)throws SQLException{try{return json.readValue(rs.getString(column),type);}catch(Exception e){throw new SQLException("invalid persisted match data",e);}}
     private static UUID uuid(ResultSet rs,String c)throws SQLException{return rs.getObject(c,UUID.class);} private static Instant instant(ResultSet rs,String c)throws SQLException{return rs.getTimestamp(c).toInstant();}
+    private static Instant nullableInstant(ResultSet rs, String column) throws SQLException {
+        var timestamp = rs.getTimestamp(column);
+        return timestamp == null ? null : timestamp.toInstant();
+    }
+    private static Timestamp timestamp(Instant instant) { return instant == null ? null : Timestamp.from(instant); }
+    private record ReportPageRow(ReportWithRevisions value, Instant snapshotAt) {}
+    private record ReviewPageRow(MatchReview value, Instant snapshotAt) {}
+    private record DisagreementPageRow(MatchDisagreement value, Instant snapshotAt) {}
 }

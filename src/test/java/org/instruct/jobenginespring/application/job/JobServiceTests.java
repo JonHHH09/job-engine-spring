@@ -10,6 +10,8 @@ import org.instruct.jobenginespring.application.job.JobService.JobSearchRequest;
 import org.instruct.jobenginespring.application.job.JobService.UpdateJobRequest;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -524,6 +526,7 @@ class JobServiceTests {
         ));
 
         assertEquals(List.of(created.job().job()), service.listJobs());
+        assertEquals(List.of(created.job().job()), service.listJobs(1, null).items());
         assertEquals(Optional.of(created.job()), service.getJob(created.job().job().id()));
         assertThrows(NullPointerException.class, () -> service.getJob(null));
     }
@@ -908,6 +911,16 @@ class JobServiceTests {
         assertEquals(Map.of("field", "query", "reason", "must not be blank"), searchException.details());
         ApplicationException punctuationSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("!!!", 10)));
         assertEquals(Map.of("field", "query", "reason", "must contain searchable text"), punctuationSearchException.details());
+        ApplicationException longSearchException = assertThrows(ApplicationException.class,
+                () -> service.searchJobs(new JobSearchRequest("a".repeat(257), 10)));
+        assertEquals(Map.of("field", "query", "reason", "must not exceed 256 characters"),
+                longSearchException.details());
+        ApplicationException manyTermsSearchException = assertThrows(ApplicationException.class,
+                () -> service.searchJobs(new JobSearchRequest(
+                        java.util.stream.IntStream.range(0, 17).mapToObj(index -> "term" + index)
+                                .collect(java.util.stream.Collectors.joining(" ")), 10)));
+        assertEquals(Map.of("field", "query", "reason", "must contain at most 16 searchable terms"),
+                manyTermsSearchException.details());
         ApplicationException limitSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("java", 101)));
         assertEquals(Map.of("field", "limit", "reason", "must be between 1 and 100"), limitSearchException.details());
         ApplicationException lowLimitSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("java", 0)));
@@ -978,8 +991,8 @@ class JobServiceTests {
         assertEquals(List.of(), new JobAggregate(new JobPosting(
                 aggregateJobId, "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint", NOW, NOW
         ), null, null, new JobTextIngestion(UUID.randomUUID(), aggregateJobId, null, "hash", NOW)).skills());
-        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, null).queryTokens());
-        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, null).jobs());
+        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, false, 0, null).queryTokens());
+        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, false, 0, null).jobs());
         JobPosting posting = new JobPosting(
                 UUID.randomUUID(), "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint-2", NOW, NOW
         );
@@ -1125,8 +1138,8 @@ class JobServiceTests {
         private int findJobAggregateCalls;
 
         @Override
-        public List<JobPosting> listJobs() {
-            return aggregates.values().stream().map(JobAggregate::job).toList();
+        public Page<JobPosting> listJobs(PageRequest request) {
+            return new Page<>(aggregates.values().stream().limit(request.limit()).map(JobAggregate::job).toList(), null);
         }
 
         @Override
@@ -1136,9 +1149,17 @@ class JobServiceTests {
         }
 
         @Override
-        public List<JobAggregate> listJobAggregates() {
+        public Page<JobAggregate> listJobAggregates(PageRequest request) {
             listJobAggregatesCalls++;
-            return List.copyOf(aggregates.values());
+            return new Page<>(aggregates.values().stream().limit(request.limit()).toList(), null);
+        }
+
+        @Override
+        public org.instruct.jobenginespring.application.pagination.SearchCandidates<JobAggregate> searchJobCandidates(
+                List<String> queryTokens, int limit) {
+            listJobAggregatesCalls++;
+            return new org.instruct.jobenginespring.application.pagination.SearchCandidates<>(
+                    -1, List.copyOf(aggregates.values()));
         }
 
         @Override

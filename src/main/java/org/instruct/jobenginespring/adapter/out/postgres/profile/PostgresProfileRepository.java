@@ -3,6 +3,11 @@ package org.instruct.jobenginespring.adapter.out.postgres.profile;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
 import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.application.pagination.SearchCandidates;
+import org.instruct.jobenginespring.application.search.SearchTerm;
+import org.instruct.jobenginespring.application.search.SearchTextNormalizer;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -42,6 +47,89 @@ import java.util.stream.Collectors;
 @ConditionalOnProperty(prefix = "job-engine.profile.postgres", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class PostgresProfileRepository implements ProfileRepository {
 
+    public static final int MAX_SEARCH_CANDIDATES = 500;
+    private static final int SEARCH_FIELD_COUNT = 19;
+    static final int MAX_POSTINGS_PER_TOKEN = (MAX_SEARCH_CANDIDATES + 1) * SEARCH_FIELD_COUNT;
+    public static final String SEARCH_CANDIDATES_SQL = """
+            WITH query_tokens AS (
+                SELECT token FROM unnest(CAST(:queryTokens AS text[])) AS token
+            ), query_prefixes AS (
+                SELECT prefix, query_token
+                FROM unnest(CAST(:queryPrefixes AS text[]), CAST(:prefixOwners AS text[]))
+                    AS value(prefix, query_token)
+            ), query_prefix_sets AS (
+                SELECT query_token, array_agg(prefix ORDER BY prefix COLLATE "C") AS prefixes
+                FROM query_prefixes
+                GROUP BY query_token
+            ), raw_hits AS (
+                SELECT posting.profile_id, posting.field_key, query.token AS query_token, posting.weight,
+                       posting.ordinal > :postingLimit AS truncated
+                FROM query_tokens query
+                CROSS JOIN LATERAL (
+                    WITH RECURSIVE sample(term, profile_id, field_key, weight, ordinal) AS (
+                        (
+                            SELECT posting.term, posting.profile_id, posting.field_key, posting.weight, 1::bigint
+                            FROM profile.search_terms posting
+                            WHERE posting.term COLLATE "C" >= query.token COLLATE "C"
+                              AND posting.term COLLATE "C" < (query.token || '~') COLLATE "C"
+                            ORDER BY posting.term COLLATE "C", posting.profile_id, posting.field_key
+                            LIMIT 1
+                        )
+                        UNION ALL
+                        SELECT next.term, next.profile_id, next.field_key, next.weight, sample.ordinal + 1
+                        FROM sample
+                        CROSS JOIN LATERAL (
+                            SELECT posting.term, posting.profile_id, posting.field_key, posting.weight
+                            FROM profile.search_terms posting
+                            WHERE posting.term COLLATE "C" >= query.token COLLATE "C"
+                              AND posting.term COLLATE "C" < (query.token || '~') COLLATE "C"
+                              AND (posting.term COLLATE "C", posting.profile_id, posting.field_key)
+                                  > (sample.term COLLATE "C", sample.profile_id, sample.field_key)
+                            ORDER BY posting.term COLLATE "C", posting.profile_id, posting.field_key
+                            LIMIT 1
+                        ) next
+                        WHERE sample.ordinal < :postingFetchLimit
+                    )
+                    SELECT * FROM sample
+                ) posting
+                UNION ALL
+                SELECT posting.profile_id, posting.field_key, prefix_set.query_token, posting.weight,
+                       posting.ordinal > :postingLimit AS truncated
+                FROM query_prefix_sets prefix_set
+                CROSS JOIN LATERAL (
+                    SELECT sample.*,
+                           row_number() OVER (ORDER BY sample.term COLLATE "C", sample.profile_id, sample.field_key) AS ordinal
+                    FROM (
+                        SELECT posting.term, posting.profile_id, posting.field_key, posting.weight
+                        FROM profile.search_terms posting
+                        WHERE posting.term COLLATE "C" = ANY(prefix_set.prefixes)
+                        ORDER BY posting.term COLLATE "C", posting.profile_id, posting.field_key
+                        LIMIT :postingFetchLimit
+                    ) sample
+                ) posting
+            ), posting_bounds AS (
+                SELECT COALESCE(bool_or(truncated), false) AS posting_truncated FROM raw_hits
+            ), posting_hits AS (
+                SELECT DISTINCT profile_id, field_key, query_token, weight
+                FROM raw_hits
+                WHERE NOT truncated
+            ), scored AS (
+                SELECT profile_id, SUM(weight)::integer AS score
+                FROM posting_hits
+                GROUP BY profile_id
+            ), matching AS (
+                SELECT profile.*, scored.score, posting_bounds.posting_truncated
+                FROM scored
+                CROSS JOIN LATERAL (
+                    SELECT * FROM profile.profiles profile WHERE profile.id = scored.profile_id LIMIT 1
+                ) profile
+                CROSS JOIN posting_bounds
+                ORDER BY scored.score DESC, profile.full_name COLLATE "C", profile.id
+                LIMIT :fetchLimit
+            )
+            SELECT * FROM matching ORDER BY score DESC, full_name COLLATE "C", id
+            """;
+
     private static final RowMapper<ProfileContact> CONTACT_MAPPER = DataClassRowMapper.newInstance(ProfileContact.class);
     private static final RowMapper<ProfileLink> LINK_MAPPER = DataClassRowMapper.newInstance(ProfileLink.class);
     private static final RowMapper<ProfileSkill> SKILL_MAPPER = DataClassRowMapper.newInstance(ProfileSkill.class);
@@ -61,18 +149,73 @@ public class PostgresProfileRepository implements ProfileRepository {
     @Override
     public List<UserProfile> listProfiles() {
         return jdbc.sql("""
-                SELECT id, full_name, email, summary, created_at, updated_at
-                FROM profile.profiles
-                ORDER BY full_name, id
-                """)
+                        SELECT id, full_name, email, summary, created_at, updated_at
+                        FROM profile.profiles
+                        ORDER BY full_name, id
+                        LIMIT :limit
+                        """)
+                .param("limit", PageRequest.DEFAULT_LIMIT)
                 .query(this::mapProfile)
                 .list();
     }
 
     @Override
-    public List<ProfileAggregate> listProfileAggregates() {
-        List<UserProfile> profiles = listProfiles();
-        return aggregatesForProfiles(profiles);
+    public Page<UserProfile> listProfiles(PageRequest request) {
+        var rows = jdbc.sql("""
+                        WITH bounds AS (
+                            SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+                        )
+                        SELECT profile.id, profile.full_name, profile.email, profile.summary, profile.created_at,
+                               profile.updated_at, bounds.snapshot_at
+                        FROM profile.profiles profile
+                        CROSS JOIN bounds
+                        WHERE profile.created_at <= bounds.snapshot_at
+                          AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL
+                               OR profile.created_at < :cursorCreatedAt
+                               OR (profile.created_at = :cursorCreatedAt AND profile.id > :cursorId))
+                        ORDER BY profile.created_at DESC, profile.id
+                        LIMIT :fetchLimit
+                        """)
+                .param("snapshotAt", timestamp(request.cursor() == null ? null : request.cursor().snapshotAt()))
+                .param("cursorCreatedAt", timestamp(request.cursor() == null ? null : request.cursor().createdAt()))
+                .param("cursorId", request.cursor() == null ? null : request.cursor().id())
+                .param("fetchLimit", request.limit() + 1)
+                .query((resultSet, rowNumber) -> new ProfilePageRow(
+                        mapProfile(resultSet, rowNumber), resultSet.getTimestamp("snapshot_at").toInstant()))
+                .list();
+        boolean hasMore = rows.size() > request.limit();
+        var pageRows = rows.stream().limit(request.limit()).toList();
+        var items = pageRows.stream().map(ProfilePageRow::profile).toList();
+        var last = hasMore ? pageRows.getLast() : null;
+        return new Page<>(items, last == null ? null
+                : request.nextCursor(last.snapshotAt(), last.profile().createdAt(), last.profile().id()));
+    }
+
+    @Override
+    public Page<ProfileAggregate> listProfileAggregates(PageRequest request) {
+        var profiles = listProfiles(request);
+        return new Page<>(aggregatesForProfiles(profiles.items()), profiles.nextCursor());
+    }
+
+    @Override
+    public SearchCandidates<ProfileAggregate> searchProfileCandidates(List<String> queryTokens, int limit) {
+        var prefixes = SearchTextNormalizer.prefixes(queryTokens);
+        var ranked = namedJdbc.query(SEARCH_CANDIDATES_SQL, new MapSqlParameterSource()
+                        .addValue("queryTokens", queryTokens.toArray(String[]::new))
+                        .addValue("queryPrefixes", prefixes.values().toArray(String[]::new))
+                        .addValue("prefixOwners", prefixes.owners().toArray(String[]::new))
+                        .addValue("postingLimit", MAX_POSTINGS_PER_TOKEN)
+                        .addValue("postingFetchLimit", MAX_POSTINGS_PER_TOKEN + 1)
+                        .addValue("fetchLimit", MAX_SEARCH_CANDIDATES + 1),
+                (resultSet, rowNumber) -> new RankedProfile(
+                        mapProfile(resultSet, rowNumber), resultSet.getInt("score"),
+                        resultSet.getBoolean("posting_truncated")));
+        if (ranked.isEmpty()) {
+            return new SearchCandidates<>(0, List.of());
+        }
+        boolean hasMore = ranked.size() > MAX_SEARCH_CANDIDATES || ranked.getFirst().postingTruncated();
+        var profiles = ranked.stream().limit(MAX_SEARCH_CANDIDATES).map(RankedProfile::profile).toList();
+        return new SearchCandidates<>(profiles.size(), hasMore, aggregatesForProfiles(profiles));
     }
 
     @Override
@@ -223,6 +366,7 @@ public class PostgresProfileRepository implements ProfileRepository {
                 .param("updatedAt", Timestamp.from(profile.updatedAt()))
                 .update();
         replaceChildren(aggregate);
+        rebuildSearchTerms(aggregate);
         return findProfileAggregate(profile.id()).orElseThrow();
     }
 
@@ -324,6 +468,69 @@ public class PostgresProfileRepository implements ProfileRepository {
                             (id, project_id, technology, normalized_technology, display_order, created_at)
                         VALUES (:id, :projectId, :technology, :normalizedTechnology, :displayOrder, :createdAt)
                         """, aggregate.projectTechnologies());
+    }
+
+    private void rebuildSearchTerms(ProfileAggregate aggregate) {
+        var profile = aggregate.profile();
+        var terms = new ArrayList<SearchTerm>();
+        addTerms(terms, profile.id(), "profile.fullName", profile.fullName(), 8);
+        addTerms(terms, profile.id(), "profile.email", profile.email(), 5);
+        addTerms(terms, profile.id(), "profile.summary", profile.summary(), 3);
+        aggregate.contacts().forEach(value -> {
+            addTerms(terms, profile.id(), "contacts:" + value.id() + ":type", value.contactType(), 2);
+            addTerms(terms, profile.id(), "contacts:" + value.id() + ":value", value.contactValue(), 2);
+            addTerms(terms, profile.id(), "contacts:" + value.id() + ":label", value.label(), 1);
+        });
+        aggregate.links().forEach(value -> {
+            addTerms(terms, profile.id(), "links:" + value.id() + ":type", value.linkType(), 3);
+            addTerms(terms, profile.id(), "links:" + value.id() + ":url", value.url(), 3);
+            addTerms(terms, profile.id(), "links:" + value.id() + ":label", value.label(), 2);
+        });
+        aggregate.skills().forEach(value -> {
+            addTerms(terms, profile.id(), "skills:" + value.id() + ":skill", value.skill(), 7);
+            addTerms(terms, profile.id(), "skills:" + value.id() + ":normalized", value.normalizedSkill(), 7);
+            addTerms(terms, profile.id(), "skills:" + value.id() + ":category", value.category(), 3);
+        });
+        aggregate.languages().forEach(value -> {
+            addTerms(terms, profile.id(), "languages:" + value.id() + ":language", value.language(), 4);
+            addTerms(terms, profile.id(), "languages:" + value.id() + ":normalized", value.normalizedLanguage(), 4);
+            addTerms(terms, profile.id(), "languages:" + value.id() + ":proficiency", value.proficiency(), 2);
+        });
+        aggregate.education().forEach(value -> {
+            addTerms(terms, profile.id(), "education:" + value.id() + ":institution", value.institution(), 4);
+            addTerms(terms, profile.id(), "education:" + value.id() + ":degree", value.degree(), 3);
+            addTerms(terms, profile.id(), "education:" + value.id() + ":field", value.field(), 4);
+            addTerms(terms, profile.id(), "education:" + value.id() + ":location", value.location(), 2);
+            addTerms(terms, profile.id(), "education:" + value.id() + ":focus", value.relevantFocus(), 3);
+        });
+        aggregate.experiences().forEach(value -> {
+            addTerms(terms, profile.id(), "experience:" + value.id() + ":company", value.company(), 4);
+            addTerms(terms, profile.id(), "experience:" + value.id() + ":title", value.title(), 6);
+            addTerms(terms, profile.id(), "experience:" + value.id() + ":location", value.location(), 2);
+            addTerms(terms, profile.id(), "experience:" + value.id() + ":description", value.description(), 3);
+        });
+        aggregate.projects().forEach(value -> {
+            addTerms(terms, profile.id(), "projects:" + value.id() + ":name", value.name(), 5);
+            addTerms(terms, profile.id(), "projects:" + value.id() + ":url", value.url(), 3);
+            addTerms(terms, profile.id(), "projects:" + value.id() + ":description", value.description(), 3);
+        });
+        aggregate.projectTechnologies().forEach(value -> {
+            addTerms(terms, profile.id(), "technologies:" + value.id() + ":technology", value.technology(), 5);
+            addTerms(terms, profile.id(), "technologies:" + value.id() + ":normalized", value.normalizedTechnology(), 5);
+        });
+        jdbc.sql("DELETE FROM profile.search_terms WHERE profile_id = :profileId")
+                .param("profileId", profile.id()).update();
+        namedJdbc.batchUpdate("""
+                        INSERT INTO profile.search_terms (profile_id, field_key, term, weight)
+                        VALUES (:entityId, :fieldKey, :term, :weight)
+                        """, terms.stream().map(term -> new MapSqlParameterSource()
+                        .addValue("entityId", term.entityId()).addValue("fieldKey", term.fieldKey())
+                        .addValue("term", term.term()).addValue("weight", term.weight()))
+                .toArray(SqlParameterSource[]::new));
+    }
+
+    private static void addTerms(List<SearchTerm> terms, UUID profileId, String fieldKey, String value, int weight) {
+        terms.addAll(SearchTerm.from(profileId, fieldKey, value, weight));
     }
 
     private List<ProfileAggregate> aggregatesForProfiles(List<UserProfile> profiles) {
@@ -503,5 +710,15 @@ public class PostgresProfileRepository implements ProfileRepository {
 
     private static Instant instant(ResultSet resultSet, String column) throws SQLException {
         return resultSet.getTimestamp(column).toInstant();
+    }
+
+    private static Timestamp timestamp(Instant instant) {
+        return instant == null ? null : Timestamp.from(instant);
+    }
+
+    private record RankedProfile(UserProfile profile, int score, boolean postingTruncated) {
+    }
+
+    private record ProfilePageRow(UserProfile profile, Instant snapshotAt) {
     }
 }

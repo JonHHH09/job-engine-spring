@@ -3,6 +3,9 @@ package org.instruct.jobenginespring.application.match;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository.ReportWithRevisions;
 import org.instruct.jobenginespring.domain.match.*;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,27 +55,39 @@ public class MatchAnalysisService {
                 requireId(profileId, "profileId"), requireId(jobId, "jobId")), false);
     }
 
-    public BatchResult analyzeAll(UUID profileId) {
+    public BatchResult analyzeAll(UUID profileId, Integer limit, String cursor) {
         var requiredProfileId = requireId(profileId, "profileId");
         var profile = profiles.findProfileAggregate(requiredProfileId)
                 .orElseThrow(() -> new IllegalArgumentException("profile not found: " + profileId));
+        var jobsPage = jobs.listJobAggregates(PageRequest.of(limit, cursor, "analyze-all-job-matches",
+                "profile=" + requiredProfileId));
         var succeeded = new ArrayList<ReportView>();
         var failed = new ArrayList<PairFailure>();
-        for (var job : jobs.listJobAggregates()) {
+        for (var job : jobsPage.items()) {
             try { succeeded.add(new ReportView(pairAnalyzer.analyze(profile, job), false)); }
             catch (RuntimeException exception) { failed.add(new PairFailure(profileId, job.job().id(), "analysis failed")); }
         }
-        return new BatchResult(succeeded, failed);
+        return new BatchResult(succeeded, failed, jobsPage.nextCursor());
     }
 
+    @Deprecated(forRemoval = false)
+    public BatchResult analyzeAll(UUID profileId) { return analyzeAll(profileId, null, null); }
+
     public ReportView getReport(UUID reportId) {
-        var report = matches.findReport(requireId(reportId, "reportId"))
+        var report = matches.findReportWithRevisions(requireId(reportId, "reportId"))
                 .orElseThrow(() -> new IllegalArgumentException("match report not found: " + reportId));
         return view(report);
     }
 
     public List<ReportView> listReports(UUID profileId, UUID jobId) {
-        return matches.listReports(profileId, jobId).stream().map(this::view).toList();
+        return listReports(profileId, jobId, null, null).items();
+    }
+
+    public Page<ReportView> listReports(UUID profileId, UUID jobId, Integer limit, String cursor) {
+        var filterIdentity = "profile=" + profileId + ";job=" + jobId;
+        var page = matches.listReports(profileId, jobId,
+                PageRequest.of(limit, cursor, "match-reports", filterIdentity));
+        return new Page<>(page.items().stream().map(MatchAnalysisService::view).toList(), page.nextCursor());
     }
 
     @Transactional
@@ -104,8 +119,19 @@ public class MatchAnalysisService {
 
     public MatchReview getReview(UUID reviewId) { return matches.findReview(requireId(reviewId, "reviewId"))
             .orElseThrow(() -> new IllegalArgumentException("match review not found: " + reviewId)); }
-    public List<MatchReview> listReviews(UUID reportId) { return matches.listReviews(requireId(reportId, "reportId")); }
-    public List<MatchDisagreement> listDisagreements(UUID reportId) { return matches.listDisagreements(reportId); }
+    public Page<MatchReview> listReviews(UUID reportId, Integer limit, String cursor) {
+        return matches.listReviews(reportId, PageRequest.of(limit, cursor, "match-reviews", "report=" + reportId));
+    }
+    @Deprecated(forRemoval = false)
+    public List<MatchReview> listReviews(UUID reportId) { return listReviews(reportId, null, null).items(); }
+    public Page<MatchDisagreement> listDisagreements(UUID reportId, Integer limit, String cursor) {
+        return matches.listDisagreements(reportId,
+                PageRequest.of(limit, cursor, "match-disagreements", "report=" + reportId));
+    }
+    @Deprecated(forRemoval = false)
+    public List<MatchDisagreement> listDisagreements(UUID reportId) {
+        return listDisagreements(reportId, null, null).items();
+    }
 
     @Transactional
     public MatchDisagreement acknowledgeDisagreement(UUID id, String linearIssueId) {
@@ -137,17 +163,15 @@ public class MatchAnalysisService {
         }
     }
 
-    private ReportView view(MatchReport report) {
-        var profile = profiles.findProfileById(report.profileId());
-        var job = jobs.findJobAggregate(report.jobId());
-        boolean stale = profile.isEmpty() || job.isEmpty() || report.stale(profile.orElseThrow().updatedAt(), job.orElseThrow().job().updatedAt());
-        return new ReportView(report, stale);
+    private static ReportView view(ReportWithRevisions report) {
+        return new ReportView(report.report(), report.stale());
     }
     private static UUID requireId(UUID id, String field) { return Objects.requireNonNull(id, field + " must not be null"); }
     public record ReportView(MatchReport report, boolean stale) { public ReportView { Objects.requireNonNull(report); } }
     public record PairFailure(UUID profileId, UUID jobId, String error) {}
-    public record BatchResult(List<ReportView> succeeded, List<PairFailure> failed) {
+    public record BatchResult(List<ReportView> succeeded, List<PairFailure> failed, String nextCursor) {
         public BatchResult { succeeded = List.copyOf(succeeded); failed = List.copyOf(failed); }
+        public BatchResult(List<ReportView> succeeded, List<PairFailure> failed) { this(succeeded, failed, null); }
     }
     public record ReviewResult(MatchReview review, MatchDisagreement disagreement) {}
     public record ReviewDraft(UUID reportId, String reviewer, String model, String reviewVersion, int overallScore,

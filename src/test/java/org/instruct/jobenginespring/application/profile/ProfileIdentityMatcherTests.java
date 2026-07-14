@@ -108,8 +108,9 @@ class ProfileIdentityMatcherTests {
         }
 
         @Override
-        public List<org.instruct.jobenginespring.domain.profile.UserProfile> listProfiles() {
-            return List.of();
+        public org.instruct.jobenginespring.application.pagination.Page<org.instruct.jobenginespring.domain.profile.UserProfile>
+        listProfiles(org.instruct.jobenginespring.application.pagination.PageRequest request) {
+            return new org.instruct.jobenginespring.application.pagination.Page<>(List.of(), null);
         }
 
         @Override
@@ -118,8 +119,9 @@ class ProfileIdentityMatcherTests {
         }
 
         @Override
-        public List<org.instruct.jobenginespring.domain.profile.ProfileAggregate> listProfileAggregates() {
-            return List.of();
+        public org.instruct.jobenginespring.application.pagination.Page<org.instruct.jobenginespring.domain.profile.ProfileAggregate>
+        listProfileAggregates(org.instruct.jobenginespring.application.pagination.PageRequest request) {
+            return new org.instruct.jobenginespring.application.pagination.Page<>(List.of(), null);
         }
 
         @Override

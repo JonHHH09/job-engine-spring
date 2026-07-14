@@ -6,6 +6,7 @@ import org.instruct.jobenginespring.adapter.out.postgres.match.PostgresMatchAnal
 import org.instruct.jobenginespring.adapter.out.postgres.profile.PostgresProfileRepository;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -54,6 +55,7 @@ class PostgresMatchAnalysisBatchIntegrationTests {
     private static final UUID PROFILE_ID = UUID.fromString("10000000-0000-0000-0000-000000000001");
     private static final UUID FIRST_JOB_ID = UUID.fromString("20000000-0000-0000-0000-000000000001");
     private static final UUID SECOND_JOB_ID = UUID.fromString("20000000-0000-0000-0000-000000000002");
+    private static final UUID THIRD_JOB_ID = UUID.fromString("20000000-0000-0000-0000-000000000003");
 
     @Container
     private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine")
@@ -134,6 +136,37 @@ class PostgresMatchAnalysisBatchIntegrationTests {
     }
 
     @Test
+    void boundedAggregateHydrationUsesFourQueriesAndCarriesTheJobCursor() {
+        dataSource.reset();
+
+        var page = jobs.listJobAggregates(PageRequest.of(1, null, "job-aggregates-test", "all"));
+
+        assertEquals(1, page.items().size());
+        assertTrue(page.nextCursor() != null);
+        assertEquals(4, dataSource.statementExecutions());
+    }
+
+    @Test
+    void analyzeAllProcessesOneStablePageAcrossDeletionAndRowsWithLaterCreatedAt() {
+        try (var context = applicationContext()) {
+            var service = context.getBean(MatchAnalysisService.class);
+
+            var firstPage = service.analyzeAll(PROFILE_ID, 1, null);
+            var resumed = PageRequest.of(1, firstPage.nextCursor(), "analyze-all-job-matches",
+                    "profile=" + PROFILE_ID);
+            jobs.deleteJob(firstPage.succeeded().getFirst().report().jobId());
+            jobs.saveJobAggregate(jobAggregate(THIRD_JOB_ID, "hash-three",
+                    resumed.cursor().snapshotAt().plusSeconds(1)));
+
+            var secondPage = service.analyzeAll(PROFILE_ID, 1, firstPage.nextCursor());
+
+            assertEquals(1, firstPage.succeeded().size());
+            assertEquals(SECOND_JOB_ID, secondPage.succeeded().getFirst().report().jobId());
+            assertTrue(secondPage.nextCursor() == null);
+        }
+    }
+
+    @Test
     void failedPairRollsBackWithoutPreventingTheNextPair() {
         doAnswer(invocation -> {
             var saved = (MatchReport) invocation.callRealMethod();
@@ -182,12 +215,16 @@ class PostgresMatchAnalysisBatchIntegrationTests {
     }
 
     private static JobAggregate jobAggregate(UUID jobId, String hash) {
+        return jobAggregate(jobId, hash, NOW);
+    }
+
+    private static JobAggregate jobAggregate(UUID jobId, String hash, Instant createdAt) {
         return new JobAggregate(
                 new JobPosting(jobId, "text", "test", "Java Engineer", "Example Corp", "Remote",
-                        "Build Java services", null, null, null, NOW, hash, NOW, NOW),
-                List.of(new JobSkill(UUID.randomUUID(), jobId, "Java", "java", true, 0, NOW)),
+                        "Build Java services", null, null, null, createdAt, hash, createdAt, createdAt),
+                List.of(new JobSkill(UUID.randomUUID(), jobId, "Java", "java", true, 0, createdAt)),
                 null,
-                new JobTextIngestion(UUID.randomUUID(), jobId, "test", hash, NOW)
+                new JobTextIngestion(UUID.randomUUID(), jobId, "test", hash, createdAt)
         );
     }
 

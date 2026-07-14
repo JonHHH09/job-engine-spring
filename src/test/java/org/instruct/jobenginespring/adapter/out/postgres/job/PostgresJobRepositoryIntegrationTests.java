@@ -1,6 +1,7 @@
 package org.instruct.jobenginespring.adapter.out.postgres.job;
 
 import org.flywaydb.core.Flyway;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobAnalysisRun;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
@@ -90,7 +91,8 @@ class PostgresJobRepositoryIntegrationTests {
                 "job_link_ingestions",
                 "job_skills",
                 "job_text_ingestions",
-                "jobs"
+                "jobs",
+                "search_terms"
         ), tables);
     }
 
@@ -108,6 +110,18 @@ class PostgresJobRepositoryIntegrationTests {
         assertTrue(repository.findByCanonicalFingerprint("fingerprint-text").isPresent());
         assertTrue(repository.findByInputTextHash("hash-text").isPresent());
         assertEquals(List.of("Java Developer"), repository.listJobs().stream().map(JobPosting::title).toList());
+    }
+
+    @Test
+    void noArgCompatibilityReadsNeverExceedTheDefaultPage() {
+        for (int index = 0; index < 25; index++) {
+            repository.saveJobAggregate(textAggregate(UUID.randomUUID(), UUID.randomUUID(),
+                    "bounded-fingerprint-" + index, "bounded-hash-" + index));
+        }
+
+        assertEquals(20, repository.listJobs().size());
+        assertEquals(20, repository.listJobAggregates(
+                PageRequest.of(null, null, "job-aggregates", "all")).items().size());
     }
 
     @Test
@@ -349,7 +363,8 @@ class PostgresJobRepositoryIntegrationTests {
 
     @Test
     void listJobAggregatesReturnsEmptyWhenNoRowsExist() {
-        assertEquals(List.of(), repository.listJobAggregates());
+        assertEquals(List.of(), repository.listJobAggregates(
+                PageRequest.of(null, null, "job-aggregates", "all")).items());
     }
 
     @Test
