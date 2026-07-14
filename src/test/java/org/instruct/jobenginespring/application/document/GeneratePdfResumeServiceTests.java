@@ -10,6 +10,7 @@ import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileResumeDocumentRepository;
+import org.instruct.jobenginespring.application.resume.OfflineFrenchResumeTranslator;
 import org.instruct.jobenginespring.domain.document.PdfExtractionRecord;
 import org.instruct.jobenginespring.domain.document.StoredDocumentFile;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
@@ -36,6 +37,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,6 +73,7 @@ class GeneratePdfResumeServiceTests {
     private InMemoryProfileResumeDocumentRepository resumeDocumentRepository;
     private GeneratePdfResumeService service;
     private GenerateCaPdfResumeService caService;
+    private GenerateCanadianFrenchPdfResumeService frCaService;
 
     @BeforeEach
     void setUp() {
@@ -90,6 +93,11 @@ class GeneratePdfResumeServiceTests {
         );
         service = new GeneratePdfResumeService(workflow, tempDir.resolve("master-resume"));
         caService = new GenerateCaPdfResumeService(workflow, tempDir.resolve("canadian-resume"));
+        frCaService = new GenerateCanadianFrenchPdfResumeService(
+                workflow,
+                new OfflineFrenchResumeTranslator(),
+                tempDir.resolve("canadian-resume-fr")
+        );
     }
 
     @Test
@@ -189,6 +197,201 @@ class GeneratePdfResumeServiceTests {
     }
 
     @Test
+    void englishAndFrenchCanadianResumeVariantsCoexistAndFrenchPdfIsLocalized() throws Exception {
+        profileRepository.saveProfileAggregate(sampleAggregate(PROFILE_ID));
+
+        GeneratePdfResumeResult english = caService.generateCanadianPdfResume(
+                new GenerateCaPdfResumeService.GenerateCaPdfResumeRequest(PROFILE_ID)
+        );
+        GeneratePdfResumeResult french = frCaService.generateCanadianFrenchPdfResume(
+                new GenerateCanadianFrenchPdfResumeService.GenerateCanadianFrenchPdfResumeRequest(PROFILE_ID)
+        );
+
+        assertEquals(GenerateCaPdfResumeService.CANADIAN_RESUME_TYPE, english.resumeType());
+        assertEquals(GenerateCanadianFrenchPdfResumeService.CANADIAN_FRENCH_RESUME_TYPE, french.resumeType());
+        assertNotEquals(english.resumeLinkId(), french.resumeLinkId());
+        assertEquals(2, resumeDocumentRepository.count());
+        assertEquals(french.documentId(), resumeDocumentRepository.findByProfileIdAndResumeType(
+                PROFILE_ID,
+                GenerateCanadianFrenchPdfResumeService.CANADIAN_FRENCH_RESUME_TYPE
+        ).orElseThrow().documentId());
+        assertTrue(Path.of(french.filePath()).getFileName().toString().matches(
+                "canadian-resume-fr-" + PROFILE_ID + "-[0-9a-f-]{36}\\.pdf"
+        ));
+
+        PdfTextExtractionService.PdfTextExtractionResult text = new PdfTextExtractionService()
+                .extractText(Files.readAllBytes(Path.of(french.filePath())), "canadian-resume-fr.pdf", null, false);
+        assertTrue(text.text().contains("Coordonnées: agentic@example.test | Lieu: Montréal, QC"));
+        assertTrue(text.text().contains("PROFIL PROFESSIONNEL"));
+        assertTrue(text.text().contains("COMPÉTENCES TECHNIQUES"));
+        assertTrue(text.text().contains("EXPÉRIENCE PROFESSIONNELLE"));
+        assertTrue(text.text().contains("FORMATION"));
+        assertTrue(text.text().contains("LANGUES"));
+        assertEquals(2, countOccurrences(text.text(), "Page 1 sur 1"));
+        assertFalse(text.text().contains("Page 1 of 1"));
+        assertTrue(text.text().contains("Développeur logiciel | Instruct"));
+        assertTrue(text.text().contains("Présent"));
+        assertFalse(text.text().contains("PROFESSIONAL SUMMARY"));
+        assertFalse(text.text().contains("PROJECTS"));
+        assertFalse(text.text().contains("personal@example.test"));
+    }
+
+    @Test
+    void frenchCanadianPdfPreservesOpaqueAndProfileSuppliedTermsInsideNarrativeText() throws Exception {
+        ProfileAggregate base = sampleAggregate(PROFILE_ID);
+        UserProfile sourceProfile = base.profile();
+        UserProfile profile = new UserProfile(
+                sourceProfile.id(),
+                sourceProfile.fullName(),
+                sourceProfile.email(),
+                "Developed Developer Platform pour Instruct. Contact developer@example.test via https://example.test/software/developer.",
+                sourceProfile.rawResumeText(),
+                sourceProfile.createdAt(),
+                sourceProfile.updatedAt(),
+                sourceProfile.embedding()
+        );
+        List<ProfileSkill> skills = new ArrayList<>(base.skills());
+        skills.add(new ProfileSkill(
+                UUID.randomUUID(),
+                PROFILE_ID,
+                "Developer Platform",
+                "developer platform",
+                "Backend",
+                skills.size(),
+                NOW
+        ));
+        ProfileAggregate aggregate = new ProfileAggregate(
+                profile,
+                base.contacts(),
+                base.links(),
+                skills,
+                base.languages(),
+                base.education(),
+                base.experiences(),
+                base.projects(),
+                base.projectTechnologies()
+        );
+        profileRepository.saveProfileAggregate(aggregate);
+
+        String rendered = ResumeBodyRenderer.renderCanadianFrenchResume(
+                aggregate,
+                new OfflineFrenchResumeTranslator()
+        );
+        assertTrue(rendered.contains(
+                "Développé Developer Platform pour Instruct. Contact developer@example.test via https://example.test/software/developer."
+        ));
+
+        GeneratePdfResumeResult result = frCaService.generateCanadianFrenchPdfResume(
+                new GenerateCanadianFrenchPdfResumeService.GenerateCanadianFrenchPdfResumeRequest(PROFILE_ID)
+        );
+        PdfTextExtractionService.PdfTextExtractionResult text = new PdfTextExtractionService()
+                .extractText(Files.readAllBytes(Path.of(result.filePath())), "canadian-resume-fr.pdf", null, false);
+        String normalizedText = text.text().replaceAll("\\s+", "");
+        assertTrue(text.text().contains("developer@example.test"));
+        assertTrue(normalizedText.contains("https://example.test/software/developer."));
+        assertFalse(text.text().contains("développeur@example.test"));
+    }
+
+    @Test
+    void frenchCanadianServiceRejectsCharactersUnsupportedByCurrentPdfFontInsteadOfMutatingThem() {
+        ProfileAggregate base = sampleAggregate(PROFILE_ID);
+        UserProfile sourceProfile = base.profile();
+        UserProfile profile = new UserProfile(
+                sourceProfile.id(),
+                sourceProfile.fullName(),
+                sourceProfile.email(),
+                "Contact developer@例え.テスト.",
+                sourceProfile.rawResumeText(),
+                sourceProfile.createdAt(),
+                sourceProfile.updatedAt(),
+                sourceProfile.embedding()
+        );
+        profileRepository.saveProfileAggregate(new ProfileAggregate(
+                profile,
+                base.contacts(),
+                base.links(),
+                base.skills(),
+                base.languages(),
+                base.education(),
+                base.experiences(),
+                base.projects(),
+                base.projectTechnologies()
+        ));
+
+        ApplicationException exception = assertThrows(
+                ApplicationException.class,
+                () -> frCaService.generateCanadianFrenchPdfResume(
+                        new GenerateCanadianFrenchPdfResumeService.GenerateCanadianFrenchPdfResumeRequest(PROFILE_ID)
+                )
+        );
+
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals("body", exception.details().get("field"));
+        assertEquals(0, resumeDocumentRepository.count());
+        assertFalse(Files.exists(tempDir.resolve("canadian-resume-fr")));
+
+        UserProfile unsupportedTitle = new UserProfile(
+                sourceProfile.id(),
+                "Agentic \u007F",
+                sourceProfile.email(),
+                "Safe summary",
+                sourceProfile.rawResumeText(),
+                sourceProfile.createdAt(),
+                sourceProfile.updatedAt(),
+                sourceProfile.embedding()
+        );
+        profileRepository.saveProfileAggregate(new ProfileAggregate(
+                unsupportedTitle,
+                base.contacts(),
+                base.links(),
+                base.skills(),
+                base.languages(),
+                base.education(),
+                base.experiences(),
+                base.projects(),
+                base.projectTechnologies()
+        ));
+        ApplicationException titleException = assertThrows(
+                ApplicationException.class,
+                () -> frCaService.generateCanadianFrenchPdfResume(
+                        new GenerateCanadianFrenchPdfResumeService.GenerateCanadianFrenchPdfResumeRequest(PROFILE_ID)
+                )
+        );
+        assertEquals("title", titleException.details().get("field"));
+
+        UserProfile unsupportedControl = new UserProfile(
+                sourceProfile.id(),
+                sourceProfile.fullName(),
+                sourceProfile.email(),
+                "Unsafe \u0080 summary",
+                sourceProfile.rawResumeText(),
+                sourceProfile.createdAt(),
+                sourceProfile.updatedAt(),
+                sourceProfile.embedding()
+        );
+        profileRepository.saveProfileAggregate(new ProfileAggregate(
+                unsupportedControl,
+                base.contacts(),
+                base.links(),
+                base.skills(),
+                base.languages(),
+                base.education(),
+                base.experiences(),
+                base.projects(),
+                base.projectTechnologies()
+        ));
+        ApplicationException controlException = assertThrows(
+                ApplicationException.class,
+                () -> frCaService.generateCanadianFrenchPdfResume(
+                        new GenerateCanadianFrenchPdfResumeService.GenerateCanadianFrenchPdfResumeRequest(PROFILE_ID)
+                )
+        );
+        assertEquals("body", controlException.details().get("field"));
+        assertEquals(0, resumeDocumentRepository.count());
+        assertFalse(Files.exists(tempDir.resolve("canadian-resume-fr")));
+    }
+
+    @Test
     void reportsMissingProfileAsNotFound() {
         org.instruct.jobenginespring.application.error.ApplicationException exception = assertThrows(
                 org.instruct.jobenginespring.application.error.ApplicationException.class,
@@ -260,6 +463,38 @@ class GeneratePdfResumeServiceTests {
     }
 
     @Test
+    void frenchCanadianServiceValidatesConfigurationAndRequiredCollaborators() {
+        ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
+                profileRepository,
+                new DocumentStorageService(documentRepository, mock(PdfTextExtractionService.class), Clock.fixed(NOW, ZoneOffset.UTC)),
+                assetService(),
+                Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+        OfflineFrenchResumeTranslator translator = new OfflineFrenchResumeTranslator();
+
+        GenerateCanadianFrenchPdfResumeService defaultService = new GenerateCanadianFrenchPdfResumeService(
+                workflow,
+                translator,
+                (String) null
+        );
+        assertThrows(org.instruct.jobenginespring.application.profile.ProfileService.ProfileNotFoundException.class,
+                () -> defaultService.generateCanadianFrenchPdfResume(
+                        new GenerateCanadianFrenchPdfResumeService.GenerateCanadianFrenchPdfResumeRequest(PROFILE_ID)
+                ));
+        assertThrows(NullPointerException.class, () -> defaultService.generateCanadianFrenchPdfResume(null));
+        assertThrows(NullPointerException.class, () -> new GenerateCanadianFrenchPdfResumeService(null, translator, tempDir));
+        assertThrows(NullPointerException.class, () -> new GenerateCanadianFrenchPdfResumeService(workflow, null, tempDir));
+        assertThrows(NullPointerException.class, () -> new GenerateCanadianFrenchPdfResumeService(workflow, translator, (Path) null));
+
+        ApplicationException invalidPath = assertThrows(
+                ApplicationException.class,
+                () -> new GenerateCanadianFrenchPdfResumeService(workflow, translator, "bad\0path")
+        );
+        assertEquals("validation_error", invalidPath.errorCode().code());
+        assertEquals("outputDirectory", invalidPath.details().get("field"));
+    }
+
+    @Test
     void rejectsBlankResumeTypeInSharedWorkflow() {
         profileRepository.saveProfileAggregate(sampleAggregate(PROFILE_ID));
         ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
@@ -322,6 +557,34 @@ class GeneratePdfResumeServiceTests {
     }
 
     @Test
+    void rendersFrenchCanadianResumeFallbacksAndPreservesOpaqueValues() {
+        ProfileAggregate aggregate = sparseAggregate(PROFILE_ID);
+
+        String rendered = ResumeBodyRenderer.renderCanadianFrenchResume(
+                aggregate,
+                new OfflineFrenchResumeTranslator()
+        );
+
+        assertTrue(rendered.contains("Résumé du profil non fourni."));
+        assertTrue(rendered.contains("Coordonnées: agentic@example.test | personal: +1-555-0100"));
+        assertTrue(rendered.contains("Liens: Portfolio: https://example.test"));
+        assertTrue(rendered.contains("Dates non précisées"));
+        assertTrue(rendered.contains("Anglais"));
+        assertFalse(rendered.contains("PROFESSIONAL SUMMARY"));
+        assertFalse(rendered.contains("PROJETS"));
+    }
+
+    @Test
+    void rendersMinimalFrenchCanadianResumeWithoutOptionalSections() {
+        String rendered = ResumeBodyRenderer.renderCanadianFrenchResume(
+                emptyAggregate(PROFILE_ID),
+                new OfflineFrenchResumeTranslator()
+        );
+
+        assertEquals("Coordonnées: agentic@example.test\n\nPROFIL PROFESSIONNEL\nRésumé du profil non fourni.", rendered);
+    }
+
+    @Test
     void canadianResumeDerivesCappedExperienceBulletsFromExistingDescriptionText() {
         ProfileAggregate aggregate = experienceBulletAggregate(PROFILE_ID);
 
@@ -344,12 +607,17 @@ class GeneratePdfResumeServiceTests {
         ProfileAggregate aggregate = contactFilteringAggregate(PROFILE_ID);
 
         String rendered = ResumeBodyRenderer.renderCanadianResume(aggregate);
+        String frenchRendered = ResumeBodyRenderer.renderCanadianFrenchResume(
+                aggregate,
+                new OfflineFrenchResumeTranslator()
+        );
 
-        assertTrue(rendered.contains("Contact: agentic@example.test | Phone: +1-555-0100 | Website: https://example.test"));
+        assertTrue(rendered.contains("Contact: agentic@example.test | Phone: +1-555-0100 | Website: https://example.test | Address: Montreal, QC"));
         assertFalse(rendered.contains("type-filtered@example.test"));
         assertFalse(rendered.contains("label-filtered@example.test"));
         assertFalse(rendered.contains("value-filtered@example.test"));
         assertFalse(rendered.contains("Links:"));
+        assertTrue(frenchRendered.contains("Adresse: Montréal, QC"));
     }
 
     @Test
@@ -555,7 +823,8 @@ class GeneratePdfResumeServiceTests {
                         new ProfileContact(UUID.randomUUID(), profileId, "personal", "label-filtered@example.test", "Email", NOW, NOW),
                         new ProfileContact(UUID.randomUUID(), profileId, "personal", "value-filtered@example.test", "Website", NOW, NOW),
                         new ProfileContact(UUID.randomUUID(), profileId, "phone", "+1-555-0100", "Phone", NOW, NOW),
-                        new ProfileContact(UUID.randomUUID(), profileId, "website", "https://example.test", "Website", NOW, NOW)
+                        new ProfileContact(UUID.randomUUID(), profileId, "website", "https://example.test", "Website", NOW, NOW),
+                        new ProfileContact(UUID.randomUUID(), profileId, "address", "Montreal, QC", "Address", NOW, NOW)
                 ),
                 List.of(),
                 List.of(),

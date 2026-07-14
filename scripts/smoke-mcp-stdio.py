@@ -33,6 +33,7 @@ EXPECTED_TOOLS = {
     "generate_pdf_file",
     "generate_pdf_resume",
     "generate_canadian_pdf_resume",
+    "generate_canadian_french_pdf_resume",
     "ingest_profile_from_stored_pdf",
     "get_profile_pdf_source",
     "list_jobs",
