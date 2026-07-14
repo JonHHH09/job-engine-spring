@@ -45,6 +45,43 @@ class GeneratedResumeCleanupHealthServiceTests {
     }
 
     @Test
+    void comparesSubSecondOldestDueThresholdWithoutTruncation() {
+        when(repository.readQueueSnapshot(NOW, 3, NOW.minus(Duration.ofDays(30))))
+                .thenReturn(new CleanupQueueSnapshot(1, 0, 0, NOW.minusMillis(499), false));
+        var belowThreshold = new GeneratedResumeCleanupHealthService(
+                repository,
+                Duration.ofMillis(500),
+                3,
+                Duration.ofDays(30),
+                Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        assertEquals(
+                GeneratedResumeCleanupHealthService.CleanupHealthStatus.HEALTHY,
+                belowThreshold.checkHealth().status()
+        );
+
+        when(repository.readQueueSnapshot(NOW, 3, NOW.minus(Duration.ofDays(30))))
+                .thenReturn(new CleanupQueueSnapshot(1, 0, 0, NOW.minusMillis(500), false));
+
+        assertEquals(
+                GeneratedResumeCleanupHealthService.CleanupHealthStatus.DEGRADED,
+                belowThreshold.checkHealth().status()
+        );
+    }
+
+    @Test
+    void clampsUnexpectedFutureOldestDueTimestampToZeroAge() {
+        when(repository.readQueueSnapshot(NOW, 3, NOW.minus(Duration.ofDays(30))))
+                .thenReturn(new CleanupQueueSnapshot(1, 0, 0, NOW.plusSeconds(1), false));
+
+        var report = service().checkHealth();
+
+        assertEquals(GeneratedResumeCleanupHealthService.CleanupHealthStatus.HEALTHY, report.status());
+        assertEquals(0, report.oldestDueAgeSeconds());
+    }
+
+    @Test
     void reportsDegradedForRepeatedFailureEvenWithoutDueBacklog() {
         when(repository.readQueueSnapshot(NOW, 3, NOW.minus(Duration.ofDays(30))))
                 .thenReturn(new CleanupQueueSnapshot(1, 0, 0, null, true));

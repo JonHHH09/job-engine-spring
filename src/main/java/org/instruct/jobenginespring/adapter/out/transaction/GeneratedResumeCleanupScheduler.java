@@ -24,7 +24,11 @@ public class GeneratedResumeCleanupScheduler {
             initialDelayString = "${job-engine.pdf-generation.cleanup-retry-initial-delay:60000}"
     )
     public void retryDueTasks() {
-        cleanupService.retryDueTasks();
+        try {
+            cleanupService.retryDueTasks();
+        } catch (RuntimeException exception) {
+            LOGGER.error("event=generated_resume_cleanup_retry_scan_failure action=retry_next_schedule");
+        }
     }
 
     @Scheduled(

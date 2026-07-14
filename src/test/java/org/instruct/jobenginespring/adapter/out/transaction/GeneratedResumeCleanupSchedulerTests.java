@@ -28,6 +28,27 @@ class GeneratedResumeCleanupSchedulerTests {
     }
 
     @Test
+    void retryScanFailureIsContainedAndLoggedWithoutSensitiveFailureDetails() {
+        var service = mock(GeneratedResumeCleanupService.class);
+        doThrow(new IllegalStateException("jdbc:postgresql://private password=secret"))
+                .when(service).retryDueTasks();
+        var appender = captureSchedulerLogs();
+
+        assertDoesNotThrow(() -> new GeneratedResumeCleanupScheduler(service).retryDueTasks());
+
+        assertEquals(1, appender.list.size());
+        ILoggingEvent event = appender.list.getFirst();
+        assertEquals(Level.ERROR, event.getLevel());
+        assertEquals(
+                "event=generated_resume_cleanup_retry_scan_failure action=retry_next_schedule",
+                event.getFormattedMessage()
+        );
+        assertNull(event.getThrowableProxy());
+        assertFalse(event.getFormattedMessage().contains("jdbc:postgresql"));
+        assertFalse(event.getFormattedMessage().contains("secret"));
+    }
+
+    @Test
     void delegatesScheduledRetentionToApplicationService() {
         GeneratedResumeCleanupService service = mock(GeneratedResumeCleanupService.class);
 

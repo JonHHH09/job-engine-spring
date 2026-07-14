@@ -67,12 +67,16 @@ public final class GeneratedResumeCleanupHealthService {
                     repeatedFailureAttemptThreshold,
                     now.minus(completedRetention)
             );
-            long oldestDueAgeSeconds = snapshot.oldestDueAt() == null
-                    ? 0
-                    : Math.max(0, Duration.between(snapshot.oldestDueAt(), now).toSeconds());
+            var oldestDueAge = snapshot.oldestDueAt() == null
+                    ? Duration.ZERO
+                    : Duration.between(snapshot.oldestDueAt(), now);
+            if (oldestDueAge.isNegative()) {
+                oldestDueAge = Duration.ZERO;
+            }
+            long oldestDueAgeSeconds = oldestDueAge.toSeconds();
             var status = snapshot.repeatedFailure()
                     || snapshot.expiredCompletedCount() > 0
-                    || oldestDueAgeSeconds >= oldestDueDegradedThreshold.toSeconds()
+                    || oldestDueAge.compareTo(oldestDueDegradedThreshold) >= 0
                     ? CleanupHealthStatus.DEGRADED
                     : CleanupHealthStatus.HEALTHY;
             return new CleanupHealthReport(
