@@ -19,6 +19,9 @@ public record StoredDocumentFile(
 ) {
     public StoredDocumentFile {
         Objects.requireNonNull(content, "content must not be null");
+        if (byteSize != content.length) {
+            throw new IllegalArgumentException("byteSize must equal content length");
+        }
         content = Arrays.copyOf(content, content.length);
     }
 
@@ -30,6 +33,11 @@ public record StoredDocumentFile(
     /** Opens an immutable read view without copying the complete stored content. */
     public InputStream openContentStream() {
         return new ByteArrayInputStream(content);
+    }
+
+    /** Returns the length of the immutable stored content. */
+    public int contentLength() {
+        return content.length;
     }
 
     public StoredDocumentMetadata metadata() {

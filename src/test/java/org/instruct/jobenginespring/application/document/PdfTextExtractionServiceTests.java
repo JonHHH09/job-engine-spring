@@ -20,6 +20,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -128,7 +129,7 @@ class PdfTextExtractionServiceTests {
     }
 
     @Test
-    void storedPdfExtractionUsesImmutableStreamAndValidatesStoredMetadata() throws IOException {
+    void storedPdfExtractionUsesImmutableStreamAndValidatesActualContentSize() throws IOException {
         Path pdf = createPdf("stored-stream.pdf", List.of("streamed text"));
         byte[] content = Files.readAllBytes(pdf);
         StoredDocumentFile stored = storedFile(content, content.length);
@@ -143,12 +144,31 @@ class PdfTextExtractionServiceTests {
                 ApplicationException.class,
                 () -> service.extractText(storedFile("not pdf".getBytes(), 7), null, false)
         ).details().get("reason"));
+        byte[] oversizedContent = new byte[Math.toIntExact(PdfTextExtractionService.MAX_FILE_BYTES + 1)];
+        System.arraycopy("%PDF-".getBytes(), 0, oversizedContent, 0, 5);
         assertEquals(
                 "PDF file size exceeds limit of " + PdfTextExtractionService.MAX_FILE_BYTES + " bytes",
                 assertThrows(ApplicationException.class, () -> service.extractText(
-                        storedFile("%PDF-".getBytes(), PdfTextExtractionService.MAX_FILE_BYTES + 1), null, false
+                        storedFile(oversizedContent, oversizedContent.length), null, false
                 )).details().get("reason")
         );
+    }
+
+    @Test
+    void localPathSnapshotRemainsStableWhenFileIsReplacedBeforeParsing() throws IOException {
+        Path original = createPdf("replaceable.pdf", List.of("original snapshot text"));
+        Path replacement = createPdf("replacement.pdf", List.of("replacement text"));
+        PdfTextExtractionService.PdfContentSnapshot snapshot =
+                PdfTextExtractionService.readLocalPdfSnapshot(original);
+
+        Files.move(replacement, original, StandardCopyOption.REPLACE_EXISTING);
+        assertEquals("replaceable.pdf", snapshot.getDescription());
+        assertTrue(snapshot.contentLength() > 0);
+        PdfTextExtractionResult result = service.extractText(snapshot, null, null);
+
+        assertTrue(result.text().contains("original snapshot text"));
+        assertFalse(result.text().contains("replacement text"));
+        assertEquals(1, result.pages().size());
     }
 
     @Test
@@ -372,7 +392,7 @@ class PdfTextExtractionServiceTests {
     }
 
     @Test
-    void persistedRequestViewOmitsPagesByDefault() {
+    void persistedRequestViewIncludesPagesByDefaultAndHonorsExplicitFalse() {
         PdfTextExtractionResult canonical = new PdfTextExtractionResult(
                 "stored.pdf",
                 2,
@@ -384,11 +404,13 @@ class PdfTextExtractionServiceTests {
 
         PdfTextExtractionResult defaultView = PdfTextExtractionService.applyRequestView(canonical, 5, null);
         PdfTextExtractionResult explicitView = PdfTextExtractionService.applyRequestView(canonical, 5, true);
+        PdfTextExtractionResult omittedView = PdfTextExtractionService.applyRequestView(canonical, 5, false);
 
         assertEquals("abcde", defaultView.text());
-        assertEquals(List.of(), defaultView.pages());
+        assertEquals(List.of(new ExtractedPdfPage(1, "abcde")), defaultView.pages());
         assertTrue(defaultView.truncated());
         assertEquals(List.of(new ExtractedPdfPage(1, "abcde")), explicitView.pages());
+        assertEquals(List.of(), omittedView.pages());
     }
 
     @Test

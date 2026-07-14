@@ -189,6 +189,8 @@ class PostgresProfileResumeDocumentRepositoryIntegrationTests {
     }
 
     private void seedProfileAndDocuments() {
+        byte[] firstContent = "%PDF-1.3 first".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] secondContent = "%PDF-1.3 second".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         profileRepository.saveProfileAggregate(new ProfileAggregate(
                 new UserProfile(PROFILE_ID, "Agentic Dev", "agentic@example.test", null, null, CREATED_AT, CREATED_AT),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of()
@@ -197,9 +199,9 @@ class PostgresProfileResumeDocumentRepositoryIntegrationTests {
                 FIRST_DOCUMENT_ID,
                 "master-resume.pdf",
                 "application/pdf",
-                16,
+                firstContent.length,
                 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-                "%PDF-1.3 first".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                firstContent,
                 CREATED_AT,
                 CREATED_AT
         ));
@@ -207,9 +209,9 @@ class PostgresProfileResumeDocumentRepositoryIntegrationTests {
                 SECOND_DOCUMENT_ID,
                 "master-resume.pdf",
                 "application/pdf",
-                17,
+                secondContent.length,
                 "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-                "%PDF-1.3 second".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                secondContent,
                 UPDATED_AT,
                 UPDATED_AT
         ));
