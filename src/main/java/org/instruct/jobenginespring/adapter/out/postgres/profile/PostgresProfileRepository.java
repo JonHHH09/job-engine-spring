@@ -22,6 +22,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.ReflectionUtils;
 
 import java.lang.reflect.RecordComponent;
@@ -61,7 +62,7 @@ public class PostgresProfileRepository implements ProfileRepository {
     @Override
     public List<UserProfile> listProfiles() {
         return jdbc.sql("""
-                SELECT id, full_name, email, summary, created_at, updated_at
+                SELECT id, full_name, email, summary, created_at, updated_at, revision
                 FROM profile.profiles
                 ORDER BY full_name, id
                 """)
@@ -78,7 +79,7 @@ public class PostgresProfileRepository implements ProfileRepository {
     @Override
     public Optional<UserProfile> findProfileById(UUID profileId) {
         return jdbc.sql("""
-                        SELECT id, full_name, email, summary, created_at, updated_at
+                        SELECT id, full_name, email, summary, created_at, updated_at, revision
                         FROM profile.profiles
                         WHERE id = :profileId
                         """)
@@ -204,16 +205,18 @@ public class PostgresProfileRepository implements ProfileRepository {
     }
 
     @Override
+    @Transactional
     public ProfileAggregate saveProfileAggregate(ProfileAggregate aggregate) {
         UserProfile profile = aggregate.profile();
         jdbc.sql("""
-                        INSERT INTO profile.profiles (id, full_name, email, avatar_url, summary, created_at, updated_at)
-                        VALUES (:id, :fullName, :email, NULL, :summary, :createdAt, :updatedAt)
+                        INSERT INTO profile.profiles (id, full_name, email, avatar_url, summary, created_at, updated_at, revision)
+                        VALUES (:id, :fullName, :email, NULL, :summary, :createdAt, :updatedAt, :revision)
                         ON CONFLICT (id) DO UPDATE SET
                             full_name = EXCLUDED.full_name,
                             email = EXCLUDED.email,
                             summary = EXCLUDED.summary,
-                            updated_at = EXCLUDED.updated_at
+                            updated_at = EXCLUDED.updated_at,
+                            revision = EXCLUDED.revision
                         """)
                 .param("id", profile.id())
                 .param("fullName", profile.fullName())
@@ -221,9 +224,39 @@ public class PostgresProfileRepository implements ProfileRepository {
                 .param("summary", profile.summary())
                 .param("createdAt", Timestamp.from(profile.createdAt()))
                 .param("updatedAt", Timestamp.from(profile.updatedAt()))
+                .param("revision", profile.revision())
                 .update();
         replaceChildren(aggregate);
         return findProfileAggregate(profile.id()).orElseThrow();
+    }
+
+    @Override
+    @Transactional
+    public Optional<ProfileAggregate> replaceProfileAggregate(ProfileAggregate aggregate, long expectedRevision) {
+        UserProfile profile = aggregate.profile();
+        int updated = jdbc.sql("""
+                        UPDATE profile.profiles
+                        SET full_name = :fullName,
+                            email = :email,
+                            summary = :summary,
+                            updated_at = :updatedAt,
+                            revision = :revision
+                        WHERE id = :id
+                          AND revision = :expectedRevision
+                        """)
+                .param("id", profile.id())
+                .param("fullName", profile.fullName())
+                .param("email", profile.email())
+                .param("summary", profile.summary())
+                .param("updatedAt", Timestamp.from(profile.updatedAt()))
+                .param("revision", profile.revision())
+                .param("expectedRevision", expectedRevision)
+                .update();
+        if (updated != 1) {
+            return Optional.empty();
+        }
+        replaceChildren(aggregate);
+        return findProfileAggregate(profile.id());
     }
 
     @Override
@@ -480,7 +513,8 @@ public class PostgresProfileRepository implements ProfileRepository {
                 null,
                 instant(resultSet, "created_at"),
                 instant(resultSet, "updated_at"),
-                null
+                null,
+                resultSet.getLong("revision")
         );
     }
 

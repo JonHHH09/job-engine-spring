@@ -1,6 +1,7 @@
 package org.instruct.jobenginespring.application.profile;
 
 import lombok.NonNull;
+import org.apache.commons.codec.digest.DigestUtils;
 import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch.LinkIdentity;
 import org.instruct.jobenginespring.application.profile.ProfileService.LinkWriteRequest;
@@ -17,6 +18,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 /** Finds existing profiles that appear to represent the same person as an extracted profile draft. */
 @Service
@@ -48,6 +50,21 @@ public class ProfileIdentityMatcher {
                 strongest.getValue().stream().toList(),
                 reasonsByProfile.size() > 1
         ));
+    }
+
+    /** Returns sorted, one-way keys suitable only for serializing competing identity mutations. */
+    public List<String> concurrencyKeys(ProfileWriteRequest request) {
+        ProfileWriteValidator.validate(request);
+        ProfileWriteRequest canonical = ProfileWriteCanonicalizer.canonicalize(request);
+        return Stream.concat(
+                        Stream.of("email:" + canonical.email()),
+                        identityLinks(canonical.links()).stream()
+                                .map(link -> "link:" + link.linkType() + ":" + link.normalizedUrl())
+                )
+                .map(DigestUtils::sha256Hex)
+                .distinct()
+                .sorted()
+                .toList();
     }
 
     private static List<LinkIdentity> identityLinks(List<LinkWriteRequest> links) {

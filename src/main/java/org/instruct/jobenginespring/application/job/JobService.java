@@ -94,6 +94,9 @@ public class JobService {
         JobAggregate existing = jobRepository.findJobAggregate(safeRequest.jobId())
                 .orElseThrow(() -> new JobNotFoundException(safeRequest.jobId()));
         JobPosting current = existing.job();
+        if (current.revision() != safeRequest.expectedRevision()) {
+            throw updateConflict(current.id(), safeRequest.expectedRevision());
+        }
         String title = patchRequired(current.title(), safeRequest.title(), "title");
         String company = patchNullable(current.company(), safeRequest.company());
         String location = patchNullable(current.location(), safeRequest.location());
@@ -115,10 +118,15 @@ public class JobService {
                 safeRequest.postedAt() == null ? current.postedAt() : safeRequest.postedAt(),
                 canonicalFingerprint,
                 current.createdAt(),
-                now
+                now,
+                current.revision() + 1
         );
         List<JobSkill> updatedSkills = safeRequest.skills() == null ? existing.skills() : skills(current.id(), safeRequest.skills(), now);
-        return jobRepository.updateJobAggregate(new JobAggregate(updated, updatedSkills, existing.linkIngestion(), existing.textIngestion()));
+        return jobRepository.updateJobAggregate(
+                        new JobAggregate(updated, updatedSkills, existing.linkIngestion(), existing.textIngestion()),
+                        safeRequest.expectedRevision()
+                )
+                .orElseThrow(() -> updateConflict(current.id(), safeRequest.expectedRevision()));
     }
 
     @Transactional
@@ -384,6 +392,12 @@ public class JobService {
         }
         if (request.description() != null && request.description().isBlank()) {
             throw validation("description", "must not be blank");
+        }
+        if (request.expectedRevision() == null) {
+            throw validation("expectedRevision", "must not be null");
+        }
+        if (request.expectedRevision() < 0) {
+            throw validation("expectedRevision", "must not be negative");
         }
         return request;
     }
@@ -652,6 +666,7 @@ public class JobService {
 
     public record UpdateJobRequest(
             UUID jobId,
+            Long expectedRevision,
             String sourceLabel,
             String title,
             String company,
@@ -663,6 +678,22 @@ public class JobService {
             String seniority,
             Instant postedAt
     ) {
+        public UpdateJobRequest(
+                UUID jobId,
+                String sourceLabel,
+                String title,
+                String company,
+                String location,
+                String description,
+                List<String> skills,
+                String experienceRequirement,
+                String employmentType,
+                String seniority,
+                Instant postedAt
+        ) {
+            this(jobId, null, sourceLabel, title, company, location, description, skills,
+                    experienceRequirement, employmentType, seniority, postedAt);
+        }
     }
 
     public record DeleteJobResult(UUID jobId, boolean deleted) {
@@ -687,6 +718,19 @@ public class JobService {
         public JobNotFoundException(UUID jobId) {
             super(ApplicationErrorCode.NOT_FOUND, "Job not found: " + jobId, Map.of("resource", "job", "jobId", String.valueOf(jobId)), null);
         }
+    }
+
+    private static ApplicationException updateConflict(UUID jobId, long expectedRevision) {
+        return new ApplicationException(
+                ApplicationErrorCode.CONFLICT,
+                "Job revision conflict",
+                Map.of(
+                        "resource", "job",
+                        "jobId", jobId.toString(),
+                        "expectedRevision", Long.toString(expectedRevision)
+                ),
+                null
+        );
     }
 
     private record DraftJob(

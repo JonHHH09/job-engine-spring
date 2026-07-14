@@ -5,12 +5,13 @@ import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationErrorResponse;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService;
-import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.IngestProfileFromStoredPdfRequest;
+import org.instruct.jobenginespring.adapter.in.mcp.profile.ProfilePdfIngestionMcpAdapter.IngestProfileFromStoredPdfRequest;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.IngestionStatus;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.ProfilePdfIngestionResult;
 import org.instruct.jobenginespring.domain.profile.ProfilePdfSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.mcp.annotation.McpTool;
+import org.springframework.ai.mcp.annotation.McpToolParam;
 
 import java.lang.reflect.Method;
 import java.time.Instant;
@@ -49,7 +50,7 @@ class ProfilePdfIngestionMcpAdapterTests {
     }
 
     @Test
-    void toolsDescribeRequestParameters() throws NoSuchMethodException {
+    void toolsDescribeRequestParameters() throws NoSuchMethodException, NoSuchFieldException {
         Method ingest = ProfilePdfIngestionMcpAdapter.class.getDeclaredMethod(
                 "ingestProfileFromStoredPdf",
                 IngestProfileFromStoredPdfRequest.class
@@ -60,11 +61,17 @@ class ProfilePdfIngestionMcpAdapterTests {
         assertEquals("get_profile_pdf_source", getSource.getAnnotation(McpTool.class).name());
         assertEquals(1, ingest.getParameterAnnotations()[0].length);
         assertEquals(1, getSource.getParameterAnnotations()[0].length);
+        McpToolParam expectedRevision = IngestProfileFromStoredPdfRequest.class
+                .getDeclaredField("expectedRevision")
+                .getAnnotation(McpToolParam.class);
+        assertFalse(expectedRevision.required());
+        assertTrue(expectedRevision.description().contains("revision"));
     }
 
     @Test
     void ingestProfileFromStoredPdfDelegatesToService() {
-        IngestProfileFromStoredPdfRequest request = new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, null, null, 10_000);
+        IngestProfileFromStoredPdfRequest request = new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, null, null, 10_000, null);
+        ProfilePdfIngestionService.IngestProfileFromStoredPdfRequest serviceRequest = request.toServiceRequest();
         ProfilePdfIngestionResult expected = new ProfilePdfIngestionResult(
                 IngestionStatus.CREATED_PROFILE,
                 PROFILE_ID,
@@ -81,13 +88,13 @@ class ProfilePdfIngestionMcpAdapterTests {
                 java.util.List.of(),
                 null
         );
-        when(service.ingestProfileFromStoredPdf(request)).thenReturn(expected);
+        when(service.ingestProfileFromStoredPdf(serviceRequest)).thenReturn(expected);
 
         CallToolResult result = adapter.ingestProfileFromStoredPdf(request);
 
         assertFalse(result.isError());
         assertEquals(expected, result.structuredContent());
-        verify(service).ingestProfileFromStoredPdf(request);
+        verify(service).ingestProfileFromStoredPdf(serviceRequest);
     }
 
     @Test
@@ -104,8 +111,8 @@ class ProfilePdfIngestionMcpAdapterTests {
 
     @Test
     void returnsSanitizedApplicationErrors() {
-        IngestProfileFromStoredPdfRequest request = new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, null, null, null);
-        when(service.ingestProfileFromStoredPdf(request)).thenThrow(new ApplicationException(
+        IngestProfileFromStoredPdfRequest request = new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, null, null, null, null);
+        when(service.ingestProfileFromStoredPdf(request.toServiceRequest())).thenThrow(new ApplicationException(
                 ApplicationErrorCode.VALIDATION_ERROR,
                 "Invalid profile extraction input",
                 Map.of("field", "email", "reason", "could not be extracted from PDF text"),
@@ -117,6 +124,22 @@ class ProfilePdfIngestionMcpAdapterTests {
         ApplicationErrorResponse response = assertErrorResponse(result);
         assertEquals("validation_error", response.code());
         assertEquals("Invalid profile extraction input", response.message());
+    }
+
+    @Test
+    void passesNullRequestToSanitizedErrorBoundary() {
+        when(service.ingestProfileFromStoredPdf(null)).thenThrow(new ApplicationException(
+                ApplicationErrorCode.VALIDATION_ERROR,
+                "Invalid profile ingestion request",
+                Map.of("field", "request", "reason", "must not be null"),
+                null
+        ));
+
+        CallToolResult result = adapter.ingestProfileFromStoredPdf(null);
+
+        ApplicationErrorResponse response = assertErrorResponse(result);
+        assertEquals("validation_error", response.code());
+        assertEquals("Invalid profile ingestion request", response.message());
     }
 
     private static ApplicationErrorResponse assertErrorResponse(CallToolResult result) {

@@ -60,7 +60,7 @@ public class JobMcpAdapter {
 
     @McpTool(
             name = "update_job",
-            description = "Partially update a stored job. Omitted fields preserve existing values; provided skills replace existing skills."
+            description = "Partially update a stored job using its expected revision. Omitted fields preserve existing values; provided skills replace existing skills."
     )
     public CallToolResult updateJob(
             @McpToolParam(required = true, description = "Job partial update request")
@@ -154,6 +154,7 @@ public class JobMcpAdapter {
 
     public record UpdateJobRequest(
             @McpToolParam(required = true, description = "Job UUID") UUID jobId,
+            @McpToolParam(required = true, description = "Revision returned by the latest job read") Long expectedRevision,
             @McpToolParam(required = false, description = "Source label") String sourceLabel,
             @McpToolParam(required = false, description = "Normalized job title") String title,
             @McpToolParam(required = false, description = "Company name") String company,
@@ -166,7 +167,7 @@ public class JobMcpAdapter {
             @McpToolParam(required = false, description = "Posting timestamp") Instant postedAt
     ) {
         JobService.UpdateJobRequest toServiceRequest() {
-            return new JobService.UpdateJobRequest(jobId, sourceLabel, title, company, location, description, skills,
+            return new JobService.UpdateJobRequest(jobId, expectedRevision, sourceLabel, title, company, location, description, skills,
                     experienceRequirement, employmentType, seniority, postedAt);
         }
     }

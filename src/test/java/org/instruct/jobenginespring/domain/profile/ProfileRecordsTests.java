@@ -137,6 +137,15 @@ class ProfileRecordsTests {
     }
 
     @Test
+    void userProfileRejectsNegativeRevision() {
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> new UserProfile(
+                PROFILE_ID, "John Doe", "john.doe@example.com", null, null, NOW, NOW, null, -1
+        ));
+
+        assertEquals("revision must not be negative", exception.getMessage());
+    }
+
+    @Test
     void profileProjectConvenienceConstructorCreatesEmptyTechnologyList() {
         ProfileProject project = new ProfileProject(
                 PROJECT_ID,

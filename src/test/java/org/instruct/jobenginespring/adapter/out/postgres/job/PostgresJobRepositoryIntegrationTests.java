@@ -14,6 +14,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -25,6 +27,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -45,6 +50,7 @@ class PostgresJobRepositoryIntegrationTests {
             .withPassword("test");
 
     private static JdbcTemplate jdbc;
+    private static DriverManagerDataSource dataSource;
 
     private PostgresJobRepository repository;
     private PostgresJobAnalysisRunRepository analysisRunRepository;
@@ -59,7 +65,7 @@ class PostgresJobRepositoryIntegrationTests {
                 .load()
                 .migrate();
 
-        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+        dataSource = new DriverManagerDataSource(
                 POSTGRES.getJdbcUrl(),
                 POSTGRES.getUsername(),
                 POSTGRES.getPassword()
@@ -369,7 +375,8 @@ class PostgresJobRepositoryIntegrationTests {
                 NOW.plusSeconds(30),
                 "fingerprint-after-update",
                 NOW,
-                NOW.plusSeconds(60)
+                NOW.plusSeconds(60),
+                1
         );
         JobAggregate updated = repository.updateJobAggregate(new JobAggregate(
                 updatedPosting,
@@ -385,7 +392,7 @@ class PostgresJobRepositoryIntegrationTests {
                         "hash-before-update",
                         NOW
                 )
-        ));
+        ), 0).orElseThrow();
 
         JobAggregate found = repository.findJobAggregate(JOB_ID).orElseThrow();
 
@@ -404,6 +411,37 @@ class PostgresJobRepositoryIntegrationTests {
     }
 
     @Test
+    void concurrentAggregateReplacementsAllowExactlyOneRevisionWinnerWithoutMixedChildren() throws Exception {
+        JobAggregate original = repository.saveJobAggregate(textAggregate("concurrent-job", "concurrent-hash"));
+        JobAggregate first = replacement(original, "First winner", "first-skill");
+        JobAggregate second = replacement(original, "Second winner", "second-skill");
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        TransactionTemplate transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<Optional<JobAggregate>> firstResult = executor.submit(() -> transactions.execute(status -> {
+                await(barrier);
+                return repository.updateJobAggregate(first, 0);
+            }));
+            Future<Optional<JobAggregate>> secondResult = executor.submit(() -> transactions.execute(status -> {
+                await(barrier);
+                return repository.updateJobAggregate(second, 0);
+            }));
+
+            assertEquals(1, List.of(firstResult.get(), secondResult.get()).stream().filter(Optional::isPresent).count());
+        }
+
+        JobAggregate persisted = repository.findJobAggregate(JOB_ID).orElseThrow();
+        assertEquals(1, persisted.job().revision());
+        if (persisted.job().title().equals("First winner")) {
+            assertEquals(List.of("first-skill"), persisted.skills().stream().map(JobSkill::normalizedSkill).toList());
+        } else {
+            assertEquals("Second winner", persisted.job().title());
+            assertEquals(List.of("second-skill"), persisted.skills().stream().map(JobSkill::normalizedSkill).toList());
+        }
+    }
+
+    @Test
     void updateJobAggregateFailsWhenJobRowIsMissing() {
         UUID missingJobId = UUID.fromString("44444444-2222-3333-4444-555555555555");
         JobAggregate missingAggregate = new JobAggregate(
@@ -419,13 +457,31 @@ class PostgresJobRepositoryIntegrationTests {
                 )
         );
 
-        IllegalStateException exception = assertThrows(
-                IllegalStateException.class,
-                () -> repository.updateJobAggregate(missingAggregate)
-        );
-
-        assertEquals("Job disappeared during update: " + missingJobId, exception.getMessage());
+        assertTrue(repository.updateJobAggregate(missingAggregate, 0).isEmpty());
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM job_schema.job_skills", Integer.class));
+    }
+
+    private static JobAggregate replacement(JobAggregate original, String title, String skill) {
+        JobPosting current = original.job();
+        JobPosting posting = new JobPosting(
+                current.id(), current.sourceMethod(), current.sourceLabel(), title, current.company(), current.location(),
+                current.description(), current.experienceRequirement(), current.employmentType(), current.seniority(),
+                current.postedAt(), current.canonicalFingerprint() + "-" + skill, current.createdAt(), NOW.plusSeconds(1), 1
+        );
+        return new JobAggregate(
+                posting,
+                List.of(new JobSkill(UUID.randomUUID(), current.id(), skill, skill, true, 0, NOW.plusSeconds(1))),
+                original.linkIngestion(),
+                original.textIngestion()
+        );
+    }
+
+    private static void await(CyclicBarrier barrier) {
+        try {
+            barrier.await();
+        } catch (Exception exception) {
+            throw new IllegalStateException("Concurrency barrier failed", exception);
+        }
     }
 
     @Test

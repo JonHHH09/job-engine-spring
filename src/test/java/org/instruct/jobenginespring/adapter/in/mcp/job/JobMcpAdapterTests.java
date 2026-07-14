@@ -126,6 +126,7 @@ class JobMcpAdapterTests {
     void updateAndDeleteToolsDelegateToService() {
         JobMcpAdapter.UpdateJobRequest updateRequest = new JobMcpAdapter.UpdateJobRequest(
                 JOB_ID,
+                0L,
                 "manual paste",
                 "Senior Java Developer",
                 "Example Corp",
@@ -153,6 +154,7 @@ class JobMcpAdapterTests {
     void updateJobRequestMapsFieldsToServiceRequest() {
         JobMcpAdapter.UpdateJobRequest updateRequest = new JobMcpAdapter.UpdateJobRequest(
                 JOB_ID,
+                0L,
                 "manual paste",
                 "Senior Java Developer",
                 "Example Corp",
@@ -167,6 +169,7 @@ class JobMcpAdapterTests {
 
         assertEquals(new JobService.UpdateJobRequest(
                 JOB_ID,
+                0L,
                 "manual paste",
                 "Senior Java Developer",
                 "Example Corp",
@@ -238,6 +241,7 @@ class JobMcpAdapterTests {
         assertFieldRequired(JobMcpAdapter.JobSearchRequest.class, "query", true);
         assertFieldRequired(JobMcpAdapter.JobSearchRequest.class, "limit", false);
         assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "jobId", true);
+        assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "expectedRevision", true);
         assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "title", false);
         assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "skills", false);
         assertFieldRequired(JobMcpAdapter.AnalyzeJobLinkRequest.class, "url", true);

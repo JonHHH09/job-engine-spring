@@ -27,9 +27,18 @@ public class PostgresProfilePdfSourceRepository implements ProfilePdfSourceRepos
     }
 
     @Override
+    public void acquireIngestionLock(String hashedLockKey) {
+        Objects.requireNonNull(hashedLockKey, "hashedLockKey must not be null");
+        jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(:lockKey, 0))")
+                .param("lockKey", hashedLockKey)
+                .query((resultSet, rowNumber) -> Boolean.TRUE)
+                .single();
+    }
+
+    @Override
     public ProfilePdfSource save(ProfilePdfSource source) {
         Objects.requireNonNull(source, "source must not be null");
-        jdbc.sql("""
+        int inserted = jdbc.sql("""
                         INSERT INTO profile.profile_pdf_sources (id, profile_id, pdf_extraction_id, source_type, created_at)
                         VALUES (:id, :profileId, :pdfExtractionId, :sourceType, :createdAt)
                         """)
@@ -39,6 +48,9 @@ public class PostgresProfilePdfSourceRepository implements ProfilePdfSourceRepos
                 .param("sourceType", source.sourceType())
                 .param("createdAt", Timestamp.from(source.createdAt()))
                 .update();
+        if (inserted != 1) {
+            throw new IllegalStateException("Profile PDF source insert count was not one");
+        }
         return findByProfileId(source.profileId()).orElseThrow();
     }
 

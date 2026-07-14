@@ -19,6 +19,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -28,6 +30,9 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -51,6 +56,7 @@ class PostgresProfileRepositoryIntegrationTests {
             .withPassword("test");
 
     private static JdbcTemplate jdbc;
+    private static DriverManagerDataSource dataSource;
 
     private PostgresProfileRepository repository;
 
@@ -64,7 +70,7 @@ class PostgresProfileRepositoryIntegrationTests {
                 .load()
                 .migrate();
 
-        DriverManagerDataSource dataSource = new DriverManagerDataSource(
+        dataSource = new DriverManagerDataSource(
                 POSTGRES.getJdbcUrl(),
                 POSTGRES.getUsername(),
                 POSTGRES.getPassword()
@@ -228,6 +234,43 @@ class PostgresProfileRepositoryIntegrationTests {
     }
 
     @Test
+    void concurrentAggregateReplacementsAllowExactlyOneRevisionWinnerWithoutMixedChildren() throws Exception {
+        ProfileAggregate original = repository.saveProfileAggregate(sampleAggregate(
+                "Agentic Dev", "agentic-dev@example.test", "Initial",
+                List.of(new ProfileContact(CONTACT_ID, PROFILE_ID, "location", "Remote", null, NOW, NOW)),
+                List.of(new ProfileSkill(SKILL_ID, PROFILE_ID, "Java", "java", "backend", 0, NOW))
+        ));
+        ProfileAggregate first = replacement(original, "First winner", "first", "First Skill");
+        ProfileAggregate second = replacement(original, "Second winner", "second", "Second Skill");
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        TransactionTemplate transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+
+        try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<Optional<ProfileAggregate>> firstResult = executor.submit(() -> transactions.execute(status -> {
+                await(barrier);
+                return repository.replaceProfileAggregate(first, 0);
+            }));
+            Future<Optional<ProfileAggregate>> secondResult = executor.submit(() -> transactions.execute(status -> {
+                await(barrier);
+                return repository.replaceProfileAggregate(second, 0);
+            }));
+
+            assertEquals(1, List.of(firstResult.get(), secondResult.get()).stream().filter(Optional::isPresent).count());
+        }
+
+        ProfileAggregate persisted = repository.findProfileAggregate(PROFILE_ID).orElseThrow();
+        assertEquals(1, persisted.profile().revision());
+        if (persisted.profile().summary().equals("First winner")) {
+            assertEquals(List.of("first"), persisted.contacts().stream().map(ProfileContact::contactValue).toList());
+            assertEquals(List.of("first skill"), persisted.skills().stream().map(ProfileSkill::normalizedSkill).toList());
+        } else {
+            assertEquals("Second winner", persisted.profile().summary());
+            assertEquals(List.of("second"), persisted.contacts().stream().map(ProfileContact::contactValue).toList());
+            assertEquals(List.of("second skill"), persisted.skills().stream().map(ProfileSkill::normalizedSkill).toList());
+        }
+    }
+
+    @Test
     void deleteProfileCascadesChildren() {
         repository.saveProfileAggregate(sampleAggregate(
                 "Agentic Dev",
@@ -292,6 +335,33 @@ class PostgresProfileRepositoryIntegrationTests {
                 List.of(project),
                 List.of(technology)
         );
+    }
+
+    private static ProfileAggregate replacement(
+            ProfileAggregate original,
+            String summary,
+            String contactValue,
+            String skill
+    ) {
+        UserProfile current = original.profile();
+        return new ProfileAggregate(
+                new UserProfile(
+                        current.id(), current.fullName(), current.email(), summary, null,
+                        current.createdAt(), NOW.plusSeconds(1), null, 1
+                ),
+                List.of(new ProfileContact(UUID.randomUUID(), PROFILE_ID, "label", contactValue, null, NOW, NOW.plusSeconds(1))),
+                List.of(),
+                List.of(new ProfileSkill(UUID.randomUUID(), PROFILE_ID, skill, skill.toLowerCase(), "test", 0, NOW.plusSeconds(1))),
+                List.of(), List.of(), List.of(), List.of(), List.of()
+        );
+    }
+
+    private static void await(CyclicBarrier barrier) {
+        try {
+            barrier.await();
+        } catch (Exception exception) {
+            throw new IllegalStateException("Concurrency barrier failed", exception);
+        }
     }
 
     private static ProfileAggregate completeAggregate() {

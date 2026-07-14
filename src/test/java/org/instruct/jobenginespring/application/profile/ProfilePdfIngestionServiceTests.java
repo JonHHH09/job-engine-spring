@@ -205,31 +205,32 @@ class ProfilePdfIngestionServiceTests {
                 .thenReturn(storedExtraction());
         when(profileTextExtractor.extractProfile(any())).thenReturn(writeRequest);
         when(profileIdentityMatcher.findStrongMatch(writeRequest)).thenReturn(Optional.empty());
-        when(profileService.updateProfile(PROFILE_ID, writeRequest)).thenReturn(profileAggregate(PROFILE_ID));
+        when(profileService.updateProfile(PROFILE_ID, 0L, writeRequest)).thenReturn(profileAggregate(PROFILE_ID));
 
         ProfilePdfIngestionService.ProfilePdfIngestionResult result = service.ingestProfileFromStoredPdf(
-                new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, PROFILE_ID, true, null)
+                new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, PROFILE_ID, true, null, 0L)
         );
 
         assertEquals(PROFILE_ID, result.profileId());
         assertEquals(IngestionStatus.UPDATED_PROFILE, result.status());
         assertFalse(result.createdProfile());
         assertFalse(result.existingProfileLink());
-        verify(profileService).updateProfile(PROFILE_ID, writeRequest);
+        verify(profileService).updateProfile(PROFILE_ID, 0L, writeRequest);
     }
 
     @Test
-    void rejectsExistingProfileAlreadyLinkedToAnotherExtraction() {
+    void reusesExistingProfileLinkInsteadOfAttemptingAnotherMutation() {
         sourceRepository.save(new ProfilePdfSource(SOURCE_ID, PROFILE_ID, UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"), "resume_pdf", NOW));
         when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(DOCUMENT_ID, null, false, true)))
                 .thenReturn(storedExtraction());
 
-        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.ingestProfileFromStoredPdf(
+        ProfilePdfIngestionService.ProfilePdfIngestionResult result = service.ingestProfileFromStoredPdf(
                 new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, PROFILE_ID, true, null)
-        ));
+        );
 
-        assertEquals("validation_error", exception.errorCode().code());
-        verify(profileTextExtractor, never()).extractProfile(any());
+        assertEquals(IngestionStatus.REUSED_EXISTING_SOURCE, result.status());
+        assertTrue(result.existingProfileLink());
+        verify(profileService, never()).updateProfile(any(), any(), any());
     }
 
     @Test

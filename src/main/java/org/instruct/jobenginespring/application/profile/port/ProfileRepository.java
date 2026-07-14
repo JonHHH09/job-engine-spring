@@ -49,6 +49,12 @@ public interface ProfileRepository {
 
     ProfileAggregate saveProfileAggregate(ProfileAggregate aggregate);
 
+    default Optional<ProfileAggregate> replaceProfileAggregate(ProfileAggregate aggregate, long expectedRevision) {
+        return findProfileById(aggregate.profile().id())
+                .filter(existing -> existing.revision() == expectedRevision)
+                .map(ignored -> saveProfileAggregate(aggregate));
+    }
+
     boolean deleteProfile(UUID profileId);
 
     default List<ProfileIdentityCandidate> findIdentityCandidates(ProfileIdentitySearch search) {
