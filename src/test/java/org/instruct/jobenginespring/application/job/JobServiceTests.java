@@ -858,6 +858,33 @@ class JobServiceTests {
     }
 
     @Test
+    void updateJobMapsRevisionExhaustionToSanitizedConflict() {
+        JobAggregate created = service.addJobFromText(new AddJobFromTextRequest(
+                "Platform engineer", "manual", "Platform Engineer", "Example", "Remote",
+                null, List.of("Java"), null, null, null, null
+        )).job();
+        JobPosting job = created.job();
+        repository.aggregates.put(job.id(), new JobAggregate(
+                new JobPosting(job.id(), job.sourceMethod(), job.sourceLabel(), job.title(), job.company(), job.location(),
+                        job.description(), job.experienceRequirement(), job.employmentType(), job.seniority(), job.postedAt(),
+                        job.canonicalFingerprint(), job.createdAt(), job.updatedAt(), Long.MAX_VALUE),
+                created.skills(), created.linkIngestion(), created.textIngestion()
+        ));
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateJob(new UpdateJobRequest(
+                job.id(), Long.MAX_VALUE, null, "Overflow", null, null, null, null, null, null, null, null
+        )));
+
+        assertEquals("conflict", exception.errorCode().code());
+        assertEquals(Map.of(
+                "resource", "job",
+                "jobId", job.id().toString(),
+                "expectedRevision", Long.toString(Long.MAX_VALUE)
+        ), exception.details());
+        assertEquals(Long.MAX_VALUE, repository.findJobAggregate(job.id()).orElseThrow().job().revision());
+    }
+
+    @Test
     void deleteJobRemovesExistingJobAndReportsMissingJob() {
         AddJobResult created = service.addJobFromText(new AddJobFromTextRequest(
                 "Backend Developer",

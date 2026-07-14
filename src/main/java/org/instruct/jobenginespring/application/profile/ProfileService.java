@@ -94,7 +94,7 @@ public class ProfileService {
                 safeRequest,
                 existing.createdAt(),
                 clock.instant(),
-                existing.revision() + 1
+                nextRevision(existing.revision(), profileId, expectedRevision)
         );
         return profileRepository.replaceProfileAggregate(aggregate, expectedRevision)
                 .orElseThrow(() -> updateConflict(profileId, expectedRevision));
@@ -349,6 +349,14 @@ public class ProfileService {
                 ),
                 null
         );
+    }
+
+    private static long nextRevision(long revision, UUID profileId, long expectedRevision) {
+        try {
+            return Math.incrementExact(revision);
+        } catch (ArithmeticException exception) {
+            throw updateConflict(profileId, expectedRevision);
+        }
     }
 
     private static ApplicationException validation(String field, String reason) {

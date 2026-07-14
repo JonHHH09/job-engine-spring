@@ -30,9 +30,11 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -242,20 +244,36 @@ class PostgresProfileRepositoryIntegrationTests {
         ));
         ProfileAggregate first = replacement(original, "First winner", "first", "First Skill");
         ProfileAggregate second = replacement(original, "Second winner", "second", "Second Skill");
-        CyclicBarrier barrier = new CyclicBarrier(2);
+        CountDownLatch firstWriteReturned = new CountDownLatch(1);
+        CountDownLatch allowFirstCommit = new CountDownLatch(1);
+        CountDownLatch secondWriteStarted = new CountDownLatch(1);
+        AtomicInteger writeReturnOrder = new AtomicInteger();
         TransactionTemplate transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
 
         try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
             Future<Optional<ProfileAggregate>> firstResult = executor.submit(() -> transactions.execute(status -> {
-                await(barrier);
-                return repository.replaceProfileAggregate(first, 0);
+                jdbc.execute("SET LOCAL application_name = 'profile-cas-first'");
+                Optional<ProfileAggregate> result = repository.replaceProfileAggregate(first, 0);
+                assertEquals(1, writeReturnOrder.incrementAndGet());
+                firstWriteReturned.countDown();
+                await(allowFirstCommit);
+                return result;
             }));
+            await(firstWriteReturned);
             Future<Optional<ProfileAggregate>> secondResult = executor.submit(() -> transactions.execute(status -> {
-                await(barrier);
-                return repository.replaceProfileAggregate(second, 0);
+                jdbc.execute("SET LOCAL application_name = 'profile-cas-second'");
+                secondWriteStarted.countDown();
+                Optional<ProfileAggregate> result = repository.replaceProfileAggregate(second, 0);
+                assertEquals(2, writeReturnOrder.incrementAndGet());
+                return result;
             }));
+            await(secondWriteStarted);
+            awaitDatabaseLock("profile-cas-second");
+            assertFalse(secondResult.isDone());
+            allowFirstCommit.countDown();
 
-            assertEquals(1, List.of(firstResult.get(), secondResult.get()).stream().filter(Optional::isPresent).count());
+            assertTrue(firstResult.get().isPresent());
+            assertTrue(secondResult.get().isEmpty());
         }
 
         ProfileAggregate persisted = repository.findProfileAggregate(PROFILE_ID).orElseThrow();
@@ -356,12 +374,29 @@ class PostgresProfileRepositoryIntegrationTests {
         );
     }
 
-    private static void await(CyclicBarrier barrier) {
+    private static void await(CountDownLatch latch) {
         try {
-            barrier.await();
-        } catch (Exception exception) {
-            throw new IllegalStateException("Concurrency barrier failed", exception);
+            assertTrue(latch.await(10, TimeUnit.SECONDS), "Timed out waiting for concurrency boundary");
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Concurrency latch interrupted", exception);
         }
+    }
+
+    private static void awaitDatabaseLock(String applicationName) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            Integer waiting = jdbc.queryForObject("""
+                    SELECT count(*)
+                    FROM pg_stat_activity
+                    WHERE application_name = ? AND wait_event_type = 'Lock'
+                    """, Integer.class, applicationName);
+            if (waiting != null && waiting == 1) {
+                return;
+            }
+            Thread.onSpinWait();
+        }
+        throw new AssertionError("Timed out waiting for database lock: " + applicationName);
     }
 
     private static ProfileAggregate completeAggregate() {

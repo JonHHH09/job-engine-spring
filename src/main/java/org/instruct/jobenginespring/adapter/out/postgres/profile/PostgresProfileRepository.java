@@ -289,7 +289,7 @@ public class PostgresProfileRepository implements ProfileRepository {
                             SELECT profile_id, 'link:' || lower(btrim(link_type)) AS matched_on
                             FROM profile.profile_links
                             WHERE lower(btrim(link_type)) = :linkType
-                              AND lower(regexp_replace(split_part(split_part(btrim(url), '?', 1), '#', 1), '/+$', '')) = :url
+                              AND url = :url
                             ORDER BY updated_at DESC, profile_id
                             """)
                     .param("linkType", link.linkType().trim().toLowerCase(java.util.Locale.ROOT))

@@ -10,6 +10,8 @@ import org.instruct.jobenginespring.application.profile.ProfileService.ProjectTe
 import org.instruct.jobenginespring.application.profile.ProfileService.ProjectWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.SkillWriteRequest;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.List;
 import java.util.Locale;
 
@@ -49,7 +51,7 @@ final class ProfileWriteCanonicalizer {
                 .map(link -> new LinkWriteRequest(
                         link.id(),
                         lowerClean(link.linkType()),
-                        clean(link.url()),
+                        canonicalUrl(link.url()),
                         cleanToNull(link.label())
                 ))
                 .toList();
@@ -145,6 +147,39 @@ final class ProfileWriteCanonicalizer {
     private static String lowerClean(String value) {
         String cleaned = clean(value);
         return cleaned == null ? null : cleaned.toLowerCase(Locale.ROOT);
+    }
+
+    static String canonicalUrl(String rawUrl) {
+        if (rawUrl == null || rawUrl.isBlank()) {
+            return "";
+        }
+        String prepared = rawUrl.strip().replaceAll("[.,;]+$", "");
+        if (!prepared.regionMatches(true, 0, "http://", 0, 7)
+                && !prepared.regionMatches(true, 0, "https://", 0, 8)) {
+            prepared = "https://" + prepared;
+        }
+        try {
+            URI uri = new URI(prepared);
+            String host = uri.getHost();
+            if (host == null) {
+                return fallbackCanonicalUrl(prepared);
+            }
+            String path = uri.getRawPath().replaceAll("/+$", "");
+            int port = uri.getPort();
+            if (port == 80 || port == 443) {
+                port = -1;
+            }
+            return new URI("https", null, host, port, path, null, null).toString().toLowerCase(Locale.ROOT);
+        } catch (URISyntaxException exception) {
+            return fallbackCanonicalUrl(prepared);
+        }
+    }
+
+    private static String fallbackCanonicalUrl(String prepared) {
+        return prepared.replaceFirst("(?i)^http://", "https://")
+                .replaceAll("[?#].*$", "")
+                .replaceAll("/+$", "")
+                .toLowerCase(Locale.ROOT);
     }
 
     private static <T> List<T> nullSafe(List<T> values) {

@@ -9,6 +9,7 @@ import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
 import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
+import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository.LinkedPdfSource;
 import org.instruct.jobenginespring.application.profile.port.ProfileTextExtractor;
 import org.instruct.jobenginespring.application.profile.port.ProfileTextExtractor.ProfileTextExtractionInput;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -79,10 +80,10 @@ public class ProfilePdfIngestionService {
         String documentSha256 = storedExtraction.document().sha256();
         acquireLock("document:" + documentSha256);
 
-        return profilePdfSourceRepository.findByPdfExtractionId(extractionId)
-                .map(existing -> toResult(existing, storedExtraction, IngestionStatus.REUSED_EXISTING_SOURCE, false, true))
-                .or(() -> profilePdfSourceRepository.findByDocumentSha256(documentSha256)
-                        .map(existing -> toResult(existing, storedExtraction, IngestionStatus.REUSED_EXISTING_SOURCE, false, true)))
+        return profilePdfSourceRepository.findLinkedByPdfExtractionId(extractionId)
+                .map(ProfilePdfIngestionService::reusedResult)
+                .or(() -> profilePdfSourceRepository.findLinkedByDocumentSha256(documentSha256)
+                        .map(ProfilePdfIngestionService::reusedResult))
                 .orElseGet(() -> createOrUpdateLinkedProfile(safeRequest, storedExtraction, extractionId));
     }
 
@@ -112,9 +113,9 @@ public class ProfilePdfIngestionService {
                 .forEach(profilePdfSourceRepository::acquireIngestionLock);
         if (existingProfileId != null) {
             acquireLock("profile:" + existingProfileId);
-            ProfilePdfSource existingSource = profilePdfSourceRepository.findByProfileId(existingProfileId).orElse(null);
+            LinkedPdfSource existingSource = profilePdfSourceRepository.findLinkedByProfileId(existingProfileId).orElse(null);
             if (existingSource != null) {
-                return toResult(existingSource, storedExtraction, IngestionStatus.REUSED_EXISTING_SOURCE, false, true);
+                return alreadyLinkedResult(existingProfileId, storedExtraction);
             }
         }
 
@@ -160,7 +161,7 @@ public class ProfilePdfIngestionService {
     ) {
         return new ProfilePdfIngestionResult(
                 match.ambiguous() ? IngestionStatus.AMBIGUOUS_PROFILE_CANDIDATES : IngestionStatus.DUPLICATE_PROFILE_CANDIDATE,
-                match.profileId(),
+                null,
                 storedExtraction.document().id(),
                 storedExtraction.extractionId(),
                 null,
@@ -173,6 +174,48 @@ public class ProfilePdfIngestionService {
                 match.profileId(),
                 match.matchedOn(),
                 "rerun with existingProfileId and overwriteExistingProfile=true to replace"
+        );
+    }
+
+    private static ProfilePdfIngestionResult alreadyLinkedResult(
+            UUID existingProfileId,
+            StoredPdfTextExtractionResult storedExtraction
+    ) {
+        return new ProfilePdfIngestionResult(
+                IngestionStatus.DUPLICATE_PROFILE_CANDIDATE,
+                null,
+                storedExtraction.document().id(),
+                storedExtraction.extractionId(),
+                null,
+                storedExtraction.document().originalFileName(),
+                storedExtraction.extraction().pageCount(),
+                storedExtraction.extraction().characterCount(),
+                storedExtraction.extraction().truncated(),
+                false,
+                false,
+                existingProfileId,
+                List.of("profileId"),
+                "profile already has a linked PDF source; no mutation was performed"
+        );
+    }
+
+    private static ProfilePdfIngestionResult reusedResult(LinkedPdfSource linked) {
+        ProfilePdfSource source = linked.source();
+        return new ProfilePdfIngestionResult(
+                IngestionStatus.REUSED_EXISTING_SOURCE,
+                source.profileId(),
+                linked.documentId(),
+                source.pdfExtractionId(),
+                source.id(),
+                linked.originalFileName(),
+                linked.pageCount(),
+                linked.characterCount(),
+                linked.truncated(),
+                false,
+                true,
+                null,
+                List.of(),
+                null
         );
     }
 

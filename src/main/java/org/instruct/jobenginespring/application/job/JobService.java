@@ -119,7 +119,7 @@ public class JobService {
                 canonicalFingerprint,
                 current.createdAt(),
                 now,
-                current.revision() + 1
+                nextRevision(current.revision(), current.id(), safeRequest.expectedRevision())
         );
         List<JobSkill> updatedSkills = safeRequest.skills() == null ? existing.skills() : skills(current.id(), safeRequest.skills(), now);
         return jobRepository.updateJobAggregate(
@@ -731,6 +731,14 @@ public class JobService {
                 ),
                 null
         );
+    }
+
+    private static long nextRevision(long revision, UUID jobId, long expectedRevision) {
+        try {
+            return Math.incrementExact(revision);
+        } catch (ArithmeticException exception) {
+            throw updateConflict(jobId, expectedRevision);
+        }
     }
 
     private record DraftJob(

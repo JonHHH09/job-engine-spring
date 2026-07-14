@@ -251,6 +251,34 @@ class ProfileServiceTests {
     }
 
     @Test
+    void updateProfileMapsRevisionExhaustionToSanitizedConflict() {
+        ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", "Initial", null, null, null, null, null, null, null
+        ));
+        UserProfile profile = created.profile();
+        repository.saveProfileAggregate(new ProfileAggregate(
+                new UserProfile(profile.id(), profile.fullName(), profile.email(), profile.summary(),
+                        profile.rawResumeText(), profile.createdAt(), profile.updatedAt(), profile.embedding(), Long.MAX_VALUE),
+                created.contacts(), created.links(), created.skills(), created.languages(), created.education(),
+                created.experiences(), created.projects(), created.projectTechnologies()
+        ));
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateProfile(
+                profile.id(), Long.MAX_VALUE, new ProfileWriteRequest(
+                        "Agentic Dev", "agentic@example.com", "Overflow", null, null, null, null, null, null, null
+                )
+        ));
+
+        assertEquals("conflict", exception.errorCode().code());
+        assertEquals(Map.of(
+                "resource", "profile",
+                "profileId", profile.id().toString(),
+                "expectedRevision", Long.toString(Long.MAX_VALUE)
+        ), exception.details());
+        assertEquals(Long.MAX_VALUE, repository.findProfileById(profile.id()).orElseThrow().revision());
+    }
+
+    @Test
     void defaultProfileRepositoryReplacementRejectsStaleRevision() {
         ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
                 "Agentic Dev", "agentic@example.com", null, null, null, null, null, null, null, null

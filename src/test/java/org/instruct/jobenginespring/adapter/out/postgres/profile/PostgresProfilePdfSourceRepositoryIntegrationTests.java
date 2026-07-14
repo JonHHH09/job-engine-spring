@@ -88,6 +88,15 @@ class PostgresProfilePdfSourceRepositoryIntegrationTests {
         assertEquals(source, sourceRepository.findByProfileId(PROFILE_ID).orElseThrow());
         assertEquals(source, sourceRepository.findByPdfExtractionId(EXTRACTION_ID).orElseThrow());
         assertEquals(source, sourceRepository.findByDocumentSha256(SHA256).orElseThrow());
+        var linked = sourceRepository.findLinkedByProfileId(PROFILE_ID).orElseThrow();
+        assertEquals(source, linked.source());
+        assertEquals(FILE_ID, linked.documentId());
+        assertEquals("resume.pdf", linked.originalFileName());
+        assertEquals(1, linked.pageCount());
+        assertEquals(20, linked.characterCount());
+        assertFalse(linked.truncated());
+        assertEquals(linked, sourceRepository.findLinkedByPdfExtractionId(EXTRACTION_ID).orElseThrow());
+        assertEquals(linked, sourceRepository.findLinkedByDocumentSha256(SHA256).orElseThrow());
     }
 
     @Test
