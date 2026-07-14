@@ -10,6 +10,8 @@ import org.instruct.jobenginespring.application.job.JobService.JobSearchRequest;
 import org.instruct.jobenginespring.application.job.JobService.UpdateJobRequest;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -1137,9 +1139,17 @@ class JobServiceTests {
         }
 
         @Override
-        public List<JobAggregate> listJobAggregates() {
+        public Page<JobAggregate> listJobAggregates(PageRequest request) {
             listJobAggregatesCalls++;
-            return List.copyOf(aggregates.values());
+            return new Page<>(aggregates.values().stream().limit(request.limit()).toList(), null);
+        }
+
+        @Override
+        public org.instruct.jobenginespring.application.pagination.SearchCandidates<JobAggregate> searchJobCandidates(
+                List<String> queryTokens, int limit) {
+            listJobAggregatesCalls++;
+            return new org.instruct.jobenginespring.application.pagination.SearchCandidates<>(
+                    -1, List.copyOf(aggregates.values()));
         }
 
         @Override

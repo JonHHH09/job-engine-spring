@@ -82,6 +82,17 @@ class JobMcpAdapterTests {
     }
 
     @Test
+    void listJobsTreatsNullRequestAsLegacyDefaultPage() {
+        when(jobService.listJobs(null, null)).thenReturn(new Page<>(List.of(samplePosting()), null));
+
+        CallToolResult result = adapter.listJobs(null);
+
+        assertFalse(result.isError());
+        assertEquals(1, assertInstanceOf(JobMcpAdapter.ListJobsResult.class, result.structuredContent()).jobs().size());
+        verify(jobService).listJobs(null, null);
+    }
+
+    @Test
     void getJobReturnsExistingAggregateAndSanitizedMissingError() {
         JobAggregate aggregate = sampleAggregate();
         when(jobService.getJob(JOB_ID)).thenReturn(Optional.of(aggregate));

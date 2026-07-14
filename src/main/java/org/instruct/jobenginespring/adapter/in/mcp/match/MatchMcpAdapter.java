@@ -25,9 +25,9 @@ public class MatchMcpAdapter {
     public CallToolResult analyze(@McpToolParam(required=true,description="Profile and job IDs") AnalyzeRequest request) {
         return call(() -> service.analyze(require(request).profileId(), request.jobId()));
     }
-    @McpTool(name="analyze_all_job_matches", description="Analyze one profile against all jobs; pair failures are returned explicitly without stopping the batch.")
-    public CallToolResult analyzeAll(@McpToolParam(required=true,description="Profile ID") ProfileRequest request) {
-        return call(() -> service.analyzeAll(require(request).profileId()));
+    @McpTool(name="analyze_all_job_matches", description="Analyze one bounded page of jobs for a profile; pair failures do not stop the page.")
+    public CallToolResult analyzeAll(@McpToolParam(required=true,description="Profile ID and optional page") ProfileRequest request) {
+        return call(() -> { var r=require(request); return service.analyzeAll(r.profileId(),r.limit(),r.cursor()); });
     }
     @McpTool(name="get_match_report", description="Get one deterministic report with current source-revision staleness.")
     public CallToolResult getReport(@McpToolParam(required=true,description="Report ID") IdRequest request) { return call(() -> service.getReport(require(request).id())); }
@@ -51,10 +51,10 @@ public class MatchMcpAdapter {
     }
     @McpTool(name="get_match_review", description="Get one advisory review.")
     public CallToolResult getReview(@McpToolParam(required=true,description="Review ID") IdRequest request){return call(() -> service.getReview(require(request).id()));}
-    @McpTool(name="list_match_reviews", description="List advisory reviews for a report.")
-    public CallToolResult listReviews(@McpToolParam(required=true,description="Report ID") ReportRequest request){return call(() -> new Reviews(service.listReviews(require(request).reportId())));}
-    @McpTool(name="list_match_disagreements", description="List divergence records, optionally filtered by report.")
-    public CallToolResult listDisagreements(@McpToolParam(required=true,description="Optional report filter") DisagreementFilter request){return call(() -> new Disagreements(service.listDisagreements(require(request).reportId())));}
+    @McpTool(name="list_match_reviews", description="List a bounded page of advisory reviews, optionally filtered by report.")
+    public CallToolResult listReviews(@McpToolParam(required=true,description="Optional report filter and page") ReviewFilter request){return call(() -> {var r=require(request);var page=service.listReviews(r.reportId(),r.limit(),r.cursor());return new Reviews(page.items(),page.nextCursor());});}
+    @McpTool(name="list_match_disagreements", description="List a bounded page of divergence records, optionally filtered by report.")
+    public CallToolResult listDisagreements(@McpToolParam(required=true,description="Optional report filter and page") DisagreementFilter request){return call(() -> {var r=require(request);var page=service.listDisagreements(r.reportId(),r.limit(),r.cursor());return new Disagreements(page.items(),page.nextCursor());});}
     @McpTool(name="acknowledge_match_disagreement", description="Acknowledge a match disagreement without contacting an external provider.")
     public CallToolResult acknowledge(@McpToolParam(required=true,description="Disagreement ID and optional existing Linear issue ID") AcknowledgeRequest request){return call(() -> {var r=require(request);return service.acknowledgeDisagreement(r.disagreementId(),r.linearIssueId());});}
     @McpTool(name="link_match_disagreement", description="Link a match disagreement to an existing Linear issue without contacting an external provider.")
@@ -63,13 +63,32 @@ public class MatchMcpAdapter {
     private CallToolResult call(Supplier<Object> operation){try{return CallToolResult.builder().isError(false).structuredContent(operation.get()).build();}
         catch(Exception e){return CallToolResult.builder().isError(true).structuredContent(errors.toErrorResponse(e)).build();}}
     private static <T>T require(T value){if(value==null)throw new IllegalArgumentException("request must not be null");return value;}
-    public record AnalyzeRequest(UUID profileId,UUID jobId){} public record ProfileRequest(UUID profileId){} public record IdRequest(UUID id){}
-    public record ReportRequest(UUID reportId){} public record ReportFilter(UUID profileId,UUID jobId,Integer limit,String cursor){} public record DisagreementFilter(UUID reportId){}
+    public record AnalyzeRequest(UUID profileId,UUID jobId){}
+    public record ProfileRequest(
+            @McpToolParam(required=true,description="Profile UUID") UUID profileId,
+            @McpToolParam(required=false,description="Maximum page size, 1-100") Integer limit,
+            @McpToolParam(required=false,description="Opaque cursor returned by the previous page") String cursor){
+        public ProfileRequest(UUID profileId){this(profileId,null,null);}
+    }
+    public record IdRequest(UUID id){}
+    public record ReportFilter(UUID profileId,UUID jobId,Integer limit,String cursor){}
+    public record ReviewFilter(
+            @McpToolParam(required=false,description="Optional report UUID filter") UUID reportId,
+            @McpToolParam(required=false,description="Maximum page size, 1-100") Integer limit,
+            @McpToolParam(required=false,description="Opaque cursor returned by the previous page") String cursor){
+        public ReviewFilter(UUID reportId){this(reportId,null,null);}
+    }
+    public record DisagreementFilter(
+            @McpToolParam(required=false,description="Optional report UUID filter") UUID reportId,
+            @McpToolParam(required=false,description="Maximum page size, 1-100") Integer limit,
+            @McpToolParam(required=false,description="Opaque cursor returned by the previous page") String cursor){
+        public DisagreementFilter(UUID reportId){this(reportId,null,null);}
+    }
     public record AcknowledgeRequest(UUID disagreementId,String linearIssueId){}
     public record LinkRequest(UUID disagreementId,String linearIssueId){}
     public record ReviewRequest(UUID reportId,String reviewer,String model,String reviewVersion,Integer overallScore,MatchOutcome outcome,
                                 Boolean blockerMismatch,List<ComponentScore> components,List<MatchEvidence> evidence,String summary){}
     public record Reports(List<MatchAnalysisService.ReportView> reports,String nextCursor){public Reports{reports=List.copyOf(reports);}}
-    public record Reviews(List<MatchReview> reviews){public Reviews{reviews=List.copyOf(reviews);}}
-    public record Disagreements(List<MatchDisagreement> disagreements){public Disagreements{disagreements=List.copyOf(disagreements);}}
+    public record Reviews(List<MatchReview> reviews,String nextCursor){public Reviews{reviews=List.copyOf(reviews);}}
+    public record Disagreements(List<MatchDisagreement> disagreements,String nextCursor){public Disagreements{disagreements=List.copyOf(disagreements);}}
 }

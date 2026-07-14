@@ -65,13 +65,6 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
                 WHERE report.id = :id
                 """).param("id", id).query(this::reportWithRevisions).optional();
     }
-    @Override public List<MatchReport> listReports(UUID profileId, UUID jobId) {
-        return jdbc.sql("""
-                SELECT * FROM match.reports WHERE (CAST(:profileId AS uuid) IS NULL OR profile_id=:profileId)
-                AND (CAST(:jobId AS uuid) IS NULL OR job_id=:jobId) ORDER BY created_at DESC,id
-                """)
-                .param("profileId",profileId).param("jobId",jobId).query(this::report).list();
-    }
     @Override public Page<ReportWithRevisions> listReports(UUID profileId, UUID jobId, PageRequest request) {
         var rows = jdbc.sql("""
                 WITH bounds AS (
@@ -122,7 +115,36 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
                 .param("fingerprint", r.fingerprint()).query(this::review).single();
     }
     @Override public Optional<MatchReview> findReview(UUID id) { return jdbc.sql("SELECT * FROM match.reviews WHERE id=:id").param("id",id).query(this::review).optional(); }
-    @Override public List<MatchReview> listReviews(UUID reportId) { return jdbc.sql("SELECT * FROM match.reviews WHERE report_id=:id ORDER BY created_at DESC,id").param("id",reportId).query(this::review).list(); }
+    @Override public Page<MatchReview> listReviews(UUID reportId, PageRequest request) {
+        var rows = jdbc.sql("""
+                WITH bounds AS (
+                    SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+                )
+                SELECT review.*, bounds.snapshot_at
+                FROM match.reviews review
+                CROSS JOIN bounds
+                WHERE (CAST(:reportId AS uuid) IS NULL OR review.report_id = :reportId)
+                  AND review.created_at <= bounds.snapshot_at
+                  AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL OR review.created_at < :cursorCreatedAt
+                       OR (review.created_at = :cursorCreatedAt AND review.id > :cursorId))
+                ORDER BY review.created_at DESC, review.id
+                LIMIT :fetchLimit
+                """)
+                .param("reportId", reportId)
+                .param("snapshotAt", timestamp(request.cursor() == null ? null : request.cursor().snapshotAt()))
+                .param("cursorCreatedAt", timestamp(request.cursor() == null ? null : request.cursor().createdAt()))
+                .param("cursorId", request.cursor() == null ? null : request.cursor().id())
+                .param("fetchLimit", request.limit() + 1)
+                .query((resultSet, rowNumber) -> new ReviewPageRow(
+                        review(resultSet, rowNumber), instant(resultSet, "snapshot_at")))
+                .list();
+        boolean hasMore = rows.size() > request.limit();
+        var pageRows = rows.stream().limit(request.limit()).toList();
+        var items = pageRows.stream().map(ReviewPageRow::value).toList();
+        var last = hasMore ? pageRows.getLast() : null;
+        return new Page<>(items, last == null ? null
+                : request.nextCursor(last.snapshotAt(), last.value().createdAt(), last.value().id()));
+    }
     @Override public MatchDisagreement saveDisagreement(MatchDisagreement d) {
         jdbc.sql("""
                 INSERT INTO match.disagreements (id,fingerprint,report_id,review_id,policy_version,reasons,evidence_defect_codes,
@@ -139,9 +161,35 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
     @Override public Optional<MatchDisagreement> findDisagreement(UUID id) {
         return jdbc.sql("SELECT * FROM match.disagreements WHERE id=:id").param("id", id).query(this::disagreement).optional();
     }
-    @Override public List<MatchDisagreement> listDisagreements(UUID reportId) {
-        return jdbc.sql("SELECT * FROM match.disagreements WHERE (CAST(:id AS uuid) IS NULL OR report_id=:id) ORDER BY created_at DESC,id")
-                .param("id",reportId).query(this::disagreement).list();
+    @Override public Page<MatchDisagreement> listDisagreements(UUID reportId, PageRequest request) {
+        var rows = jdbc.sql("""
+                WITH bounds AS (
+                    SELECT COALESCE(CAST(:snapshotAt AS timestamptz), CURRENT_TIMESTAMP) AS snapshot_at
+                )
+                SELECT disagreement.*, bounds.snapshot_at
+                FROM match.disagreements disagreement
+                CROSS JOIN bounds
+                WHERE (CAST(:reportId AS uuid) IS NULL OR disagreement.report_id = :reportId)
+                  AND disagreement.created_at <= bounds.snapshot_at
+                  AND (CAST(:cursorCreatedAt AS timestamptz) IS NULL OR disagreement.created_at < :cursorCreatedAt
+                       OR (disagreement.created_at = :cursorCreatedAt AND disagreement.id > :cursorId))
+                ORDER BY disagreement.created_at DESC, disagreement.id
+                LIMIT :fetchLimit
+                """)
+                .param("reportId", reportId)
+                .param("snapshotAt", timestamp(request.cursor() == null ? null : request.cursor().snapshotAt()))
+                .param("cursorCreatedAt", timestamp(request.cursor() == null ? null : request.cursor().createdAt()))
+                .param("cursorId", request.cursor() == null ? null : request.cursor().id())
+                .param("fetchLimit", request.limit() + 1)
+                .query((resultSet, rowNumber) -> new DisagreementPageRow(
+                        disagreement(resultSet, rowNumber), instant(resultSet, "snapshot_at")))
+                .list();
+        boolean hasMore = rows.size() > request.limit();
+        var pageRows = rows.stream().limit(request.limit()).toList();
+        var items = pageRows.stream().map(DisagreementPageRow::value).toList();
+        var last = hasMore ? pageRows.getLast() : null;
+        return new Page<>(items, last == null ? null
+                : request.nextCursor(last.snapshotAt(), last.value().createdAt(), last.value().id()));
     }
     @Override public MatchDisagreement updateDisagreement(MatchDisagreement d) {
         var updated = jdbc.sql("UPDATE match.disagreements SET status=:status,linear_issue_id=:issue,updated_at=:updatedAt WHERE id=:id")
@@ -170,4 +218,6 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
     }
     private static Timestamp timestamp(Instant instant) { return instant == null ? null : Timestamp.from(instant); }
     private record ReportPageRow(ReportWithRevisions value, Instant snapshotAt) {}
+    private record ReviewPageRow(MatchReview value, Instant snapshotAt) {}
+    private record DisagreementPageRow(MatchDisagreement value, Instant snapshotAt) {}
 }

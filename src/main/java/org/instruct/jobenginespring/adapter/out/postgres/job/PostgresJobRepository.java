@@ -93,9 +93,9 @@ public class PostgresJobRepository implements JobRepository {
     }
 
     @Override
-    public List<JobAggregate> listJobAggregates() {
-        List<JobPosting> jobs = listJobs();
-        return aggregatesForJobs(jobs);
+    public Page<JobAggregate> listJobAggregates(PageRequest request) {
+        var page = listJobs(request);
+        return new Page<>(aggregatesForJobs(page.items()), page.nextCursor());
     }
 
     @Override

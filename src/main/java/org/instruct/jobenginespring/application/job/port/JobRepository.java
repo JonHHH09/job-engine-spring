@@ -19,12 +19,14 @@ public interface JobRepository {
         return new Page<>(jobs, null);
     }
 
-    List<JobAggregate> listJobAggregates();
+    Page<JobAggregate> listJobAggregates(PageRequest request);
 
-    default SearchCandidates<JobAggregate> searchJobCandidates(List<String> queryTokens, int limit) {
-        var aggregates = listJobAggregates();
-        return new SearchCandidates<>(-1, aggregates);
+    @Deprecated(forRemoval = false)
+    default List<JobAggregate> listJobAggregates() {
+        return listJobAggregates(PageRequest.of(null, null, "job-aggregates", "all")).items();
     }
+
+    SearchCandidates<JobAggregate> searchJobCandidates(List<String> queryTokens, int limit);
 
     Optional<JobAggregate> findJobAggregate(UUID jobId);
 

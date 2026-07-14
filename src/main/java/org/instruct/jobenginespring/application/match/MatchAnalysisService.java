@@ -55,18 +55,23 @@ public class MatchAnalysisService {
                 requireId(profileId, "profileId"), requireId(jobId, "jobId")), false);
     }
 
-    public BatchResult analyzeAll(UUID profileId) {
+    public BatchResult analyzeAll(UUID profileId, Integer limit, String cursor) {
         var requiredProfileId = requireId(profileId, "profileId");
         var profile = profiles.findProfileAggregate(requiredProfileId)
                 .orElseThrow(() -> new IllegalArgumentException("profile not found: " + profileId));
+        var jobsPage = jobs.listJobAggregates(PageRequest.of(limit, cursor, "analyze-all-job-matches",
+                "profile=" + requiredProfileId));
         var succeeded = new ArrayList<ReportView>();
         var failed = new ArrayList<PairFailure>();
-        for (var job : jobs.listJobAggregates()) {
+        for (var job : jobsPage.items()) {
             try { succeeded.add(new ReportView(pairAnalyzer.analyze(profile, job), false)); }
             catch (RuntimeException exception) { failed.add(new PairFailure(profileId, job.job().id(), "analysis failed")); }
         }
-        return new BatchResult(succeeded, failed);
+        return new BatchResult(succeeded, failed, jobsPage.nextCursor());
     }
+
+    @Deprecated(forRemoval = false)
+    public BatchResult analyzeAll(UUID profileId) { return analyzeAll(profileId, null, null); }
 
     public ReportView getReport(UUID reportId) {
         var report = matches.findReportWithRevisions(requireId(reportId, "reportId"))
@@ -114,8 +119,19 @@ public class MatchAnalysisService {
 
     public MatchReview getReview(UUID reviewId) { return matches.findReview(requireId(reviewId, "reviewId"))
             .orElseThrow(() -> new IllegalArgumentException("match review not found: " + reviewId)); }
-    public List<MatchReview> listReviews(UUID reportId) { return matches.listReviews(requireId(reportId, "reportId")); }
-    public List<MatchDisagreement> listDisagreements(UUID reportId) { return matches.listDisagreements(reportId); }
+    public Page<MatchReview> listReviews(UUID reportId, Integer limit, String cursor) {
+        return matches.listReviews(reportId, PageRequest.of(limit, cursor, "match-reviews", "report=" + reportId));
+    }
+    @Deprecated(forRemoval = false)
+    public List<MatchReview> listReviews(UUID reportId) { return listReviews(reportId, null, null).items(); }
+    public Page<MatchDisagreement> listDisagreements(UUID reportId, Integer limit, String cursor) {
+        return matches.listDisagreements(reportId,
+                PageRequest.of(limit, cursor, "match-disagreements", "report=" + reportId));
+    }
+    @Deprecated(forRemoval = false)
+    public List<MatchDisagreement> listDisagreements(UUID reportId) {
+        return listDisagreements(reportId, null, null).items();
+    }
 
     @Transactional
     public MatchDisagreement acknowledgeDisagreement(UUID id, String linearIssueId) {
@@ -153,8 +169,9 @@ public class MatchAnalysisService {
     private static UUID requireId(UUID id, String field) { return Objects.requireNonNull(id, field + " must not be null"); }
     public record ReportView(MatchReport report, boolean stale) { public ReportView { Objects.requireNonNull(report); } }
     public record PairFailure(UUID profileId, UUID jobId, String error) {}
-    public record BatchResult(List<ReportView> succeeded, List<PairFailure> failed) {
+    public record BatchResult(List<ReportView> succeeded, List<PairFailure> failed, String nextCursor) {
         public BatchResult { succeeded = List.copyOf(succeeded); failed = List.copyOf(failed); }
+        public BatchResult(List<ReportView> succeeded, List<PairFailure> failed) { this(succeeded, failed, null); }
     }
     public record ReviewResult(MatchReview review, MatchDisagreement disagreement) {}
     public record ReviewDraft(UUID reportId, String reviewer, String model, String reviewVersion, int overallScore,

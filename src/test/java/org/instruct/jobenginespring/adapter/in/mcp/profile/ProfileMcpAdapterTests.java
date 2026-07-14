@@ -93,6 +93,18 @@ class ProfileMcpAdapterTests {
     }
 
     @Test
+    void listProfilesTreatsNullRequestAsLegacyDefaultPage() {
+        when(profileService.listProfiles(null, null)).thenReturn(new Page<>(List.of(sampleProfile()), null));
+
+        CallToolResult result = adapter.listProfiles(null);
+
+        assertFalse(result.isError());
+        assertEquals(1, assertInstanceOf(ProfileMcpAdapter.ListProfilesResult.class,
+                result.structuredContent()).profiles().size());
+        verify(profileService).listProfiles(null, null);
+    }
+
+    @Test
     void getProfileToolReturnsExistingAggregate() {
         ProfileAggregate aggregate = sampleAggregate();
         when(profileService.getProfile(PROFILE_ID)).thenReturn(Optional.of(aggregate));

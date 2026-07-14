@@ -208,6 +208,116 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
         assertNull(thirdPage.nextCursor());
     }
 
+    @Test void reviewAndDisagreementPagesAreBoundedAndCursorsRejectChangedFilters() {
+        var report = repository.saveReport(report());
+        for (int index = 0; index < 25; index++) {
+            repository.saveReview(reviewAt(report.id(), "reviewer-" + index, NOW.plusSeconds(index)));
+        }
+        dataSource.reset();
+
+        var reviews = repository.listReviews(report.id(),
+                PageRequest.of(5, null, "match-reviews", "report=" + report.id()));
+
+        assertEquals(5, reviews.items().size());
+        assertNotNull(reviews.nextCursor());
+        assertEquals(1, dataSource.statementExecutions());
+        assertEquals(6, dataSource.rowsRead());
+        assertThrows(RuntimeException.class, () -> PageRequest.of(5, reviews.nextCursor(),
+                "match-reviews", "report=" + UUID.randomUUID()));
+
+        var firstReview = reviews.items().getFirst();
+        repository.saveDisagreement(disagreementAt(report.id(), firstReview.id(),
+                Set.of(DisagreementReason.OVERALL_DELTA), NOW.plusSeconds(1)));
+        repository.saveDisagreement(disagreementAt(report.id(), reviews.items().get(1).id(),
+                Set.of(DisagreementReason.OUTCOME_MISMATCH), NOW.plusSeconds(2)));
+        repository.saveDisagreement(disagreementAt(report.id(), reviews.items().get(2).id(),
+                Set.of(DisagreementReason.BLOCKER_MISMATCH), NOW.plusSeconds(3)));
+        dataSource.reset();
+
+        var disagreements = repository.listDisagreements(null,
+                PageRequest.of(2, null, "match-disagreements", "report=null"));
+
+        assertEquals(2, disagreements.items().size());
+        assertNotNull(disagreements.nextCursor());
+        assertEquals(1, dataSource.statementExecutions());
+        assertEquals(3, dataSource.rowsRead());
+        assertThrows(RuntimeException.class, () -> PageRequest.of(2, disagreements.nextCursor(),
+                "match-disagreements", "report=" + report.id()));
+    }
+
+    @Test void historyCursorsSurviveDeletionMutationAndPostSnapshotInserts() {
+        var report = repository.saveReport(report());
+        var oldestReview = repository.saveReview(reviewAt(report.id(), "oldest", NOW.plusSeconds(1)));
+        var middleReview = repository.saveReview(reviewAt(report.id(), "middle", NOW.plusSeconds(2)));
+        var newestReview = repository.saveReview(reviewAt(report.id(), "newest", NOW.plusSeconds(3)));
+        var reviewRequest = PageRequest.of(1, null, "match-reviews", "report=" + report.id());
+        var firstReviews = repository.listReviews(report.id(), reviewRequest);
+        var reviewCursor = PageRequest.of(1, firstReviews.nextCursor(), "match-reviews", "report=" + report.id());
+
+        jdbc.update("DELETE FROM match.reviews WHERE id=?", newestReview.id());
+        var postSnapshotReview = repository.saveReview(reviewAt(report.id(), "post-snapshot-review",
+                reviewCursor.cursor().snapshotAt().plusSeconds(1)));
+
+        var secondReviews = repository.listReviews(report.id(), reviewCursor);
+        var thirdReviews = repository.listReviews(report.id(), PageRequest.of(1, secondReviews.nextCursor(),
+                "match-reviews", "report=" + report.id()));
+        assertEquals(middleReview.id(), secondReviews.items().getFirst().id());
+        assertEquals(oldestReview.id(), thirdReviews.items().getFirst().id());
+        assertNull(thirdReviews.nextCursor());
+
+        var oldestDisagreement = repository.saveDisagreement(disagreementAt(report.id(), oldestReview.id(),
+                Set.of(DisagreementReason.OVERALL_DELTA), NOW.plusSeconds(1)));
+        var middleDisagreement = repository.saveDisagreement(disagreementAt(report.id(), middleReview.id(),
+                Set.of(DisagreementReason.OUTCOME_MISMATCH), NOW.plusSeconds(2)));
+        var newestDisagreement = repository.saveDisagreement(disagreementAt(report.id(), postSnapshotReview.id(),
+                Set.of(DisagreementReason.BLOCKER_MISMATCH), NOW.plusSeconds(3)));
+        var disagreementRequest = PageRequest.of(1, null, "match-disagreements", "report=" + report.id());
+        var firstDisagreements = repository.listDisagreements(report.id(), disagreementRequest);
+        var disagreementCursor = PageRequest.of(1, firstDisagreements.nextCursor(), "match-disagreements",
+                "report=" + report.id());
+
+        jdbc.update("DELETE FROM match.disagreements WHERE id=?", newestDisagreement.id());
+        repository.updateDisagreement(new MatchDisagreement(middleDisagreement.id(), report.id(), middleReview.id(),
+                middleDisagreement.policyVersion(), middleDisagreement.reasons(), middleDisagreement.evidenceDefectCodes(),
+                DisagreementStatus.ACKNOWLEDGED, null, middleDisagreement.createdAt(), NOW.plusSeconds(20)));
+        repository.saveDisagreement(disagreementAt(report.id(), postSnapshotReview.id(),
+                Set.of(DisagreementReason.EVIDENCE_DEFECT), disagreementCursor.cursor().snapshotAt().plusSeconds(1)));
+
+        var secondDisagreements = repository.listDisagreements(report.id(), disagreementCursor);
+        var thirdDisagreements = repository.listDisagreements(report.id(), PageRequest.of(1,
+                secondDisagreements.nextCursor(), "match-disagreements", "report=" + report.id()));
+        assertEquals(middleDisagreement.id(), secondDisagreements.items().getFirst().id());
+        assertEquals(DisagreementStatus.ACKNOWLEDGED, secondDisagreements.items().getFirst().status());
+        assertEquals(oldestDisagreement.id(), thirdDisagreements.items().getFirst().id());
+        assertNull(thirdDisagreements.nextCursor());
+    }
+
+    @Test void matchHistoryKeysetIndexesBackFilteredAndUnfilteredPlans() {
+        var indexNames = jdbc.queryForList("""
+                SELECT indexname FROM pg_indexes
+                WHERE schemaname = 'match' AND indexname IN (
+                    'reviews_list_created_id_idx', 'reviews_report_created_id_idx',
+                    'disagreements_list_created_id_idx', 'disagreements_report_created_id_idx')
+                ORDER BY indexname
+                """, String.class);
+        assertEquals(List.of("disagreements_list_created_id_idx", "disagreements_report_created_id_idx",
+                "reviews_list_created_id_idx", "reviews_report_created_id_idx"), indexNames);
+
+        jdbc.execute("SET enable_seqscan = off");
+        try {
+            assertPlanUses("EXPLAIN SELECT * FROM match.reviews ORDER BY created_at DESC,id LIMIT 5",
+                    "reviews_list_created_id_idx");
+            assertPlanUses("EXPLAIN SELECT * FROM match.reviews WHERE report_id='" + UUID.randomUUID()
+                    + "' ORDER BY created_at DESC,id LIMIT 5", "reviews_report_created_id_idx");
+            assertPlanUses("EXPLAIN SELECT * FROM match.disagreements ORDER BY created_at DESC,id LIMIT 5",
+                    "disagreements_list_created_id_idx");
+            assertPlanUses("EXPLAIN SELECT * FROM match.disagreements WHERE report_id='" + UUID.randomUUID()
+                    + "' ORDER BY created_at DESC,id LIMIT 5", "disagreements_report_created_id_idx");
+        } finally {
+            jdbc.execute("RESET enable_seqscan");
+        }
+    }
+
     @Test void joinedRevisionMapperHandlesMissingCurrentRows() throws Exception {
         var resultSet = mock(ResultSet.class);
         var method = PostgresMatchAnalysisRepository.class.getDeclaredMethod(
@@ -249,10 +359,26 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
                         new MatchEvidence(MatchComponent.DELIVERY, EvidenceStatus.PARTIAL, "experience_fact", "delivered systems", false)),
                 "score_adjustment", NOW);
     }
+    private static MatchReview reviewAt(UUID reportId, String reviewer, Instant createdAt) {
+        var value = review(reportId);
+        return new MatchReview(UUID.randomUUID(), reportId, reviewer, value.model(), value.reviewVersion(),
+                value.overallScore(), value.outcome(), value.blockerMismatch(), value.components(), value.evidence(),
+                value.summary(), createdAt);
+    }
     private static MatchDisagreement disagreement(UUID reportId, UUID reviewId) {
         var value = new MatchDisagreement(UUID.randomUUID(), reportId, reviewId, "divergence-v1",
                 Set.of(DisagreementReason.OVERALL_DELTA), List.of(), DisagreementStatus.PENDING_ESCALATION, null, NOW, NOW);
         return new MatchDisagreement(value.fingerprint(), reportId, reviewId, value.policyVersion(), value.reasons(),
                 value.evidenceDefectCodes(), value.status(), null, NOW, NOW);
+    }
+    private static MatchDisagreement disagreementAt(UUID reportId, UUID reviewId,
+                                                     Set<DisagreementReason> reasons, Instant createdAt) {
+        var id = MatchDisagreement.fingerprint(reportId, "divergence-v1", reasons, List.of());
+        return new MatchDisagreement(id, reportId, reviewId, "divergence-v1", reasons, List.of(),
+                DisagreementStatus.PENDING_ESCALATION, null, createdAt, createdAt);
+    }
+    private static void assertPlanUses(String sql, String indexName) {
+        var plan = String.join("\n", jdbc.queryForList(sql, String.class));
+        assertTrue(plan.contains(indexName), plan);
     }
 }
