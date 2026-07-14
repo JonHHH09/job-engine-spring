@@ -1,6 +1,9 @@
 package org.instruct.jobenginespring.adapter.out.postgres.job;
 
 import org.instruct.jobenginespring.application.job.port.JobRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.application.pagination.SearchCandidates;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -53,9 +56,93 @@ public class PostgresJobRepository implements JobRepository {
     }
 
     @Override
+    public Page<JobPosting> listJobs(PageRequest request) {
+        var rows = jdbc.sql("""
+                        WITH anchor AS (
+                            SELECT COALESCE(posted_at, '-infinity'::timestamptz) AS posted_at,
+                                   created_at, title, id
+                            FROM job_schema.jobs
+                            WHERE id = :cursor
+                        )
+                        SELECT job.id, job.source_method, job.source_label, job.title, job.company, job.location,
+                               job.description, job.experience_requirement, job.employment_type, job.seniority,
+                               job.posted_at, job.canonical_fingerprint, job.created_at, job.updated_at
+                        FROM job_schema.jobs job
+                        LEFT JOIN anchor ON true
+                        WHERE CAST(:cursor AS uuid) IS NULL
+                           OR COALESCE(job.posted_at, '-infinity'::timestamptz) < anchor.posted_at
+                           OR (COALESCE(job.posted_at, '-infinity'::timestamptz) = anchor.posted_at
+                               AND job.created_at < anchor.created_at)
+                           OR (COALESCE(job.posted_at, '-infinity'::timestamptz) = anchor.posted_at
+                               AND job.created_at = anchor.created_at AND job.title > anchor.title)
+                           OR (COALESCE(job.posted_at, '-infinity'::timestamptz) = anchor.posted_at
+                               AND job.created_at = anchor.created_at AND job.title = anchor.title AND job.id > anchor.id)
+                        ORDER BY job.posted_at DESC NULLS LAST, job.created_at DESC, job.title, job.id
+                        LIMIT :fetchLimit
+                        """)
+                .param("cursor", request.cursor())
+                .param("fetchLimit", request.limit() + 1)
+                .query(this::mapJob)
+                .list();
+        boolean hasMore = rows.size() > request.limit();
+        var items = rows.stream().limit(request.limit()).toList();
+        return new Page<>(items, hasMore ? items.getLast().id() : null);
+    }
+
+    @Override
     public List<JobAggregate> listJobAggregates() {
         List<JobPosting> jobs = listJobs();
         return aggregatesForJobs(jobs);
+    }
+
+    @Override
+    public SearchCandidates<JobAggregate> searchJobCandidates(List<String> queryTokens, int limit) {
+        var ranked = namedJdbc.query("""
+                        WITH query_tokens AS (
+                            SELECT token FROM unnest(CAST(:queryTokens AS text[])) AS token
+                        ), field_values AS (
+                            SELECT id AS job_id, title AS value, 8 AS weight FROM job_schema.jobs
+                            UNION ALL SELECT id, company, 5 FROM job_schema.jobs
+                            UNION ALL SELECT id, location, 3 FROM job_schema.jobs
+                            UNION ALL SELECT id, description, 3 FROM job_schema.jobs
+                            UNION ALL SELECT id, experience_requirement, 4 FROM job_schema.jobs
+                            UNION ALL SELECT id, employment_type, 2 FROM job_schema.jobs
+                            UNION ALL SELECT id, seniority, 2 FROM job_schema.jobs
+                            UNION ALL SELECT job_id, skill, 7 FROM job_schema.job_skills
+                        ), scored AS (
+                            SELECT job_id, SUM(weight * (
+                                SELECT COUNT(*) FROM query_tokens query_token
+                                WHERE EXISTS (
+                                    SELECT 1
+                                    FROM regexp_split_to_table(lower(COALESCE(value, '')), '[^a-z0-9+#.]+') text_token
+                                    WHERE text_token <> '' AND (
+                                        text_token = query_token.token
+                                        OR starts_with(text_token, query_token.token)
+                                        OR starts_with(query_token.token, text_token)
+                                    )
+                                )
+                            ))::integer AS score
+                            FROM field_values
+                            GROUP BY job_id
+                        ), matching AS (
+                            SELECT job.*, scored.score, COUNT(*) OVER () AS total_matches
+                            FROM scored
+                            JOIN job_schema.jobs job ON job.id = scored.job_id
+                            WHERE scored.score > 0
+                            ORDER BY scored.score DESC, job.title, job.id
+                            LIMIT :limit
+                        )
+                        SELECT * FROM matching ORDER BY score DESC, title, id
+                        """, new MapSqlParameterSource()
+                        .addValue("queryTokens", queryTokens.toArray(String[]::new))
+                        .addValue("limit", limit),
+                (resultSet, rowNumber) -> new RankedJob(
+                        mapJob(resultSet, rowNumber), resultSet.getInt("total_matches")));
+        if (ranked.isEmpty()) {
+            return new SearchCandidates<>(0, List.of());
+        }
+        var jobs = ranked.stream().map(RankedJob::job).toList();
+        return new SearchCandidates<>(ranked.getFirst().totalMatches(), aggregatesForJobs(jobs));
     }
 
     @Override
@@ -437,5 +524,8 @@ public class PostgresJobRepository implements JobRepository {
 
     private static Instant instant(ResultSet resultSet, String column) throws SQLException {
         return resultSet.getTimestamp(column).toInstant();
+    }
+
+    private record RankedJob(JobPosting job, int totalMatches) {
     }
 }

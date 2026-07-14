@@ -2,6 +2,7 @@ package org.instruct.jobenginespring.application.profile;
 
 import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.adapter.out.postgres.profile.PostgresProfileRepository;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
 import org.instruct.jobenginespring.domain.profile.ProfileContact;
 import org.instruct.jobenginespring.domain.profile.ProfileProject;
@@ -24,6 +25,8 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 @Testcontainers
 class PostgresProfileSearchIntegrationTests {
@@ -99,6 +102,40 @@ class PostgresProfileSearchIntegrationTests {
         assertEquals(1, result.returnedCount());
         assertEquals(1, result.profiles().size());
         assertEquals(9, dataSource.statementExecutions());
+        int boundedRows = dataSource.rowsRead();
+
+        for (int index = 0; index < 40; index++) {
+            repository.saveProfileAggregate(profileAggregate(
+                    UUID.randomUUID(),
+                    "Python Profile " + index,
+                    "python-" + index + "@example.test",
+                    "Python",
+                    "Remote"
+            ));
+        }
+        dataSource.reset();
+
+        ProfileSearchService.ProfileSearchResult grownCorpus = service.searchProfiles(
+                new ProfileSearchService.ProfileSearchRequest("java", 1));
+
+        assertEquals(2, grownCorpus.totalMatches());
+        assertEquals(result.profiles(), grownCorpus.profiles());
+        assertEquals(9, dataSource.statementExecutions());
+        assertEquals(boundedRows, dataSource.rowsRead());
+
+        dataSource.reset();
+        var firstPage = repository.listProfiles(PageRequest.of(1, null));
+        assertEquals(1, firstPage.items().size());
+        assertNotNull(firstPage.nextCursor());
+        assertEquals(1, dataSource.statementExecutions());
+        assertEquals(2, dataSource.rowsRead());
+
+        var secondPage = repository.listProfiles(PageRequest.of(1, firstPage.nextCursor()));
+        assertEquals(1, secondPage.items().size());
+        assertNotEquals(firstPage.items().getFirst().id(), secondPage.items().getFirst().id());
+
+        assertEquals(null, repository.listProfiles(PageRequest.of(100, null)).nextCursor());
+        assertEquals(0, service.searchProfiles(new ProfileSearchService.ProfileSearchRequest("rust", 1)).totalMatches());
     }
 
     private static ProfileAggregate profileAggregate(UUID profileId, String fullName, String email, String skill, String location) {

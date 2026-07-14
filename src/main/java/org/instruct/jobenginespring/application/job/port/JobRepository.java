@@ -2,6 +2,9 @@ package org.instruct.jobenginespring.application.job.port;
 
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobPosting;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.application.pagination.SearchCandidates;
 
 import java.util.List;
 import java.util.Optional;
@@ -11,7 +14,17 @@ public interface JobRepository {
 
     List<JobPosting> listJobs();
 
+    default Page<JobPosting> listJobs(PageRequest request) {
+        var jobs = listJobs().stream().limit(request.limit()).toList();
+        return new Page<>(jobs, null);
+    }
+
     List<JobAggregate> listJobAggregates();
+
+    default SearchCandidates<JobAggregate> searchJobCandidates(List<String> queryTokens, int limit) {
+        var aggregates = listJobAggregates();
+        return new SearchCandidates<>(-1, aggregates);
+    }
 
     Optional<JobAggregate> findJobAggregate(UUID jobId);
 

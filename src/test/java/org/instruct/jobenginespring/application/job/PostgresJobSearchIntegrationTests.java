@@ -3,6 +3,7 @@ package org.instruct.jobenginespring.application.job;
 import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.adapter.out.postgres.job.PostgresJobRepository;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -25,6 +26,8 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 @Testcontainers
 class PostgresJobSearchIntegrationTests {
@@ -97,6 +100,38 @@ class PostgresJobSearchIntegrationTests {
         assertEquals(1, result.returnedCount());
         assertEquals(1, result.jobs().size());
         assertEquals(4, dataSource.statementExecutions());
+        int boundedRows = dataSource.rowsRead();
+
+        for (int index = 0; index < 40; index++) {
+            repository.saveJobAggregate(linkAggregate(
+                    UUID.randomUUID(),
+                    "Python Engineer " + index,
+                    "Build Python services " + index,
+                    "https://example.test/python/" + index
+            ));
+        }
+        dataSource.reset();
+
+        JobService.JobSearchResult grownCorpus = service.searchJobs(new JobService.JobSearchRequest("java", 1));
+
+        assertEquals(2, grownCorpus.totalMatches());
+        assertEquals(result.jobs(), grownCorpus.jobs());
+        assertEquals(4, dataSource.statementExecutions());
+        assertEquals(boundedRows, dataSource.rowsRead());
+
+        dataSource.reset();
+        var firstPage = repository.listJobs(PageRequest.of(1, null));
+        assertEquals(1, firstPage.items().size());
+        assertNotNull(firstPage.nextCursor());
+        assertEquals(1, dataSource.statementExecutions());
+        assertEquals(2, dataSource.rowsRead());
+
+        var secondPage = repository.listJobs(PageRequest.of(1, firstPage.nextCursor()));
+        assertEquals(1, secondPage.items().size());
+        assertNotEquals(firstPage.items().getFirst().id(), secondPage.items().getFirst().id());
+
+        assertEquals(null, repository.listJobs(PageRequest.of(100, null)).nextCursor());
+        assertEquals(0, service.searchJobs(new JobService.JobSearchRequest("rust", 1)).totalMatches());
     }
 
     private static JobAggregate textAggregate(UUID jobId, String title, String description, String textHash) {

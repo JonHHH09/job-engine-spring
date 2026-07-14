@@ -8,6 +8,7 @@ import org.instruct.jobenginespring.application.job.JobAnalysisService;
 import org.instruct.jobenginespring.application.job.JobAnalysisService.AddJobFromAnalysisResult;
 import org.instruct.jobenginespring.application.job.JobAnalysisService.AnalyzeJobLinkResult;
 import org.instruct.jobenginespring.application.job.JobService;
+import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.job.JobService.AddJobResult;
 import org.instruct.jobenginespring.application.job.JobService.DeleteJobResult;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
@@ -68,15 +69,16 @@ class JobMcpAdapterTests {
     @Test
     void listJobsDelegatesToServiceWithObjectWrapper() {
         JobPosting posting = samplePosting();
-        when(jobService.listJobs()).thenReturn(List.of(posting));
+        when(jobService.listJobs(1, null)).thenReturn(new Page<>(List.of(posting), JOB_ID));
 
-        CallToolResult result = adapter.listJobs();
+        CallToolResult result = adapter.listJobs(new JobMcpAdapter.ListRequest(1, null));
 
         assertFalse(result.isError());
         JobMcpAdapter.ListJobsResult content = assertInstanceOf(JobMcpAdapter.ListJobsResult.class, result.structuredContent());
         assertEquals(List.of(posting), content.jobs());
-        assertEquals(List.of(), new JobMcpAdapter.ListJobsResult(null).jobs());
-        verify(jobService).listJobs();
+        assertEquals(JOB_ID, content.nextCursor());
+        assertEquals(List.of(), new JobMcpAdapter.ListJobsResult(null, null).jobs());
+        verify(jobService).listJobs(1, null);
     }
 
     @Test
@@ -246,9 +248,9 @@ class JobMcpAdapterTests {
 
     @Test
     void unexpectedErrorsDoNotExposeExceptionMessages() {
-        when(jobService.listJobs()).thenThrow(new RuntimeException("sensitive backend detail"));
+        when(jobService.listJobs(null, null)).thenThrow(new RuntimeException("sensitive backend detail"));
 
-        ApplicationErrorResponse response = assertErrorResponse(adapter.listJobs());
+        ApplicationErrorResponse response = assertErrorResponse(adapter.listJobs(null));
 
         assertEquals("internal_error", response.code());
         assertEquals("Unexpected application error", response.message());

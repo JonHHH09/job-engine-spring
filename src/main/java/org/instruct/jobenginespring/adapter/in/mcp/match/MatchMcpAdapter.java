@@ -31,9 +31,13 @@ public class MatchMcpAdapter {
     }
     @McpTool(name="get_match_report", description="Get one deterministic report with current source-revision staleness.")
     public CallToolResult getReport(@McpToolParam(required=true,description="Report ID") IdRequest request) { return call(() -> service.getReport(require(request).id())); }
-    @McpTool(name="list_match_reports", description="List deterministic reports, optionally filtered by profile and job IDs.")
+    @McpTool(name="list_match_reports", description="List a bounded page of deterministic reports, optionally filtered by profile and job IDs.")
     public CallToolResult listReports(@McpToolParam(required=true,description="Optional profile/job filters") ReportFilter request) {
-        return call(() -> { var filter=require(request); return new Reports(service.listReports(filter.profileId(),filter.jobId())); });
+        return call(() -> {
+            var filter=require(request);
+            var page=service.listReports(filter.profileId(),filter.jobId(),filter.limit(),filter.cursor());
+            return new Reports(page.items(),page.nextCursor());
+        });
     }
     @McpTool(name="submit_match_review", description="Persist a separate advisory review and create a deduplicated disagreement when divergence policy v1 triggers.")
     public CallToolResult submitReview(@McpToolParam(required=true,description="Advisory review") ReviewRequest request) {
@@ -60,12 +64,12 @@ public class MatchMcpAdapter {
         catch(Exception e){return CallToolResult.builder().isError(true).structuredContent(errors.toErrorResponse(e)).build();}}
     private static <T>T require(T value){if(value==null)throw new IllegalArgumentException("request must not be null");return value;}
     public record AnalyzeRequest(UUID profileId,UUID jobId){} public record ProfileRequest(UUID profileId){} public record IdRequest(UUID id){}
-    public record ReportRequest(UUID reportId){} public record ReportFilter(UUID profileId,UUID jobId){} public record DisagreementFilter(UUID reportId){}
+    public record ReportRequest(UUID reportId){} public record ReportFilter(UUID profileId,UUID jobId,Integer limit,UUID cursor){} public record DisagreementFilter(UUID reportId){}
     public record AcknowledgeRequest(UUID disagreementId,String linearIssueId){}
     public record LinkRequest(UUID disagreementId,String linearIssueId){}
     public record ReviewRequest(UUID reportId,String reviewer,String model,String reviewVersion,Integer overallScore,MatchOutcome outcome,
                                 Boolean blockerMismatch,List<ComponentScore> components,List<MatchEvidence> evidence,String summary){}
-    public record Reports(List<MatchAnalysisService.ReportView> reports){public Reports{reports=List.copyOf(reports);}}
+    public record Reports(List<MatchAnalysisService.ReportView> reports,UUID nextCursor){public Reports{reports=List.copyOf(reports);}}
     public record Reviews(List<MatchReview> reviews){public Reviews{reviews=List.copyOf(reviews);}}
     public record Disagreements(List<MatchDisagreement> disagreements){public Disagreements{disagreements=List.copyOf(disagreements);}}
 }

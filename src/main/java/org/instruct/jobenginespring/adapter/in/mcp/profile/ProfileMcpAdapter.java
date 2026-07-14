@@ -23,10 +23,17 @@ public class ProfileMcpAdapter {
 
     @McpTool(
             name = "list_profiles",
-            description = "List available profile identities without returning raw resume text or private credentials."
+            description = "List a bounded page of profile identities without returning raw resume text or private credentials."
     )
-    public CallToolResult listProfiles() {
-        return call(() -> new ListProfilesResult(profileService.listProfiles()));
+    public CallToolResult listProfiles(
+            @McpToolParam(required = false, description = "Optional page size and cursor from the previous response")
+            ListRequest request
+    ) {
+        return call(() -> {
+            var safeRequest = request == null ? new ListRequest(null, null) : request;
+            var page = profileService.listProfiles(safeRequest.limit(), safeRequest.cursor());
+            return new ListProfilesResult(page.items(), page.nextCursor());
+        });
     }
 
     @McpTool(
@@ -90,6 +97,15 @@ public class ProfileMcpAdapter {
     public record DeleteProfileResult(UUID profileId, boolean deleted) {
     }
 
-    public record ListProfilesResult(List<UserProfile> profiles) {
+    public record ListRequest(
+            @McpToolParam(required = false, description = "Maximum page size, 1-100") Integer limit,
+            @McpToolParam(required = false, description = "UUID cursor returned by the previous page") UUID cursor
+    ) {
+    }
+
+    public record ListProfilesResult(List<UserProfile> profiles, UUID nextCursor) {
+        public ListProfilesResult {
+            profiles = profiles == null ? List.of() : List.copyOf(profiles);
+        }
     }
 }

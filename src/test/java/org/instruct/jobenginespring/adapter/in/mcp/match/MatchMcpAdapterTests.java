@@ -3,6 +3,7 @@ package org.instruct.jobenginespring.adapter.in.mcp.match;
 import org.junit.jupiter.api.Test;
 import org.instruct.jobenginespring.application.error.ApplicationErrorResponse;
 import org.instruct.jobenginespring.application.match.MatchAnalysisService;
+import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.domain.match.*;
 import java.time.Instant;
 import java.util.List;
@@ -107,7 +108,7 @@ class MatchMcpAdapterTests {
         var reviewResult = new MatchAnalysisService.ReviewResult(review, disagreement);
         when(service.analyzeAll(profileId)).thenReturn(batch);
         when(service.getReport(reportId)).thenReturn(view);
-        when(service.listReports(profileId, jobId)).thenReturn(List.of(view));
+        when(service.listReports(profileId, jobId, 1, null)).thenReturn(new Page<>(List.of(view), reportId));
         when(service.submitReview(any())).thenReturn(reviewResult);
         when(service.getReview(reviewId)).thenReturn(review);
         when(service.listReviews(reportId)).thenReturn(List.of(review));
@@ -117,7 +118,7 @@ class MatchMcpAdapterTests {
         assertSame(batch, adapter.analyzeAll(new MatchMcpAdapter.ProfileRequest(profileId)).structuredContent());
         assertSame(view, adapter.getReport(new MatchMcpAdapter.IdRequest(reportId)).structuredContent());
         assertEquals(List.of(view), assertInstanceOf(MatchMcpAdapter.Reports.class,
-                adapter.listReports(new MatchMcpAdapter.ReportFilter(profileId, jobId)).structuredContent()).reports());
+                adapter.listReports(new MatchMcpAdapter.ReportFilter(profileId, jobId, 1, null)).structuredContent()).reports());
         var request = new MatchMcpAdapter.ReviewRequest(reportId, "human", "provider-neutral", "v1", 50,
                 MatchOutcome.PARTIAL_MATCH, false, review.components(), review.evidence(), "score_adjustment");
         assertSame(reviewResult, adapter.submitReview(request).structuredContent());
@@ -166,7 +167,7 @@ class MatchMcpAdapterTests {
 
     @Test
     void responseRecordsDefensivelyCopyTheirLists() {
-        assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Reports(null));
+        assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Reports(null, null));
         assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Reviews(null));
         assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Disagreements(null));
     }

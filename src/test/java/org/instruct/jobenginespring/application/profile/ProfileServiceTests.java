@@ -87,6 +87,7 @@ class ProfileServiceTests {
         assertEquals("spring ai", created.skills().getFirst().normalizedSkill());
         assertEquals("backend", created.skills().getFirst().category());
         assertEquals(List.of(created.profile()), service.listProfiles());
+        assertEquals(List.of(created.profile()), service.listProfiles(1, null).items());
     }
 
 

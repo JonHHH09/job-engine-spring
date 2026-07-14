@@ -3,6 +3,9 @@ package org.instruct.jobenginespring.application.match;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository.ReportWithRevisions;
 import org.instruct.jobenginespring.domain.match.*;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -66,13 +69,18 @@ public class MatchAnalysisService {
     }
 
     public ReportView getReport(UUID reportId) {
-        var report = matches.findReport(requireId(reportId, "reportId"))
+        var report = matches.findReportWithRevisions(requireId(reportId, "reportId"))
                 .orElseThrow(() -> new IllegalArgumentException("match report not found: " + reportId));
         return view(report);
     }
 
     public List<ReportView> listReports(UUID profileId, UUID jobId) {
-        return matches.listReports(profileId, jobId).stream().map(this::view).toList();
+        return listReports(profileId, jobId, null, null).items();
+    }
+
+    public Page<ReportView> listReports(UUID profileId, UUID jobId, Integer limit, UUID cursor) {
+        var page = matches.listReports(profileId, jobId, PageRequest.of(limit, cursor));
+        return new Page<>(page.items().stream().map(MatchAnalysisService::view).toList(), page.nextCursor());
     }
 
     @Transactional
@@ -137,11 +145,8 @@ public class MatchAnalysisService {
         }
     }
 
-    private ReportView view(MatchReport report) {
-        var profile = profiles.findProfileById(report.profileId());
-        var job = jobs.findJobAggregate(report.jobId());
-        boolean stale = profile.isEmpty() || job.isEmpty() || report.stale(profile.orElseThrow().updatedAt(), job.orElseThrow().job().updatedAt());
-        return new ReportView(report, stale);
+    private static ReportView view(ReportWithRevisions report) {
+        return new ReportView(report.report(), report.stale());
     }
     private static UUID requireId(UUID id, String field) { return Objects.requireNonNull(id, field + " must not be null"); }
     public record ReportView(MatchReport report, boolean stale) { public ReportView { Objects.requireNonNull(report); } }

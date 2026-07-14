@@ -5,6 +5,8 @@ import org.instruct.jobenginespring.application.document.GeneratedResumeAssetSer
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -55,6 +57,11 @@ public class ProfileService {
     @Transactional(readOnly = true)
     public List<UserProfile> listProfiles() {
         return profileRepository.listProfiles();
+    }
+
+    @Transactional(readOnly = true)
+    public Page<UserProfile> listProfiles(Integer limit, UUID cursor) {
+        return profileRepository.listProfiles(PageRequest.of(limit, cursor));
     }
 
     @Transactional(readOnly = true)

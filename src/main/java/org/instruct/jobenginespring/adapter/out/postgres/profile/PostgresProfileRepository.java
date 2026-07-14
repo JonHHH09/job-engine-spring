@@ -3,6 +3,9 @@ package org.instruct.jobenginespring.adapter.out.postgres.profile;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
 import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.application.pagination.SearchCandidates;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -70,9 +73,112 @@ public class PostgresProfileRepository implements ProfileRepository {
     }
 
     @Override
+    public Page<UserProfile> listProfiles(PageRequest request) {
+        var rows = jdbc.sql("""
+                        WITH anchor AS (
+                            SELECT full_name, id FROM profile.profiles WHERE id = :cursor
+                        )
+                        SELECT profile.id, profile.full_name, profile.email, profile.summary,
+                               profile.created_at, profile.updated_at
+                        FROM profile.profiles profile
+                        LEFT JOIN anchor ON true
+                        WHERE CAST(:cursor AS uuid) IS NULL
+                           OR profile.full_name > anchor.full_name
+                           OR (profile.full_name = anchor.full_name AND profile.id > anchor.id)
+                        ORDER BY profile.full_name, profile.id
+                        LIMIT :fetchLimit
+                        """)
+                .param("cursor", request.cursor())
+                .param("fetchLimit", request.limit() + 1)
+                .query(this::mapProfile)
+                .list();
+        boolean hasMore = rows.size() > request.limit();
+        var items = rows.stream().limit(request.limit()).toList();
+        return new Page<>(items, hasMore ? items.getLast().id() : null);
+    }
+
+    @Override
     public List<ProfileAggregate> listProfileAggregates() {
         List<UserProfile> profiles = listProfiles();
         return aggregatesForProfiles(profiles);
+    }
+
+    @Override
+    public SearchCandidates<ProfileAggregate> searchProfileCandidates(List<String> queryTokens, int limit) {
+        var ranked = namedJdbc.query("""
+                        WITH query_tokens AS (
+                            SELECT token FROM unnest(CAST(:queryTokens AS text[])) AS token
+                        ), field_values AS (
+                            SELECT id AS profile_id, full_name AS value, 8 AS weight FROM profile.profiles
+                            UNION ALL SELECT id, email, 5 FROM profile.profiles
+                            UNION ALL SELECT id, summary, 3 FROM profile.profiles
+                            UNION ALL SELECT profile_id, contact_type, 2 FROM profile.profile_contacts
+                            UNION ALL SELECT profile_id, contact_value, 2 FROM profile.profile_contacts
+                            UNION ALL SELECT profile_id, label, 1 FROM profile.profile_contacts
+                            UNION ALL SELECT profile_id, link_type, 3 FROM profile.profile_links
+                            UNION ALL SELECT profile_id, url, 3 FROM profile.profile_links
+                            UNION ALL SELECT profile_id, label, 2 FROM profile.profile_links
+                            UNION ALL SELECT profile_id, skill, 7 FROM profile.profile_skills
+                            UNION ALL SELECT profile_id, normalized_skill, 7 FROM profile.profile_skills
+                            UNION ALL SELECT profile_id, category, 3 FROM profile.profile_skills
+                            UNION ALL SELECT profile_id, language, 4 FROM profile.profile_languages
+                            UNION ALL SELECT profile_id, normalized_language, 4 FROM profile.profile_languages
+                            UNION ALL SELECT profile_id, proficiency, 2 FROM profile.profile_languages
+                            UNION ALL SELECT profile_id, institution, 4 FROM profile.education
+                            UNION ALL SELECT profile_id, degree, 3 FROM profile.education
+                            UNION ALL SELECT profile_id, field, 4 FROM profile.education
+                            UNION ALL SELECT profile_id, location, 2 FROM profile.education
+                            UNION ALL SELECT profile_id, relevant_focus, 3 FROM profile.education
+                            UNION ALL SELECT profile_id, company, 4 FROM profile.experiences
+                            UNION ALL SELECT profile_id, title, 6 FROM profile.experiences
+                            UNION ALL SELECT profile_id, location, 2 FROM profile.experiences
+                            UNION ALL SELECT profile_id, description, 3 FROM profile.experiences
+                            UNION ALL SELECT profile_id, name, 5 FROM profile.projects
+                            UNION ALL SELECT profile_id, url, 3 FROM profile.projects
+                            UNION ALL SELECT profile_id, description, 3 FROM profile.projects
+                            UNION ALL
+                                SELECT project.profile_id, technology.technology, 5
+                                FROM profile.project_technologies technology
+                                JOIN profile.projects project ON project.id = technology.project_id
+                            UNION ALL
+                                SELECT project.profile_id, technology.normalized_technology, 5
+                                FROM profile.project_technologies technology
+                                JOIN profile.projects project ON project.id = technology.project_id
+                        ), scored AS (
+                            SELECT profile_id, SUM(weight * (
+                                SELECT COUNT(*) FROM query_tokens query_token
+                                WHERE EXISTS (
+                                    SELECT 1
+                                    FROM regexp_split_to_table(lower(COALESCE(value, '')), '[^a-z0-9+#.]+') text_token
+                                    WHERE text_token <> '' AND (
+                                        text_token = query_token.token
+                                        OR starts_with(text_token, query_token.token)
+                                        OR starts_with(query_token.token, text_token)
+                                    )
+                                )
+                            ))::integer AS score
+                            FROM field_values
+                            GROUP BY profile_id
+                        ), matching AS (
+                            SELECT profile.*, scored.score,
+                                   COUNT(*) OVER () AS total_matches
+                            FROM scored
+                            JOIN profile.profiles profile ON profile.id = scored.profile_id
+                            WHERE scored.score > 0
+                            ORDER BY scored.score DESC, profile.full_name, profile.id
+                            LIMIT :limit
+                        )
+                        SELECT * FROM matching ORDER BY score DESC, full_name, id
+                        """, new MapSqlParameterSource()
+                        .addValue("queryTokens", queryTokens.toArray(String[]::new))
+                        .addValue("limit", limit),
+                (resultSet, rowNumber) -> new RankedProfile(
+                        mapProfile(resultSet, rowNumber), resultSet.getInt("total_matches")));
+        if (ranked.isEmpty()) {
+            return new SearchCandidates<>(0, List.of());
+        }
+        var profiles = ranked.stream().map(RankedProfile::profile).toList();
+        return new SearchCandidates<>(ranked.getFirst().totalMatches(), aggregatesForProfiles(profiles));
     }
 
     @Override
@@ -503,5 +609,8 @@ public class PostgresProfileRepository implements ProfileRepository {
 
     private static Instant instant(ResultSet resultSet, String column) throws SQLException {
         return resultSet.getTimestamp(column).toInstant();
+    }
+
+    private record RankedProfile(UserProfile profile, int totalMatches) {
     }
 }

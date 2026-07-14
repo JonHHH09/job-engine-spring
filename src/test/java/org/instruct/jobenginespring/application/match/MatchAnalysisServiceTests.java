@@ -2,6 +2,9 @@ package org.instruct.jobenginespring.application.match;
 
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository;
+import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository.ReportWithRevisions;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.domain.match.*;
 import org.junit.jupiter.api.Test;
@@ -158,18 +161,15 @@ class MatchAnalysisServiceTests {
         var service = new MatchAnalysisService(profiles, jobs, repository, new DeterministicMatchScorer(),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         var report = report();
-        var profile = mock(org.instruct.jobenginespring.domain.profile.UserProfile.class);
-        var job = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
-        when(profile.updatedAt()).thenReturn(NOW.plusSeconds(1));
-        when(job.job().updatedAt()).thenReturn(NOW);
-        when(profiles.findProfileById(report.profileId())).thenReturn(Optional.of(profile));
-        when(jobs.findJobAggregate(report.jobId())).thenReturn(Optional.of(job));
-        when(repository.findReport(report.id())).thenReturn(Optional.of(report));
-        when(repository.listReports(report.profileId(), report.jobId())).thenReturn(List.of(report));
+        var revision = new ReportWithRevisions(report, NOW.plusSeconds(1), NOW);
+        when(repository.findReportWithRevisions(report.id())).thenReturn(Optional.of(revision));
+        when(repository.listReports(report.profileId(), report.jobId(), PageRequest.of(null, null)))
+                .thenReturn(new Page<>(List.of(revision), null));
 
         assertTrue(service.getReport(report.id()).stale());
         assertEquals(1, service.listReports(report.profileId(), report.jobId()).size());
-        verify(repository).listReports(report.profileId(), report.jobId());
+        verify(repository).listReports(report.profileId(), report.jobId(), PageRequest.of(null, null));
+        verifyNoInteractions(profiles, jobs);
     }
 
     @Test
@@ -284,19 +284,15 @@ class MatchAnalysisServiceTests {
         var service = new MatchAnalysisService(profiles, jobs, repository, new DeterministicMatchScorer(),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         var report = report();
-        var profile = mock(org.instruct.jobenginespring.domain.profile.UserProfile.class);
-        var job = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
-        when(repository.findReport(report.id())).thenReturn(Optional.of(report));
-        when(profile.updatedAt()).thenReturn(report.profileRevision());
-        when(job.job().updatedAt()).thenReturn(report.jobRevision());
-        when(profiles.findProfileById(report.profileId())).thenReturn(Optional.of(profile));
-        when(jobs.findJobAggregate(report.jobId())).thenReturn(Optional.of(job));
+        when(repository.findReportWithRevisions(report.id())).thenReturn(Optional.of(
+                new ReportWithRevisions(report, report.profileRevision(), report.jobRevision())));
         assertFalse(service.getReport(report.id()).stale());
 
-        when(profiles.findProfileById(report.profileId())).thenReturn(Optional.empty());
+        when(repository.findReportWithRevisions(report.id())).thenReturn(Optional.of(
+                new ReportWithRevisions(report, null, report.jobRevision())));
         assertTrue(service.getReport(report.id()).stale());
-        when(profiles.findProfileById(report.profileId())).thenReturn(Optional.of(profile));
-        when(jobs.findJobAggregate(report.jobId())).thenReturn(Optional.empty());
+        when(repository.findReportWithRevisions(report.id())).thenReturn(Optional.of(
+                new ReportWithRevisions(report, report.profileRevision(), null)));
         assertTrue(service.getReport(report.id()).stale());
     }
 

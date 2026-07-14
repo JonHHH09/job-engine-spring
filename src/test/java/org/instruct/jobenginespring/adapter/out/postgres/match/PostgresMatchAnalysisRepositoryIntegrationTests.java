@@ -2,6 +2,8 @@ package org.instruct.jobenginespring.adapter.out.postgres.match;
 
 import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.domain.match.*;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.support.CountingDataSource;
 import org.junit.jupiter.api.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -15,6 +17,7 @@ import tools.jackson.databind.ObjectMapper;
 import static org.mockito.Mockito.*;
 
 import java.time.Instant;
+import java.sql.ResultSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -29,13 +32,16 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
     @Container static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine")
             .withDatabaseName("job_engine").withUsername("test").withPassword("test");
     private static JdbcTemplate jdbc;
+    private static CountingDataSource dataSource;
     private PostgresMatchAnalysisRepository repository;
 
     @BeforeAll static void migrate() {
         Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
                 .locations("classpath:db/migration").defaultSchema("profile")
                 .schemas("profile", "document", "job_schema", "match").load().migrate();
-        jdbc = new JdbcTemplate(new DriverManagerDataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
+        dataSource = new CountingDataSource(new DriverManagerDataSource(
+                POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword()));
+        jdbc = new JdbcTemplate(dataSource);
     }
 
     @BeforeEach void setUp() {
@@ -146,6 +152,44 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
         var missing = new MatchDisagreement(UUID.randomUUID(), report.id(), review.id(), disagreement.policyVersion(),
                 disagreement.reasons(), disagreement.evidenceDefectCodes(), DisagreementStatus.ACKNOWLEDGED, null, NOW, NOW);
         assertThrows(IllegalArgumentException.class, () -> repository.updateDisagreement(missing));
+    }
+
+    @Test void reportPagesAndJoinedRevisionLookupRemainBoundedAsHistoryGrows() {
+        for (int index = 0; index < 40; index++) {
+            var base = report();
+            repository.saveReport(new MatchReport(
+                    UUID.randomUUID(), PROFILE, JOB, NOW, NOW, "bounded-v" + index,
+                    base.overallScore(), base.confidence(), base.outcome(), base.blockerMismatch(),
+                    base.components(), base.evidence(), NOW.plusSeconds(index)
+            ));
+        }
+        dataSource.reset();
+
+        var firstPage = repository.listReports(null, null, PageRequest.of(5, null));
+
+        assertEquals(5, firstPage.items().size());
+        assertNotNull(firstPage.nextCursor());
+        assertEquals(1, dataSource.statementExecutions());
+        assertEquals(6, dataSource.rowsRead());
+        assertNull(repository.listReports(null, null, PageRequest.of(100, null)).nextCursor());
+
+        dataSource.reset();
+        var joined = repository.findReportWithRevisions(firstPage.items().getFirst().report().id()).orElseThrow();
+
+        assertEquals(NOW, joined.currentProfileRevision());
+        assertEquals(NOW, joined.currentJobRevision());
+        assertEquals(1, dataSource.statementExecutions());
+        assertEquals(1, dataSource.rowsRead());
+    }
+
+    @Test void joinedRevisionMapperHandlesMissingCurrentRows() throws Exception {
+        var resultSet = mock(ResultSet.class);
+        var method = PostgresMatchAnalysisRepository.class.getDeclaredMethod(
+                "nullableInstant", ResultSet.class, String.class);
+        method.setAccessible(true);
+
+        assertNull(method.invoke(null, resultSet, "current_revision"));
+        verify(resultSet).getTimestamp("current_revision");
     }
 
     @Test void translatesSerializationFailuresWithoutLeakingPayloads() throws Exception {

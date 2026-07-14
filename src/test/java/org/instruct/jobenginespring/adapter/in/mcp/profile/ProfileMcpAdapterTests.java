@@ -5,6 +5,7 @@ import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationErrorResponse;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfileService;
+import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
@@ -76,9 +77,9 @@ class ProfileMcpAdapterTests {
     @Test
     void listProfilesToolDelegatesToService() {
         UserProfile profile = sampleProfile();
-        when(profileService.listProfiles()).thenReturn(List.of(profile));
+        when(profileService.listProfiles(1, null)).thenReturn(new Page<>(List.of(profile), PROFILE_ID));
 
-        CallToolResult result = adapter.listProfiles();
+        CallToolResult result = adapter.listProfiles(new ProfileMcpAdapter.ListRequest(1, null));
 
         assertFalse(result.isError());
         ProfileMcpAdapter.ListProfilesResult listResult = assertInstanceOf(
@@ -86,7 +87,9 @@ class ProfileMcpAdapterTests {
                 result.structuredContent()
         );
         assertEquals(List.of(profile), listResult.profiles());
-        verify(profileService).listProfiles();
+        assertEquals(PROFILE_ID, listResult.nextCursor());
+        assertEquals(List.of(), new ProfileMcpAdapter.ListProfilesResult(null, null).profiles());
+        verify(profileService).listProfiles(1, null);
     }
 
     @Test
@@ -174,9 +177,9 @@ class ProfileMcpAdapterTests {
 
     @Test
     void toolErrorsDoNotExposeUnexpectedExceptionMessages() {
-        when(profileService.listProfiles()).thenThrow(new RuntimeException("sensitive database detail"));
+        when(profileService.listProfiles(null, null)).thenThrow(new RuntimeException("sensitive database detail"));
 
-        CallToolResult result = adapter.listProfiles();
+        CallToolResult result = adapter.listProfiles(null);
 
         ApplicationErrorResponse response = assertErrorResponse(result);
         assertEquals("internal_error", response.code());

@@ -524,6 +524,7 @@ class JobServiceTests {
         ));
 
         assertEquals(List.of(created.job().job()), service.listJobs());
+        assertEquals(List.of(created.job().job()), service.listJobs(1, null).items());
         assertEquals(Optional.of(created.job()), service.getJob(created.job().job().id()));
         assertThrows(NullPointerException.class, () -> service.getJob(null));
     }

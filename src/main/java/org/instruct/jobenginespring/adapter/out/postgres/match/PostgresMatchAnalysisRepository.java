@@ -3,6 +3,8 @@ package org.instruct.jobenginespring.adapter.out.postgres.match;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.match.*;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -53,12 +55,50 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
                 .param("jobRevision", Timestamp.from(r.jobRevision())).query(this::report).single();
     }
     @Override public Optional<MatchReport> findReport(UUID id) { return jdbc.sql("SELECT * FROM match.reports WHERE id=:id").param("id",id).query(this::report).optional(); }
+    @Override public Optional<ReportWithRevisions> findReportWithRevisions(UUID id) {
+        return jdbc.sql("""
+                SELECT report.*, profile.updated_at AS current_profile_revision,
+                       job.updated_at AS current_job_revision
+                FROM match.reports report
+                LEFT JOIN profile.profiles profile ON profile.id = report.profile_id
+                LEFT JOIN job_schema.jobs job ON job.id = report.job_id
+                WHERE report.id = :id
+                """).param("id", id).query(this::reportWithRevisions).optional();
+    }
     @Override public List<MatchReport> listReports(UUID profileId, UUID jobId) {
         return jdbc.sql("""
                 SELECT * FROM match.reports WHERE (CAST(:profileId AS uuid) IS NULL OR profile_id=:profileId)
                 AND (CAST(:jobId AS uuid) IS NULL OR job_id=:jobId) ORDER BY created_at DESC,id
                 """)
                 .param("profileId",profileId).param("jobId",jobId).query(this::report).list();
+    }
+    @Override public Page<ReportWithRevisions> listReports(UUID profileId, UUID jobId, PageRequest request) {
+        var rows = jdbc.sql("""
+                WITH anchor AS (
+                    SELECT created_at, id FROM match.reports WHERE id = :cursor
+                )
+                SELECT report.*, profile.updated_at AS current_profile_revision,
+                       job.updated_at AS current_job_revision
+                FROM match.reports report
+                LEFT JOIN profile.profiles profile ON profile.id = report.profile_id
+                LEFT JOIN job_schema.jobs job ON job.id = report.job_id
+                LEFT JOIN anchor ON true
+                WHERE (CAST(:profileId AS uuid) IS NULL OR report.profile_id = :profileId)
+                  AND (CAST(:jobId AS uuid) IS NULL OR report.job_id = :jobId)
+                  AND (CAST(:cursor AS uuid) IS NULL OR report.created_at < anchor.created_at
+                       OR (report.created_at = anchor.created_at AND report.id > anchor.id))
+                ORDER BY report.created_at DESC, report.id
+                LIMIT :fetchLimit
+                """)
+                .param("profileId", profileId)
+                .param("jobId", jobId)
+                .param("cursor", request.cursor())
+                .param("fetchLimit", request.limit() + 1)
+                .query(this::reportWithRevisions)
+                .list();
+        boolean hasMore = rows.size() > request.limit();
+        var items = rows.stream().limit(request.limit()).toList();
+        return new Page<>(items, hasMore ? items.getLast().report().id() : null);
     }
     @Override public MatchReview saveReview(MatchReview r) {
         jdbc.sql("""
@@ -105,6 +145,10 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
     private MatchReport report(ResultSet rs, int row) throws SQLException { return new MatchReport(uuid(rs,"id"),uuid(rs,"profile_id"),uuid(rs,"job_id"),
             instant(rs,"profile_revision"),instant(rs,"job_revision"),rs.getString("algorithm_version"),rs.getInt("overall_score"),rs.getInt("confidence"),
             MatchOutcome.valueOf(rs.getString("outcome")),rs.getBoolean("blocker_mismatch"),read(rs,"components",COMPONENTS),read(rs,"evidence",EVIDENCE),instant(rs,"created_at")); }
+    private ReportWithRevisions reportWithRevisions(ResultSet rs, int row) throws SQLException {
+        return new ReportWithRevisions(report(rs, row), nullableInstant(rs, "current_profile_revision"),
+                nullableInstant(rs, "current_job_revision"));
+    }
     private MatchReview review(ResultSet rs,int row)throws SQLException{return new MatchReview(uuid(rs,"id"),uuid(rs,"report_id"),rs.getString("reviewer"),rs.getString("model"),
             rs.getString("review_version"),rs.getInt("overall_score"),MatchOutcome.valueOf(rs.getString("outcome")),rs.getBoolean("blocker_mismatch"),read(rs,"components",COMPONENTS),read(rs,"evidence",EVIDENCE),rs.getString("summary"),instant(rs,"created_at"));}
     private MatchDisagreement disagreement(ResultSet rs,int row)throws SQLException{return new MatchDisagreement(uuid(rs,"id"),uuid(rs,"report_id"),uuid(rs,"review_id"),
@@ -113,4 +157,8 @@ public class PostgresMatchAnalysisRepository implements MatchAnalysisRepository 
     private String jsonb(Object value){try{return json.writeValueAsString(value);}catch(Exception e){throw new IllegalArgumentException("match data cannot be serialized",e);}}
     private <T>T read(ResultSet rs,String column,TypeReference<T> type)throws SQLException{try{return json.readValue(rs.getString(column),type);}catch(Exception e){throw new SQLException("invalid persisted match data",e);}}
     private static UUID uuid(ResultSet rs,String c)throws SQLException{return rs.getObject(c,UUID.class);} private static Instant instant(ResultSet rs,String c)throws SQLException{return rs.getTimestamp(c).toInstant();}
+    private static Instant nullableInstant(ResultSet rs, String column) throws SQLException {
+        var timestamp = rs.getTimestamp(column);
+        return timestamp == null ? null : timestamp.toInstant();
+    }
 }

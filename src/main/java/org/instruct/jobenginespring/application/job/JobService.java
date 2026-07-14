@@ -7,6 +7,8 @@ import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher.JobLinkFetchResult;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -66,6 +68,11 @@ public class JobService {
     }
 
     @Transactional(readOnly = true)
+    public Page<JobPosting> listJobs(Integer limit, UUID cursor) {
+        return jobRepository.listJobs(PageRequest.of(limit, cursor));
+    }
+
+    @Transactional(readOnly = true)
     public Optional<JobAggregate> getJob(UUID jobId) {
         Objects.requireNonNull(jobId, "jobId must not be null");
         return jobRepository.findJobAggregate(jobId);
@@ -75,7 +82,8 @@ public class JobService {
     public JobSearchResult searchJobs(JobSearchRequest request) {
         JobSearchRequest safeRequest = validateSearch(request);
         List<String> queryTokens = tokens(safeRequest.query());
-        List<JobSearchMatch> matches = jobRepository.listJobAggregates().stream()
+        var candidates = jobRepository.searchJobCandidates(queryTokens, safeRequest.limit());
+        List<JobSearchMatch> matches = candidates.items().stream()
                 .map(aggregate -> match(aggregate, queryTokens))
                 .filter(match -> match.score() > 0)
                 .sorted(Comparator.comparingInt(JobSearchMatch::score).reversed()
@@ -85,7 +93,8 @@ public class JobService {
         List<JobSearchMatch> returned = matches.stream()
                 .limit(safeRequest.limit())
                 .toList();
-        return new JobSearchResult(safeRequest.query().strip(), queryTokens, matches.size(), returned.size(), returned);
+        int totalMatches = candidates.totalMatches() < 0 ? matches.size() : candidates.totalMatches();
+        return new JobSearchResult(safeRequest.query().strip(), queryTokens, totalMatches, returned.size(), returned);
     }
 
     @Transactional
