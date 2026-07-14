@@ -157,7 +157,7 @@ public class JobMcpAdapter {
     }
 
     public record JobSearchRequest(
-            @McpToolParam(required = true, description = "Search query text") String query,
+            @McpToolParam(required = true, description = "Search query, maximum 256 characters and 16 searchable terms") String query,
             @McpToolParam(required = false, description = "Maximum number of results, 1-100") Integer limit
     ) {
         JobService.JobSearchRequest toServiceRequest() {

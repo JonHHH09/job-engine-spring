@@ -86,8 +86,9 @@ public class JobService {
                 .map(aggregate -> match(aggregate, queryTokens))
                 .filter(match -> match.score() > 0)
                 .sorted(Comparator.comparingInt(JobSearchMatch::score).reversed()
-                        .thenComparing(match -> match.job().title())
-                        .thenComparing(match -> match.job().id()))
+                        // UUID text order exactly matches PostgreSQL's UUID byte order and avoids
+                        // deployment-specific text collation at the bounded-candidate boundary.
+                        .thenComparing(match -> match.job().id().toString()))
                 .toList();
         List<JobSearchMatch> returned = matches.stream()
                 .limit(safeRequest.limit())
@@ -371,15 +372,23 @@ public class JobService {
         if (request.query() == null || request.query().isBlank()) {
             throw validation("query", "must not be blank");
         }
-        List<String> queryTokens = tokens(request.query());
+        String query = request.query().strip();
+        if (query.codePointCount(0, query.length()) > SearchTextNormalizer.MAX_QUERY_CHARACTERS) {
+            throw validation("query", "must not exceed " + SearchTextNormalizer.MAX_QUERY_CHARACTERS + " characters");
+        }
+        List<String> queryTokens = tokens(query);
         if (queryTokens.isEmpty()) {
             throw validation("query", "must contain searchable text");
+        }
+        if (queryTokens.size() > SearchTextNormalizer.MAX_QUERY_TOKENS) {
+            throw validation("query", "must contain at most " + SearchTextNormalizer.MAX_QUERY_TOKENS
+                    + " searchable terms");
         }
         int limit = request.limit() == null ? DEFAULT_SEARCH_LIMIT : request.limit();
         if (limit < 1 || limit > MAX_SEARCH_LIMIT) {
             throw validation("limit", "must be between 1 and " + MAX_SEARCH_LIMIT);
         }
-        return new JobSearchRequest(request.query().strip(), limit);
+        return new JobSearchRequest(query, limit);
     }
 
     private static UpdateJobRequest validateUpdate(UpdateJobRequest request) {

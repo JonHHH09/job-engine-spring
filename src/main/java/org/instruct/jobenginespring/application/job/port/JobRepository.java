@@ -12,19 +12,13 @@ import java.util.UUID;
 
 public interface JobRepository {
 
-    List<JobPosting> listJobs();
-
-    default Page<JobPosting> listJobs(PageRequest request) {
-        var jobs = listJobs().stream().limit(request.limit()).toList();
-        return new Page<>(jobs, null);
+    default List<JobPosting> listJobs() {
+        return listJobs(PageRequest.of(null, null, "jobs", "all")).items();
     }
+
+    Page<JobPosting> listJobs(PageRequest request);
 
     Page<JobAggregate> listJobAggregates(PageRequest request);
-
-    @Deprecated(forRemoval = false)
-    default List<JobAggregate> listJobAggregates() {
-        return listJobAggregates(PageRequest.of(null, null, "job-aggregates", "all")).items();
-    }
 
     SearchCandidates<JobAggregate> searchJobCandidates(List<String> queryTokens, int limit);
 

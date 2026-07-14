@@ -23,7 +23,8 @@ public class ProfileSearchMcpAdapter {
             description = "Search normalized profile identities by query terms across profile, skills, experience, education, projects, links, contacts, and languages without returning raw resume text."
     )
     public CallToolResult searchProfiles(
-            @McpToolParam(required = true, description = "Profile search query and optional result limit")
+            @McpToolParam(required = true,
+                    description = "Profile search query (maximum 256 characters and 16 searchable terms) and optional result limit")
             ProfileSearchRequest request
     ) {
         return call(() -> profileSearchService.searchProfiles(request));

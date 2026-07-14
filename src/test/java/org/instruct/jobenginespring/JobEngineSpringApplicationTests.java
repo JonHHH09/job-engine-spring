@@ -91,8 +91,9 @@ class JobEngineSpringApplicationTests {
         ProfileRepository profileRepository() {
             return new ProfileRepository() {
                 @Override
-                public List<UserProfile> listProfiles() {
-                    return List.of();
+                public org.instruct.jobenginespring.application.pagination.Page<UserProfile> listProfiles(
+                        org.instruct.jobenginespring.application.pagination.PageRequest request) {
+                    return new org.instruct.jobenginespring.application.pagination.Page<>(List.of(), null);
                 }
 
                 @Override
@@ -101,8 +102,9 @@ class JobEngineSpringApplicationTests {
                 }
 
                 @Override
-                public List<ProfileAggregate> listProfileAggregates() {
-                    return List.of();
+                public org.instruct.jobenginespring.application.pagination.Page<ProfileAggregate> listProfileAggregates(
+                        org.instruct.jobenginespring.application.pagination.PageRequest request) {
+                    return new org.instruct.jobenginespring.application.pagination.Page<>(List.of(), null);
                 }
 
                 @Override

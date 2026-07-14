@@ -5,6 +5,7 @@ import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.pagination.SearchCandidates;
 import org.instruct.jobenginespring.application.search.SearchTerm;
+import org.instruct.jobenginespring.application.search.SearchTextNormalizer;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -36,6 +37,89 @@ import java.util.UUID;
 public class PostgresJobRepository implements JobRepository {
 
     public static final int MAX_SEARCH_CANDIDATES = 500;
+    private static final int SEARCH_FIELD_COUNT = 8;
+    static final int MAX_POSTINGS_PER_TOKEN = (MAX_SEARCH_CANDIDATES + 1) * SEARCH_FIELD_COUNT;
+    public static final String SEARCH_CANDIDATES_SQL = """
+            WITH query_tokens AS (
+                SELECT token FROM unnest(CAST(:queryTokens AS text[])) AS token
+            ), query_prefixes AS (
+                SELECT prefix, query_token
+                FROM unnest(CAST(:queryPrefixes AS text[]), CAST(:prefixOwners AS text[]))
+                    AS value(prefix, query_token)
+            ), query_prefix_sets AS (
+                SELECT query_token, array_agg(prefix ORDER BY prefix COLLATE "C") AS prefixes
+                FROM query_prefixes
+                GROUP BY query_token
+            ), raw_hits AS (
+                SELECT posting.job_id, posting.field_key, query.token AS query_token, posting.weight,
+                       posting.ordinal > :postingLimit AS truncated
+                FROM query_tokens query
+                CROSS JOIN LATERAL (
+                    WITH RECURSIVE sample(term, job_id, field_key, weight, ordinal) AS (
+                        (
+                            SELECT posting.term, posting.job_id, posting.field_key, posting.weight, 1::bigint
+                            FROM job_schema.search_terms posting
+                            WHERE posting.term COLLATE "C" >= query.token COLLATE "C"
+                              AND posting.term COLLATE "C" < (query.token || '~') COLLATE "C"
+                            ORDER BY posting.term COLLATE "C", posting.job_id, posting.field_key
+                            LIMIT 1
+                        )
+                        UNION ALL
+                        SELECT next.term, next.job_id, next.field_key, next.weight, sample.ordinal + 1
+                        FROM sample
+                        CROSS JOIN LATERAL (
+                            SELECT posting.term, posting.job_id, posting.field_key, posting.weight
+                            FROM job_schema.search_terms posting
+                            WHERE posting.term COLLATE "C" >= query.token COLLATE "C"
+                              AND posting.term COLLATE "C" < (query.token || '~') COLLATE "C"
+                              AND (posting.term COLLATE "C", posting.job_id, posting.field_key)
+                                  > (sample.term COLLATE "C", sample.job_id, sample.field_key)
+                            ORDER BY posting.term COLLATE "C", posting.job_id, posting.field_key
+                            LIMIT 1
+                        ) next
+                        WHERE sample.ordinal < :postingFetchLimit
+                    )
+                    SELECT * FROM sample
+                ) posting
+                UNION ALL
+                SELECT posting.job_id, posting.field_key, prefix_set.query_token, posting.weight,
+                       posting.ordinal > :postingLimit AS truncated
+                FROM query_prefix_sets prefix_set
+                CROSS JOIN LATERAL (
+                    SELECT sample.*,
+                           row_number() OVER (ORDER BY sample.term COLLATE "C", sample.job_id, sample.field_key) AS ordinal
+                    FROM (
+                        SELECT posting.term, posting.job_id, posting.field_key, posting.weight
+                        FROM job_schema.search_terms posting
+                        WHERE posting.term COLLATE "C" = ANY(prefix_set.prefixes)
+                        ORDER BY posting.term COLLATE "C", posting.job_id, posting.field_key
+                        LIMIT :postingFetchLimit
+                    ) sample
+                ) posting
+            ), posting_bounds AS (
+                SELECT COALESCE(bool_or(truncated), false) AS posting_truncated FROM raw_hits
+            ), posting_hits AS (
+                SELECT DISTINCT job_id, field_key, query_token, weight
+                FROM raw_hits
+                WHERE NOT truncated
+            ), scored AS (
+                SELECT job_id, SUM(weight)::integer AS score
+                FROM posting_hits
+                GROUP BY job_id
+                ORDER BY SUM(weight) DESC, job_id
+                LIMIT :fetchLimit
+            ), matching AS (
+                SELECT job.*, scored.score, posting_bounds.posting_truncated
+                FROM scored
+                CROSS JOIN LATERAL (
+                    SELECT * FROM job_schema.jobs job WHERE job.id = scored.job_id LIMIT 1
+                ) job
+                CROSS JOIN posting_bounds
+                ORDER BY scored.score DESC, job.id
+                LIMIT :fetchLimit
+            )
+            SELECT * FROM matching ORDER BY score DESC, id
+            """;
 
     private final JdbcClient jdbc;
     private final NamedParameterJdbcOperations namedJdbc;
@@ -53,7 +137,9 @@ public class PostgresJobRepository implements JobRepository {
                                canonical_fingerprint, created_at, updated_at
                         FROM job_schema.jobs
                         ORDER BY posted_at DESC NULLS LAST, created_at DESC, title, id
+                        LIMIT :limit
                         """)
+                .param("limit", PageRequest.DEFAULT_LIMIT)
                 .query(this::mapJob)
                 .list();
     }
@@ -100,42 +186,21 @@ public class PostgresJobRepository implements JobRepository {
 
     @Override
     public SearchCandidates<JobAggregate> searchJobCandidates(List<String> queryTokens, int limit) {
-        var ranked = namedJdbc.query("""
-                        WITH query_tokens AS (
-                            SELECT token FROM unnest(CAST(:queryTokens AS text[])) AS token
-                        ), query_prefixes AS (
-                            SELECT token AS query_token, left(token, length) AS prefix
-                            FROM query_tokens CROSS JOIN LATERAL generate_series(1, length(token)) AS length
-                        ), posting_hits AS (
-                            SELECT posting.job_id, posting.field_key, query.token AS query_token, posting.weight
-                            FROM query_tokens query
-                            JOIN job_schema.search_terms posting
-                              ON posting.term >= query.token AND posting.term < query.token || '~'
-                            UNION
-                            SELECT posting.job_id, posting.field_key, prefix.query_token, posting.weight
-                            FROM query_prefixes prefix
-                            JOIN job_schema.search_terms posting ON posting.term = prefix.prefix
-                        ), scored AS (
-                            SELECT job_id, SUM(weight)::integer AS score
-                            FROM posting_hits
-                            GROUP BY job_id
-                        ), matching AS (
-                            SELECT job.*, scored.score
-                            FROM scored
-                            JOIN job_schema.jobs job ON job.id = scored.job_id
-                            ORDER BY scored.score DESC, job.title, job.id
-                            LIMIT :fetchLimit
-                        )
-                        SELECT * FROM matching ORDER BY score DESC, title, id
-                        """, new MapSqlParameterSource()
+        var prefixes = SearchTextNormalizer.prefixes(queryTokens);
+        var ranked = namedJdbc.query(SEARCH_CANDIDATES_SQL, new MapSqlParameterSource()
                         .addValue("queryTokens", queryTokens.toArray(String[]::new))
+                        .addValue("queryPrefixes", prefixes.values().toArray(String[]::new))
+                        .addValue("prefixOwners", prefixes.owners().toArray(String[]::new))
+                        .addValue("postingLimit", MAX_POSTINGS_PER_TOKEN)
+                        .addValue("postingFetchLimit", MAX_POSTINGS_PER_TOKEN + 1)
                         .addValue("fetchLimit", MAX_SEARCH_CANDIDATES + 1),
                 (resultSet, rowNumber) -> new RankedJob(
-                        mapJob(resultSet, rowNumber), resultSet.getInt("score")));
+                        mapJob(resultSet, rowNumber), resultSet.getInt("score"),
+                        resultSet.getBoolean("posting_truncated")));
         if (ranked.isEmpty()) {
             return new SearchCandidates<>(0, List.of());
         }
-        boolean hasMore = ranked.size() > MAX_SEARCH_CANDIDATES;
+        boolean hasMore = ranked.size() > MAX_SEARCH_CANDIDATES || ranked.getFirst().postingTruncated();
         var jobs = ranked.stream().limit(MAX_SEARCH_CANDIDATES).map(RankedJob::job).toList();
         return new SearchCandidates<>(jobs.size(), hasMore, aggregatesForJobs(jobs));
     }
@@ -545,7 +610,7 @@ public class PostgresJobRepository implements JobRepository {
         return resultSet.getTimestamp(column).toInstant();
     }
 
-    private record RankedJob(JobPosting job, int score) {
+    private record RankedJob(JobPosting job, int score, boolean postingTruncated) {
     }
 
     private record JobPageRow(JobPosting job, Instant snapshotAt) {

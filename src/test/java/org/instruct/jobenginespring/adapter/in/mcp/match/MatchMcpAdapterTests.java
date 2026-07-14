@@ -143,6 +143,10 @@ class MatchMcpAdapterTests {
         assertFieldRequired(MatchMcpAdapter.ProfileRequest.class, "profileId", true);
         assertFieldRequired(MatchMcpAdapter.ProfileRequest.class, "limit", false);
         assertFieldRequired(MatchMcpAdapter.ProfileRequest.class, "cursor", false);
+        assertFieldRequired(MatchMcpAdapter.ReportFilter.class, "profileId", false);
+        assertFieldRequired(MatchMcpAdapter.ReportFilter.class, "jobId", false);
+        assertFieldRequired(MatchMcpAdapter.ReportFilter.class, "limit", false);
+        assertFieldRequired(MatchMcpAdapter.ReportFilter.class, "cursor", false);
         assertFieldRequired(MatchMcpAdapter.ReviewFilter.class, "reportId", false);
         assertFieldRequired(MatchMcpAdapter.ReviewFilter.class, "limit", false);
         assertFieldRequired(MatchMcpAdapter.ReviewFilter.class, "cursor", false);

@@ -71,7 +71,11 @@ public class MatchMcpAdapter {
         public ProfileRequest(UUID profileId){this(profileId,null,null);}
     }
     public record IdRequest(UUID id){}
-    public record ReportFilter(UUID profileId,UUID jobId,Integer limit,String cursor){}
+    public record ReportFilter(
+            @McpToolParam(required=false,description="Optional profile UUID filter") UUID profileId,
+            @McpToolParam(required=false,description="Optional job UUID filter") UUID jobId,
+            @McpToolParam(required=false,description="Maximum page size, 1-100") Integer limit,
+            @McpToolParam(required=false,description="Opaque cursor returned by the previous page") String cursor){}
     public record ReviewFilter(
             @McpToolParam(required=false,description="Optional report UUID filter") UUID reportId,
             @McpToolParam(required=false,description="Maximum page size, 1-100") Integer limit,

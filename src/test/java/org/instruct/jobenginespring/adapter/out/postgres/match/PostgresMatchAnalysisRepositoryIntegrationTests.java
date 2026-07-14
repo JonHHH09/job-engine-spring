@@ -22,6 +22,7 @@ import java.sql.Timestamp;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -71,6 +72,7 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
         assertEquals(report.id(), repository.saveReport(new MatchReport(UUID.randomUUID(), PROFILE, JOB, NOW, NOW,
                 report.algorithmVersion(), 80, 100, report.outcome(), false, report.components(), report.evidence(), NOW)).id());
         assertEquals(1, repository.listReports(PROFILE, null).size());
+        assertEquals(1, repository.listReports(PROFILE, JOB).size());
         assertTrue(repository.listReports(UUID.randomUUID(), null).isEmpty());
 
         var review = review(report.id());
@@ -224,6 +226,8 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
         assertEquals(6, dataSource.rowsRead());
         assertThrows(RuntimeException.class, () -> PageRequest.of(5, reviews.nextCursor(),
                 "match-reviews", "report=" + UUID.randomUUID()));
+        assertEquals(5, repository.listReviews(null,
+                PageRequest.of(5, null, "match-reviews", "report=null")).items().size());
 
         var firstReview = reviews.items().getFirst();
         repository.saveDisagreement(disagreementAt(report.id(), firstReview.id(),
@@ -292,30 +296,177 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
         assertNull(thirdDisagreements.nextCursor());
     }
 
-    @Test void matchHistoryKeysetIndexesBackFilteredAndUnfilteredPlans() {
+    @Test void historyCursorsTraverseEqualTimestampsInCanonicalDescendingUuidOrder() {
+        var report = repository.saveReport(report());
+        var reviews = java.util.stream.IntStream.range(0, 3).mapToObj(index -> {
+                    var value = reviewAt(report.id(), "tie-" + index, NOW);
+                    return repository.saveReview(new MatchReview(value.id(), value.reportId(), value.reviewer(),
+                            value.model(), value.reviewVersion(), value.overallScore() + index, value.outcome(),
+                            value.blockerMismatch(), value.components(), value.evidence(), value.summary(), NOW));
+                })
+                .toList();
+        var expectedReviews = reviews.stream().map(MatchReview::id)
+                .sorted(java.util.Comparator.comparing(UUID::toString).reversed()).toList();
+
+        var traversedReviews = new java.util.ArrayList<UUID>();
+        String reviewCursor = null;
+        do {
+            var page = repository.listReviews(report.id(), PageRequest.of(1, reviewCursor,
+                    "match-reviews", "report=" + report.id()));
+            traversedReviews.addAll(page.items().stream().map(MatchReview::id).toList());
+            reviewCursor = page.nextCursor();
+        } while (reviewCursor != null);
+        assertEquals(expectedReviews, traversedReviews);
+
+        var reasons = List.of(DisagreementReason.OVERALL_DELTA, DisagreementReason.OUTCOME_MISMATCH,
+                DisagreementReason.BLOCKER_MISMATCH);
+        var disagreements = java.util.stream.IntStream.range(0, 3).mapToObj(index -> repository.saveDisagreement(
+                disagreementAt(report.id(), reviews.get(index).id(), Set.of(reasons.get(index)), NOW))).toList();
+        var expectedDisagreements = disagreements.stream().map(MatchDisagreement::id)
+                .sorted(java.util.Comparator.comparing(UUID::toString).reversed()).toList();
+
+        var traversedDisagreements = new java.util.ArrayList<UUID>();
+        String disagreementCursor = null;
+        do {
+            var page = repository.listDisagreements(report.id(), PageRequest.of(1, disagreementCursor,
+                    "match-disagreements", "report=" + report.id()));
+            traversedDisagreements.addAll(page.items().stream().map(MatchDisagreement::id).toList());
+            disagreementCursor = page.nextCursor();
+        } while (disagreementCursor != null);
+        assertEquals(expectedDisagreements, traversedDisagreements);
+    }
+
+    @Test void exactProductionHistoryQueriesUseKeysetIndexesAtScaleWithNormalAndGenericPlans() {
         var indexNames = jdbc.queryForList("""
                 SELECT indexname FROM pg_indexes
                 WHERE schemaname = 'match' AND indexname IN (
+                    'reports_list_created_id_idx', 'reports_profile_created_id_idx',
+                    'reports_job_created_id_idx', 'reports_profile_job_created_id_idx',
                     'reviews_list_created_id_idx', 'reviews_report_created_id_idx',
                     'disagreements_list_created_id_idx', 'disagreements_report_created_id_idx')
                 ORDER BY indexname
                 """, String.class);
         assertEquals(List.of("disagreements_list_created_id_idx", "disagreements_report_created_id_idx",
-                "reviews_list_created_id_idx", "reviews_report_created_id_idx"), indexNames);
+                "reports_job_created_id_idx", "reports_list_created_id_idx", "reports_profile_created_id_idx",
+                "reports_profile_job_created_id_idx", "reviews_list_created_id_idx",
+                "reviews_report_created_id_idx"), indexNames);
 
-        jdbc.execute("SET enable_seqscan = off");
-        try {
-            assertPlanUses("EXPLAIN SELECT * FROM match.reviews ORDER BY created_at DESC,id LIMIT 5",
-                    "reviews_list_created_id_idx");
-            assertPlanUses("EXPLAIN SELECT * FROM match.reviews WHERE report_id='" + UUID.randomUUID()
-                    + "' ORDER BY created_at DESC,id LIMIT 5", "reviews_report_created_id_idx");
-            assertPlanUses("EXPLAIN SELECT * FROM match.disagreements ORDER BY created_at DESC,id LIMIT 5",
-                    "disagreements_list_created_id_idx");
-            assertPlanUses("EXPLAIN SELECT * FROM match.disagreements WHERE report_id='" + UUID.randomUUID()
-                    + "' ORDER BY created_at DESC,id LIMIT 5", "disagreements_report_created_id_idx");
-        } finally {
-            jdbc.execute("RESET enable_seqscan");
-        }
+        var unfilteredReport = repository.saveReport(report());
+        var filteredReport = saveReportAt("history-plan-filter", NOW.plusSeconds(1));
+        var noiseProfile = UUID.randomUUID();
+        var noiseJob = UUID.randomUUID();
+        jdbc.update("INSERT INTO profile.profiles VALUES (?,?,?,NULL,NULL,?,?)", noiseProfile,
+                "Planner Noise", "planner-noise@example.test", Timestamp.from(NOW), Timestamp.from(NOW));
+        var seedTransaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+        seedTransaction.executeWithoutResult(status -> {
+            jdbc.update("INSERT INTO job_schema.jobs VALUES (?,?,?,?,NULL,NULL,?,NULL,NULL,NULL,NULL,?,?,?)",
+                    noiseJob, "text", "planner-noise", "Planner Noise", "Safe planner description",
+                    "planner-noise-fingerprint", Timestamp.from(NOW), Timestamp.from(NOW));
+            jdbc.update("""
+                    INSERT INTO job_schema.job_text_ingestions
+                        (id, job_id, source_label, input_text_hash, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """, UUID.randomUUID(), noiseJob, "planner-noise", "planner-noise-hash", Timestamp.from(NOW));
+        });
+        jdbc.update("""
+                INSERT INTO match.reports (
+                    id, profile_id, job_id, profile_revision, job_revision, algorithm_version,
+                    overall_score, confidence, outcome, blocker_mismatch, components, evidence, created_at)
+                SELECT md5('plan-report-' || value)::uuid,
+                       CASE WHEN value <= 5000 OR value BETWEEN 10001 AND 15000
+                            THEN ?::uuid ELSE ?::uuid END,
+                       CASE WHEN value <= 10000 THEN ?::uuid ELSE ?::uuid END,
+                       ?::timestamptz - value * interval '1 second',
+                       ?::timestamptz - value * interval '1 second',
+                       'planner-v' || value, 50, 50, 'PARTIAL_MATCH', false,
+                       '[]'::jsonb, '[]'::jsonb,
+                       ?::timestamptz - value * interval '1 second'
+                FROM generate_series(1, 15100) value
+                """, noiseProfile, PROFILE, noiseJob, JOB, Timestamp.from(NOW), Timestamp.from(NOW),
+                Timestamp.from(NOW));
+        jdbc.update("""
+                INSERT INTO match.reviews (
+                    id, fingerprint, report_id, reviewer, model, review_version, overall_score, outcome,
+                    blocker_mismatch, components, evidence, summary, created_at)
+                SELECT md5('plan-review-' || value)::uuid,
+                       md5('plan-review-fingerprint-' || value)::uuid,
+                       CASE WHEN value <= 5000 THEN ?::uuid ELSE ?::uuid END,
+                       'plan-reviewer', 'plan-model', 'v1', 50, 'PARTIAL_MATCH', false,
+                       '[]'::jsonb, '[]'::jsonb, 'review_consistent',
+                       ?::timestamptz - value * interval '1 second'
+                FROM generate_series(1, 5100) value
+                """, unfilteredReport.id(), filteredReport.id(), Timestamp.from(NOW));
+        jdbc.update("""
+                INSERT INTO match.disagreements (
+                    id, fingerprint, report_id, review_id, policy_version, reasons,
+                    evidence_defect_codes, status, created_at, updated_at)
+                SELECT md5('plan-disagreement-' || review.id)::uuid,
+                       md5('plan-disagreement-fingerprint-' || review.id)::uuid,
+                       review.report_id, review.id, 'divergence-v1', '["OVERALL_DELTA"]'::jsonb,
+                       '[]'::jsonb, 'PENDING_ESCALATION', review.created_at, review.created_at
+                FROM match.reviews review
+                WHERE review.reviewer = 'plan-reviewer'
+                """);
+        jdbc.execute("ANALYZE match.reviews");
+        jdbc.execute("ANALYZE match.disagreements");
+        jdbc.execute("ANALYZE match.reports");
+
+        var transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+        transaction.executeWithoutResult(status -> {
+            try {
+                assertPreparedReportPlansUse("reports_unfiltered",
+                        PostgresMatchAnalysisRepository.REPORT_PAGE_UNFILTERED_SQL,
+                        null, null, "reports_list_created_id_idx", NOW.minusSeconds(10));
+                assertPreparedReportPlansUse("reports_profile",
+                        PostgresMatchAnalysisRepository.REPORT_PAGE_PROFILE_SQL,
+                        PROFILE, null, "reports_profile_created_id_idx", NOW.minusSeconds(15_005));
+                assertPreparedReportPlansUse("reports_job",
+                        PostgresMatchAnalysisRepository.REPORT_PAGE_JOB_SQL,
+                        null, JOB, "reports_job_created_id_idx", NOW.minusSeconds(15_005));
+                assertPreparedReportPlansUse("reports_profile_job",
+                        PostgresMatchAnalysisRepository.REPORT_PAGE_PROFILE_JOB_SQL,
+                        PROFILE, JOB, "reports_profile_job_created_id_idx", NOW.minusSeconds(15_005));
+                assertPreparedPlansUse("reviews_unfiltered", PostgresMatchAnalysisRepository.REVIEW_PAGE_UNFILTERED_SQL,
+                        null, "reviews_list_created_id_idx", NOW.minusSeconds(10));
+                assertPreparedPlansUse("reviews_filtered", PostgresMatchAnalysisRepository.REVIEW_PAGE_FILTERED_SQL,
+                        filteredReport.id(), "reviews_report_created_id_idx", NOW.minusSeconds(5_005));
+                assertPreparedPlansUse("disagreements_unfiltered",
+                        PostgresMatchAnalysisRepository.DISAGREEMENT_PAGE_UNFILTERED_SQL,
+                        null, "disagreements_list_created_id_idx", NOW.minusSeconds(10));
+                assertPreparedPlansUse("disagreements_filtered",
+                        PostgresMatchAnalysisRepository.DISAGREEMENT_PAGE_FILTERED_SQL,
+                        filteredReport.id(), "disagreements_report_created_id_idx", NOW.minusSeconds(5_005));
+
+                jdbc.execute("DEALLOCATE ALL");
+                jdbc.execute("SET LOCAL plan_cache_mode = force_generic_plan");
+                assertPreparedReportPlansUse("reports_unfiltered_generic",
+                        PostgresMatchAnalysisRepository.REPORT_PAGE_UNFILTERED_SQL,
+                        null, null, "reports_list_created_id_idx", NOW.minusSeconds(10));
+                assertPreparedReportPlansUse("reports_profile_generic",
+                        PostgresMatchAnalysisRepository.REPORT_PAGE_PROFILE_SQL,
+                        PROFILE, null, "reports_profile_created_id_idx", NOW.minusSeconds(15_005));
+                assertPreparedReportPlansUse("reports_job_generic",
+                        PostgresMatchAnalysisRepository.REPORT_PAGE_JOB_SQL,
+                        null, JOB, "reports_job_created_id_idx", NOW.minusSeconds(15_005));
+                assertPreparedReportPlansUse("reports_profile_job_generic",
+                        PostgresMatchAnalysisRepository.REPORT_PAGE_PROFILE_JOB_SQL,
+                        PROFILE, JOB, "reports_profile_job_created_id_idx", NOW.minusSeconds(15_005));
+                assertPreparedPlansUse("reviews_unfiltered_generic",
+                        PostgresMatchAnalysisRepository.REVIEW_PAGE_UNFILTERED_SQL,
+                        null, "reviews_list_created_id_idx", NOW.minusSeconds(10));
+                assertPreparedPlansUse("reviews_filtered_generic",
+                        PostgresMatchAnalysisRepository.REVIEW_PAGE_FILTERED_SQL,
+                        filteredReport.id(), "reviews_report_created_id_idx", NOW.minusSeconds(5_005));
+                assertPreparedPlansUse("disagreements_unfiltered_generic",
+                        PostgresMatchAnalysisRepository.DISAGREEMENT_PAGE_UNFILTERED_SQL,
+                        null, "disagreements_list_created_id_idx", NOW.minusSeconds(10));
+                assertPreparedPlansUse("disagreements_filtered_generic",
+                        PostgresMatchAnalysisRepository.DISAGREEMENT_PAGE_FILTERED_SQL,
+                        filteredReport.id(), "disagreements_report_created_id_idx", NOW.minusSeconds(5_005));
+            } finally {
+                jdbc.execute("DEALLOCATE ALL");
+            }
+        });
     }
 
     @Test void joinedRevisionMapperHandlesMissingCurrentRows() throws Exception {
@@ -377,8 +528,94 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
         return new MatchDisagreement(id, reportId, reviewId, "divergence-v1", reasons, List.of(),
                 DisagreementStatus.PENDING_ESCALATION, null, createdAt, createdAt);
     }
-    private static void assertPlanUses(String sql, String indexName) {
-        var plan = String.join("\n", jdbc.queryForList(sql, String.class));
-        assertTrue(plan.contains(indexName), plan);
+    private static void assertPreparedPlansUse(String name, String productionSql, UUID reportId,
+                                               String indexName, Instant cursorCreatedAt) {
+        boolean filtered = reportId != null;
+        var parameterTypes = filtered
+                ? "(uuid,timestamptz,timestamptz,uuid,integer)"
+                : "(timestamptz,timestamptz,uuid,integer)";
+        jdbc.execute("PREPARE " + name + parameterTypes + " AS " + positional(productionSql, filtered));
+        var firstArguments = filtered ? "('" + reportId + "',NULL,NULL,NULL,5)" : "(NULL,NULL,NULL,5)";
+        var resumedArguments = filtered
+                ? "('" + reportId + "','" + NOW.plusSeconds(10) + "','" + cursorCreatedAt
+                    + "','00000000-0000-0000-0000-000000000000',5)"
+                : "('" + NOW.plusSeconds(10) + "','" + cursorCreatedAt
+                    + "','00000000-0000-0000-0000-000000000000',5)";
+        assertPlanUsesIndex(name, firstArguments, indexName);
+        assertPlanUsesIndex(name, resumedArguments, indexName);
+    }
+
+    private static void assertPreparedReportPlansUse(String name, String productionSql, UUID profileId,
+                                                     UUID jobId, String indexName, Instant cursorCreatedAt) {
+        int filters = (profileId == null ? 0 : 1) + (jobId == null ? 0 : 1);
+        var parameterTypes = switch (filters) {
+            case 0 -> "(timestamptz,timestamptz,uuid,integer)";
+            case 1 -> "(uuid,timestamptz,timestamptz,uuid,integer)";
+            default -> "(uuid,uuid,timestamptz,timestamptz,uuid,integer)";
+        };
+        jdbc.execute("PREPARE " + name + parameterTypes + " AS "
+                + reportPositional(productionSql, profileId != null, jobId != null));
+        var filtersSql = profileId != null && jobId != null
+                ? "'" + profileId + "','" + jobId + "',"
+                : profileId != null ? "'" + profileId + "'," : jobId != null ? "'" + jobId + "'," : "";
+        var firstArguments = "(" + filtersSql + "NULL,NULL,NULL,5)";
+        var resumedArguments = "(" + filtersSql + "'" + NOW.plusSeconds(10) + "','" + cursorCreatedAt
+                + "','ffffffff-ffff-ffff-ffff-ffffffffffff',5)";
+        assertPlanUsesIndex(name, firstArguments, indexName);
+        var resumedIndexes = profileId != null && jobId != null
+                ? List.of(indexName, "reports_profile_created_id_idx", "reports_job_created_id_idx",
+                    "reports_list_created_id_idx")
+                : filters == 0 ? List.of(indexName) : List.of(indexName, "reports_list_created_id_idx");
+        assertPlanUsesAnyIndex(name, resumedArguments, resumedIndexes);
+    }
+
+    private static void assertPlanUsesIndex(String name, String arguments, String indexName) {
+        assertPlanUsesAnyIndex(name, arguments, List.of(indexName));
+    }
+
+    private static void assertPlanUsesAnyIndex(String name, String arguments, List<String> indexNames) {
+        var plan = String.join("\n", jdbc.queryForList(
+                "EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) EXECUTE " + name + arguments, String.class));
+        var used = indexNames.stream().filter(plan::contains).toList();
+        assertFalse(used.isEmpty(), plan);
+        assertFalse(plan.contains("Seq Scan on reports"), plan);
+        assertFalse(plan.contains("Seq Scan on reviews"), plan);
+        assertFalse(plan.contains("Seq Scan on disagreements"), plan);
+        assertTrue(used.stream().mapToLong(index -> indexRowsExamined(plan, index)).sum() <= 20, plan);
+    }
+
+    private static long indexRowsExamined(String plan, String indexName) {
+        var rows = Pattern.compile("actual [^)]*rows=(\\d+(?:\\.\\d+)?) loops=(\\d+)");
+        return plan.lines().filter(line -> line.contains(indexName)).mapToLong(line -> {
+            var matcher = rows.matcher(line);
+            assertTrue(matcher.find(), line);
+            return (long) Math.ceil(Double.parseDouble(matcher.group(1)) * Long.parseLong(matcher.group(2)));
+        }).sum();
+    }
+
+    private static String positional(String sql, boolean filtered) {
+        int offset = filtered ? 1 : 0;
+        var positional = sql
+                .replace(":snapshotAt", "$" + (offset + 1))
+                .replace(":cursorCreatedAt", "$" + (offset + 2))
+                .replace(":cursorId", "$" + (offset + 3))
+                .replace(":fetchLimit", "$" + (offset + 4));
+        return filtered ? positional.replace(":reportId", "$1") : positional;
+    }
+
+    private static String reportPositional(String sql, boolean profileFiltered, boolean jobFiltered) {
+        int offset = 0;
+        var positional = sql;
+        if (profileFiltered) {
+            positional = positional.replace(":profileId", "$" + ++offset);
+        }
+        if (jobFiltered) {
+            positional = positional.replace(":jobId", "$" + ++offset);
+        }
+        return positional
+                .replace(":snapshotAt", "$" + (offset + 1))
+                .replace(":cursorCreatedAt", "$" + (offset + 2))
+                .replace(":cursorId", "$" + (offset + 3))
+                .replace(":fetchLimit", "$" + (offset + 4));
     }
 }

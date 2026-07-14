@@ -28,12 +28,11 @@ import java.util.UUID;
  */
 public interface ProfileRepository {
 
-    List<UserProfile> listProfiles();
-
-    default Page<UserProfile> listProfiles(PageRequest request) {
-        var profiles = listProfiles().stream().limit(request.limit()).toList();
-        return new Page<>(profiles, null);
+    default List<UserProfile> listProfiles() {
+        return listProfiles(PageRequest.of(null, null, "profiles", "all")).items();
     }
+
+    Page<UserProfile> listProfiles(PageRequest request);
 
     Optional<UserProfile> findProfileById(UUID profileId);
 
@@ -53,10 +52,11 @@ public interface ProfileRepository {
 
     List<ProjectTechnology> listProjectTechnologies(UUID profileId);
 
-    List<ProfileAggregate> listProfileAggregates();
+    Page<ProfileAggregate> listProfileAggregates(PageRequest request);
 
     default SearchCandidates<ProfileAggregate> searchProfileCandidates(List<String> queryTokens, int limit) {
-        var aggregates = listProfileAggregates();
+        var aggregates = listProfileAggregates(PageRequest.of(PageRequest.MAX_LIMIT, null,
+                "profile-search-fallback", queryTokens.toString())).items();
         return new SearchCandidates<>(-1, aggregates);
     }
 

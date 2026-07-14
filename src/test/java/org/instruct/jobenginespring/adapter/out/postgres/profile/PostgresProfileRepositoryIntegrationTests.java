@@ -1,6 +1,7 @@
 package org.instruct.jobenginespring.adapter.out.postgres.profile;
 
 import org.flywaydb.core.Flyway;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
 import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
 import org.instruct.jobenginespring.domain.profile.Education;
@@ -159,6 +160,18 @@ class PostgresProfileRepositoryIntegrationTests {
     }
 
     @Test
+    void noArgCompatibilityReadsNeverExceedTheDefaultPage() {
+        for (int index = 0; index < 25; index++) {
+            repository.saveProfileAggregate(identityAggregate(
+                    UUID.randomUUID(), "Bounded Profile " + index, "bounded" + index + "@example.test"));
+        }
+
+        assertEquals(20, repository.listProfiles().size());
+        assertEquals(20, repository.listProfileAggregates(
+                PageRequest.of(null, null, "profile-aggregates", "all")).items().size());
+    }
+
+    @Test
     void findsIdentityCandidatesByCanonicalEmailAndNormalizedLink() {
         repository.saveProfileAggregate(completeAggregate());
 
@@ -253,7 +266,8 @@ class PostgresProfileRepositoryIntegrationTests {
 
     @Test
     void listProfileAggregatesReturnsEmptyWhenNoRowsExist() {
-        assertEquals(List.of(), repository.listProfileAggregates());
+        assertEquals(List.of(), repository.listProfileAggregates(
+                PageRequest.of(null, null, "profile-aggregates", "all")).items());
     }
 
     private static ProfileAggregate sampleAggregate(

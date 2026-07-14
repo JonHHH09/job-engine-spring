@@ -46,8 +46,9 @@ public class ProfileSearchService {
                 .map(aggregate -> match(aggregate, queryTokens))
                 .filter(match -> match.score() > 0)
                 .sorted(Comparator.comparingInt(ProfileSearchMatch::score).reversed()
-                        .thenComparing(match -> match.profile().fullName())
-                        .thenComparing(match -> match.profile().id()))
+                        // UUID text order exactly matches PostgreSQL's UUID byte order and avoids
+                        // deployment-specific text collation at the bounded-candidate boundary.
+                        .thenComparing(match -> match.profile().id().toString()))
                 .toList();
         List<ProfileSearchMatch> returned = matches.stream()
                 .limit(safeRequest.limit())
@@ -65,15 +66,23 @@ public class ProfileSearchService {
         if (request.query() == null || request.query().isBlank()) {
             throw validation("query", "must not be blank");
         }
-        List<String> queryTokens = tokens(request.query());
+        String query = request.query().strip();
+        if (query.codePointCount(0, query.length()) > SearchTextNormalizer.MAX_QUERY_CHARACTERS) {
+            throw validation("query", "must not exceed " + SearchTextNormalizer.MAX_QUERY_CHARACTERS + " characters");
+        }
+        List<String> queryTokens = tokens(query);
         if (queryTokens.isEmpty()) {
             throw validation("query", "must contain searchable text");
+        }
+        if (queryTokens.size() > SearchTextNormalizer.MAX_QUERY_TOKENS) {
+            throw validation("query", "must contain at most " + SearchTextNormalizer.MAX_QUERY_TOKENS
+                    + " searchable terms");
         }
         int limit = request.limit() == null ? DEFAULT_LIMIT : request.limit();
         if (limit < 1 || limit > MAX_LIMIT) {
             throw validation("limit", "must be between 1 and " + MAX_LIMIT);
         }
-        return new ProfileSearchRequest(request.query().strip(), limit);
+        return new ProfileSearchRequest(query, limit);
     }
 
     private static ProfileSearchMatch match(ProfileAggregate aggregate, List<String> queryTokens) {

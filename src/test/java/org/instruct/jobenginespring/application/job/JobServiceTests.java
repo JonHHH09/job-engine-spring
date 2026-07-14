@@ -911,6 +911,16 @@ class JobServiceTests {
         assertEquals(Map.of("field", "query", "reason", "must not be blank"), searchException.details());
         ApplicationException punctuationSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("!!!", 10)));
         assertEquals(Map.of("field", "query", "reason", "must contain searchable text"), punctuationSearchException.details());
+        ApplicationException longSearchException = assertThrows(ApplicationException.class,
+                () -> service.searchJobs(new JobSearchRequest("a".repeat(257), 10)));
+        assertEquals(Map.of("field", "query", "reason", "must not exceed 256 characters"),
+                longSearchException.details());
+        ApplicationException manyTermsSearchException = assertThrows(ApplicationException.class,
+                () -> service.searchJobs(new JobSearchRequest(
+                        java.util.stream.IntStream.range(0, 17).mapToObj(index -> "term" + index)
+                                .collect(java.util.stream.Collectors.joining(" ")), 10)));
+        assertEquals(Map.of("field", "query", "reason", "must contain at most 16 searchable terms"),
+                manyTermsSearchException.details());
         ApplicationException limitSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("java", 101)));
         assertEquals(Map.of("field", "limit", "reason", "must be between 1 and 100"), limitSearchException.details());
         ApplicationException lowLimitSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("java", 0)));
@@ -1128,8 +1138,8 @@ class JobServiceTests {
         private int findJobAggregateCalls;
 
         @Override
-        public List<JobPosting> listJobs() {
-            return aggregates.values().stream().map(JobAggregate::job).toList();
+        public Page<JobPosting> listJobs(PageRequest request) {
+            return new Page<>(aggregates.values().stream().limit(request.limit()).map(JobAggregate::job).toList(), null);
         }
 
         @Override
