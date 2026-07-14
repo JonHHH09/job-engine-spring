@@ -40,4 +40,19 @@ public class SpringTransactionLifecycle implements TransactionLifecycle {
             }
         });
     }
+
+    @Override
+    public void afterCompletion(Runnable action) {
+        Runnable safeAction = Objects.requireNonNull(action, "action must not be null");
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            safeAction.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                safeAction.run();
+            }
+        });
+    }
 }

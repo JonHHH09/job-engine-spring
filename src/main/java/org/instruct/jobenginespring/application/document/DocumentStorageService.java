@@ -56,7 +56,6 @@ public class DocumentStorageService {
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
-    @Transactional
     public StoredDocumentMetadata storeDocumentFile(StoreDocumentFileRequest request) {
         StoreDocumentFileRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
         Path path = importPolicy.requireAllowed(validatePath(safeRequest.path()));
@@ -85,7 +84,6 @@ public class DocumentStorageService {
                 .orElseThrow(() -> notFound(documentId));
     }
 
-    @Transactional
     public StoredPdfTextExtractionResult extractStoredPdfText(ExtractStoredPdfTextRequest request) {
         ExtractStoredPdfTextRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
         UUID documentId = validateDocumentId(safeRequest.documentId());

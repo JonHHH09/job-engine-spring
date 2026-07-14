@@ -194,6 +194,11 @@ class JobEngineSpringApplicationTests {
                 public boolean deleteFileIfUnreferenced(UUID fileId) {
                     return false;
                 }
+
+                @Override
+                public boolean prepareGeneratedFileCleanup(String filePath) {
+                    return false;
+                }
             };
         }
 

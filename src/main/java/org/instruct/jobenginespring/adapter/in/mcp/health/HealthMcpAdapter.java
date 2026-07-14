@@ -1,8 +1,8 @@
 package org.instruct.jobenginespring.adapter.in.mcp.health;
 
 import lombok.RequiredArgsConstructor;
-import org.instruct.jobenginespring.application.health.DatabaseHealthService;
-import org.instruct.jobenginespring.application.health.DatabaseHealthService.DatabaseHealthReport;
+import org.instruct.jobenginespring.application.health.ApplicationHealthService;
+import org.instruct.jobenginespring.application.health.ApplicationHealthService.ApplicationHealthReport;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.stereotype.Component;
 
@@ -10,13 +10,13 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class HealthMcpAdapter {
 
-    private final DatabaseHealthService databaseHealthService;
+    private final ApplicationHealthService applicationHealthService;
 
     @McpTool(
             name = "health",
-            description = "Check application database readiness without returning connection details or secrets."
+            description = "Check database readiness and sanitized generated-resume cleanup backlog health."
     )
-    public DatabaseHealthReport health() {
-        return databaseHealthService.checkHealth();
+    public ApplicationHealthReport health() {
+        return applicationHealthService.checkHealth();
     }
 }

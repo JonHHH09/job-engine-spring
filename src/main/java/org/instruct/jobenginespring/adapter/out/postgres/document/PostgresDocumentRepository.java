@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
@@ -42,6 +43,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public StoredDocumentMetadata saveFile(StoredDocumentFile file) {
         Objects.requireNonNull(file, "file must not be null");
         namedJdbc.update("""
@@ -113,6 +115,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction) {
         Objects.requireNonNull(extraction, "extraction must not be null");
         MapSqlParameterSource parameters = extractionParameters(extraction);
@@ -134,6 +137,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
         Objects.requireNonNull(extraction, "extraction must not be null");
         namedJdbc.update("""
@@ -163,6 +167,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public boolean deleteFileIfUnreferenced(UUID fileId) {
         Optional<UUID> deletedBlobId = jdbc.sql("""
                         DELETE FROM document.documents stored_document
@@ -206,6 +211,30 @@ public class PostgresDocumentRepository implements DocumentRepository {
                 .param("blobId", blobId)
                 .update());
         return deletedBlobId.isPresent();
+    }
+
+    @Override
+    @Transactional
+    public boolean prepareGeneratedFileCleanup(String filePath) {
+        String safeFilePath = Objects.requireNonNull(filePath, "filePath must not be null");
+        return !generatedResumeReferenceExists(safeFilePath);
+    }
+
+    private boolean generatedResumeReferenceExists(String filePath) {
+        return jdbc.sql("""
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM profile.profile_resume_documents
+                            WHERE file_path = :filePath
+                            UNION ALL
+                            SELECT 1
+                            FROM resume.resume_variants
+                            WHERE file_path = :filePath
+                        )
+                        """)
+                .param("filePath", filePath)
+                .query(Boolean.class)
+                .single();
     }
 
     private static MapSqlParameterSource fileParameters(StoredDocumentFile file) {

@@ -702,6 +702,30 @@ class GeneratePdfResumeServiceTests {
         assertEquals(List.of(cleanupFailure), List.of(thrown.getSuppressed()));
     }
 
+    @Test
+    void replacementFailureCompensatesStoredDocumentAndGeneratedFile() {
+        DocumentStorageService storage = mock(DocumentStorageService.class);
+        GeneratedResumeAssetService assets = mock(GeneratedResumeAssetService.class);
+        StoredDocumentMetadata document = new StoredDocumentMetadata(
+                UUID.randomUUID(), "resume.pdf", DocumentStorageService.PDF_MEDIA_TYPE, 10, "sha", NOW, NOW
+        );
+        IllegalStateException replacementFailure = new IllegalStateException("replacement failed");
+        when(storage.storeGeneratedDocumentFile(any(), eq(DocumentStorageService.PDF_MEDIA_TYPE)))
+                .thenReturn(document);
+        when(assets.replace(any(), any())).thenThrow(replacementFailure);
+        ProfileResumePdfGenerationWorkflow workflow = new ProfileResumePdfGenerationWorkflow(
+                profileRepository, storage, assets, Clock.fixed(NOW, ZoneOffset.UTC)
+        );
+
+        IllegalStateException thrown = assertThrows(
+                IllegalStateException.class,
+                () -> workflow.generateAndLink(command(tempDir.resolve("replacement-failed")))
+        );
+
+        assertSame(replacementFailure, thrown);
+        verify(assets).discardFailedGeneratedFile(eq(document.id()), any());
+    }
+
     private static ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand command(Path outputDirectory) {
         return new ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand(
                 PROFILE_ID, "master_resume", outputDirectory, "resume.pdf", "Resume", "Body"
@@ -726,17 +750,33 @@ class GeneratePdfResumeServiceTests {
             public void afterRollback(Runnable action) {
                 // Unit tests execute without a transaction; failure paths clean up directly.
             }
+
+            @Override
+            public void afterCompletion(Runnable action) {
+                action.run();
+            }
         };
         GeneratedResumeCleanupService cleanupService = mock(GeneratedResumeCleanupService.class);
+        doAnswer(invocation -> {
+            files.deleteIfExists(invocation.getArgument(0));
+            return null;
+        }).when(cleanupService).enqueueAfterCompletion(any(String.class));
         when(cleanupService.enqueueAfterCommit(any(String.class))).thenAnswer(invocation -> {
             files.deleteIfExists(invocation.getArgument(0));
+            return UUID.randomUUID();
+        });
+        doAnswer(invocation -> {
+            files.deleteIfExists(invocation.getArgument(1));
+            return null;
+        }).when(cleanupService).enqueueAfterCompletion(any(UUID.class), any(String.class));
+        when(cleanupService.enqueueAfterCommit(any(UUID.class), any(String.class))).thenAnswer(invocation -> {
+            files.deleteIfExists(invocation.getArgument(1));
             return UUID.randomUUID();
         });
         return new GeneratedResumeAssetService(
                 profileRepository,
                 resumeDocumentRepository,
                 documentRepository,
-                files,
                 transactions,
                 cleanupService
         );
@@ -986,6 +1026,11 @@ class GeneratePdfResumeServiceTests {
         @Override
         public boolean deleteFileIfUnreferenced(UUID fileId) {
             return files.remove(fileId) != null;
+        }
+
+        @Override
+        public boolean prepareGeneratedFileCleanup(String filePath) {
+            return false;
         }
 
         private int fileCount() {

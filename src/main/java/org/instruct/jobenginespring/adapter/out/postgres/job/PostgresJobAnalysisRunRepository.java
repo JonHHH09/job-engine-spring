@@ -7,6 +7,7 @@ import org.instruct.jobenginespring.domain.job.JobAnalysisRun;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
@@ -38,6 +39,7 @@ public class PostgresJobAnalysisRunRepository implements JobAnalysisRunRepositor
     }
 
     @Override
+    @Transactional
     public JobAnalysisRun save(JobAnalysisRun analysisRun) {
         jdbc.sql("""
                         INSERT INTO job_schema.job_analysis_runs
@@ -87,6 +89,7 @@ public class PostgresJobAnalysisRunRepository implements JobAnalysisRunRepositor
     }
 
     @Override
+    @Transactional
     public JobAnalysisRun update(JobAnalysisRun analysisRun) {
         jdbc.sql("""
                         UPDATE job_schema.job_analysis_runs
