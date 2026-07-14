@@ -81,13 +81,39 @@ public class GeneratedResumeCleanupService {
         return taskId;
     }
 
+    public UUID enqueueAfterCommit(UUID documentId, String filePath) {
+        Instant now = clock.instant();
+        UUID taskId = cleanupRepository.enqueue(
+                documentId,
+                Objects.requireNonNull(filePath, "filePath must not be null"),
+                now
+        );
+        transactionLifecycle.afterCommit(() -> cleanupExecutor.attemptSafely(taskId));
+        return taskId;
+    }
+
     public void enqueueAfterCompletion(String filePath) {
         String safeFilePath = Objects.requireNonNull(filePath, "filePath must not be null");
         transactionLifecycle.afterCompletion(() -> enqueueNow(safeFilePath));
     }
 
+    public void enqueueAfterCompletion(UUID documentId, String filePath) {
+        String safeFilePath = Objects.requireNonNull(filePath, "filePath must not be null");
+        transactionLifecycle.afterCompletion(() -> enqueueNow(documentId, safeFilePath));
+    }
+
     public UUID enqueueNow(String filePath) {
         UUID taskId = taskCreator.enqueue(
+                Objects.requireNonNull(filePath, "filePath must not be null"),
+                clock.instant()
+        );
+        cleanupExecutor.attemptSafely(taskId);
+        return taskId;
+    }
+
+    public UUID enqueueNow(UUID documentId, String filePath) {
+        UUID taskId = taskCreator.enqueue(
+                documentId,
                 Objects.requireNonNull(filePath, "filePath must not be null"),
                 clock.instant()
         );

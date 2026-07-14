@@ -10,9 +10,17 @@ public interface GeneratedResumeCleanupRepository {
 
     UUID enqueue(String filePath, Instant createdAt);
 
+    default UUID enqueue(UUID documentId, String filePath, Instant createdAt) {
+        return enqueue(filePath, createdAt);
+    }
+
     List<UUID> findDueTaskIds(Instant now, int limit);
 
     Optional<String> claim(UUID taskId, Instant now, Instant leaseUntil);
+
+    default Optional<UUID> findDocumentId(UUID taskId) {
+        return Optional.empty();
+    }
 
     void markCompleted(UUID taskId, Instant completedAt);
 

@@ -44,7 +44,7 @@ public class GeneratedResumeAssetService {
             ProfileResumeDocument resumeDocument,
             String generatedFilePath
     ) {
-        deleteGeneratedFileOnRollback(generatedFilePath);
+        deleteGeneratedFileOnRollback(resumeDocument.documentId(), generatedFilePath);
         return replaceWithinTransaction(resumeDocument);
     }
 
@@ -69,12 +69,20 @@ public class GeneratedResumeAssetService {
         transactionLifecycle.afterRollback(() -> cleanupService.enqueueNow(filePath));
     }
 
+    void deleteGeneratedFileOnRollback(UUID documentId, String filePath) {
+        transactionLifecycle.afterRollback(() -> cleanupService.enqueueNow(documentId, filePath));
+    }
+
     void discardFailedGeneratedFile(String filePath) {
         cleanupService.enqueueAfterCompletion(filePath);
     }
 
+    void discardFailedGeneratedFile(UUID documentId, String filePath) {
+        cleanupService.enqueueAfterCompletion(documentId, filePath);
+    }
+
     private void deleteUnreferencedAfterReplacement(ProfileResumeDocument previous) {
         documentRepository.deleteFileIfUnreferenced(previous.documentId());
-        cleanupService.enqueueAfterCommit(previous.filePath());
+        cleanupService.enqueueAfterCommit(previous.documentId(), previous.filePath());
     }
 }

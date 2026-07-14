@@ -12,11 +12,9 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.file.Path;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -227,27 +225,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     @Transactional
     public boolean prepareGeneratedFileCleanup(String filePath) {
         String safeFilePath = Objects.requireNonNull(filePath, "filePath must not be null");
-        String fileName = Path.of(safeFilePath).getFileName().toString();
-        if (generatedResumeReferenceExists(safeFilePath)) {
-            return false;
-        }
-
-        List<UUID> candidateIds = jdbc.sql("""
-                        SELECT id
-                        FROM document.documents
-                        WHERE original_file_name = :fileName
-                        ORDER BY id
-                        FOR UPDATE
-                        """)
-                .param("fileName", fileName)
-                .query(UUID.class)
-                .list();
-        for (UUID candidateId : candidateIds) {
-            if (!deleteFileIfUnreferenced(candidateId)) {
-                return false;
-            }
-        }
-        return true;
+        return !generatedResumeReferenceExists(safeFilePath);
     }
 
     private boolean generatedResumeReferenceExists(String filePath) {

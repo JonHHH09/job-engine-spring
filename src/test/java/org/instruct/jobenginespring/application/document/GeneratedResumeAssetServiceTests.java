@@ -59,11 +59,11 @@ class GeneratedResumeAssetServiceTests {
         assertSame(replacement, service.replace(saved, "new.pdf"));
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
-        verify(cleanupService).enqueueAfterCommit("old.pdf");
+        verify(cleanupService).enqueueAfterCommit(OLD_DOCUMENT_ID, "old.pdf");
         ArgumentCaptor<Runnable> rollback = ArgumentCaptor.forClass(Runnable.class);
         verify(transactionLifecycle).afterRollback(rollback.capture());
         rollback.getValue().run();
-        verify(cleanupService).enqueueNow("new.pdf");
+        verify(cleanupService).enqueueNow(NEW_DOCUMENT_ID, "new.pdf");
     }
 
     @Test
@@ -90,7 +90,7 @@ class GeneratedResumeAssetServiceTests {
         service.replace(saved);
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
-        verify(cleanupService).enqueueAfterCommit("old.pdf");
+        verify(cleanupService).enqueueAfterCommit(OLD_DOCUMENT_ID, "old.pdf");
     }
 
     @Test
@@ -108,7 +108,7 @@ class GeneratedResumeAssetServiceTests {
 
         verify(documentRepository).deleteFileIfUnreferenced(OLD_DOCUMENT_ID);
         verify(documentRepository).deleteFileIfUnreferenced(NEW_DOCUMENT_ID);
-        verify(cleanupService).enqueueAfterCommit("master.pdf");
+        verify(cleanupService).enqueueAfterCommit(OLD_DOCUMENT_ID, "master.pdf");
 
         UUID missing = UUID.fromString("dddddddd-dddd-dddd-dddd-dddddddddddd");
         when(resumeDocumentRepository.lockAndFindAllByProfileId(missing)).thenReturn(List.of(master));

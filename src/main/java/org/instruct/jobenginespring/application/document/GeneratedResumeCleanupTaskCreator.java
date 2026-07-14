@@ -26,4 +26,13 @@ public class GeneratedResumeCleanupTaskCreator {
                 Objects.requireNonNull(createdAt, "createdAt must not be null")
         );
     }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public UUID enqueue(UUID documentId, String filePath, Instant createdAt) {
+        return cleanupRepository.enqueue(
+                documentId,
+                Objects.requireNonNull(filePath, "filePath must not be null"),
+                Objects.requireNonNull(createdAt, "createdAt must not be null")
+        );
+    }
 }

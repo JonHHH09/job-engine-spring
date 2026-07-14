@@ -76,4 +76,13 @@ class PostgresGeneratedResumeCleanupRepositoryIntegrationTests {
                 "SELECT attempt_count FROM document.generated_resume_file_cleanups WHERE id = ?", Integer.class, taskId
         ));
     }
+
+    @Test
+    void cleanupTaskRetainsExactGeneratedDocumentId() {
+        UUID documentId = UUID.randomUUID();
+
+        UUID taskId = repository.enqueue(documentId, "private.pdf", NOW);
+
+        assertEquals(documentId, repository.findDocumentId(taskId).orElseThrow());
+    }
 }

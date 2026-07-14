@@ -124,7 +124,7 @@ class GenerateGermanTailoredResumeServiceTests {
         assertEquals(2, result.variants().size());
         assertTrue(result.replacedExisting());
         verify(documentRepository).deleteFileIfUnreferenced(any());
-        verify(cleanupService).enqueueAfterCommit(any());
+        verify(cleanupService).enqueueAfterCommit(any(UUID.class), anyString());
     }
 
     @Test
@@ -160,7 +160,8 @@ class GenerateGermanTailoredResumeServiceTests {
                 new StoredDocumentMetadata(UUID.randomUUID(), "resume.pdf", DocumentStorageService.PDF_MEDIA_TYPE, 10L, "sha", NOW, NOW));
         when(resumeRepository.replaceGermanyResume(any())).thenThrow(new RuntimeException("db down"));
         assertThrows(RuntimeException.class, () -> service.generate(new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)));
-        verify(cleanupService, org.mockito.Mockito.atLeastOnce()).enqueueAfterCompletion(any());
+        verify(cleanupService, org.mockito.Mockito.atLeastOnce())
+                .enqueueAfterCompletion(any(UUID.class), anyString());
     }
 
     @Test
@@ -201,7 +202,7 @@ class GenerateGermanTailoredResumeServiceTests {
         RuntimeException persistenceFailure = new RuntimeException("db down");
         when(resumeRepository.replaceGermanyResume(any())).thenThrow(persistenceFailure);
         doThrow(new RuntimeException("cleanup enqueue failed"))
-                .when(cleanupService).enqueueAfterCompletion(anyString());
+                .when(cleanupService).enqueueAfterCompletion(any(UUID.class), anyString());
 
         RuntimeException thrown = assertThrows(RuntimeException.class, () -> service.generate(
                 new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)
@@ -224,10 +225,12 @@ class GenerateGermanTailoredResumeServiceTests {
                 throw new RuntimeException("cleanup failed");
             }
             return null;
-        }).when(cleanupService).enqueueAfterCompletion(anyString());
+        }).when(cleanupService).enqueueAfterCompletion(any(UUID.class), anyString());
         RuntimeException thrown = assertThrows(RuntimeException.class, () -> service.generate(new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID)));
         assertTrue(thrown.getMessage() != null);
-        verify(cleanupService, org.mockito.Mockito.atLeast(2)).enqueueAfterCompletion(any());
+        verify(cleanupService, org.mockito.Mockito.atLeastOnce())
+                .enqueueAfterCompletion(any(UUID.class), anyString());
+        verify(cleanupService).enqueueAfterCompletion(anyString());
     }
 
     @Test

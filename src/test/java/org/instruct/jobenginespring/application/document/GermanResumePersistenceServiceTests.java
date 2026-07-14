@@ -45,9 +45,9 @@ class GermanResumePersistenceServiceTests {
         ArgumentCaptor<Runnable> rollback = ArgumentCaptor.forClass(Runnable.class);
         verify(transactions).afterRollback(rollback.capture());
         rollback.getValue().run();
-        verify(cleanup).enqueueNow("new.pdf");
+        verify(cleanup).enqueueNow(generated.documentId(), "new.pdf");
         verify(documents).deleteFileIfUnreferenced(previous.documentId());
-        verify(cleanup).enqueueAfterCommit("old.pdf");
+        verify(cleanup).enqueueAfterCommit(previous.documentId(), "old.pdf");
     }
 
     @Test

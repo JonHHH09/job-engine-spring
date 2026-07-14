@@ -38,13 +38,13 @@ public class GermanResumePersistenceService {
         Objects.requireNonNull(write, "write must not be null");
         List<GeneratedAsset> safeAssets = List.copyOf(Objects.requireNonNull(generatedAssets, "generatedAssets must not be null"));
         safeAssets.forEach(asset -> transactionLifecycle.afterRollback(
-                () -> cleanupService.enqueueNow(asset.filePath())
+                () -> cleanupService.enqueueNow(asset.documentId(), asset.filePath())
         ));
 
         ReplaceResult replaced = resumeRepository.replaceGermanyResume(write);
         replaced.previousVariants().forEach(previous -> {
             documentRepository.deleteFileIfUnreferenced(previous.documentId());
-            cleanupService.enqueueAfterCommit(previous.filePath());
+            cleanupService.enqueueAfterCommit(previous.documentId(), previous.filePath());
         });
         return replaced;
     }

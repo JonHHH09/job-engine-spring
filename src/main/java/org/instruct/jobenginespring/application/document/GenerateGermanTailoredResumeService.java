@@ -342,12 +342,20 @@ public class GenerateGermanTailoredResumeService {
         if (assets == null) {
             return;
         }
-        enqueueCleanup(assets.generatedFile().path(), failure);
+        enqueueCleanup(assets.document().id(), assets.generatedFile().path(), failure);
     }
 
     private void enqueueCleanup(String filePath, Throwable failure) {
         try {
             cleanupService.enqueueAfterCompletion(filePath);
+        } catch (RuntimeException cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
+        }
+    }
+
+    private void enqueueCleanup(UUID documentId, String filePath, Throwable failure) {
+        try {
+            cleanupService.enqueueAfterCompletion(documentId, filePath);
         } catch (RuntimeException cleanupFailure) {
             failure.addSuppressed(cleanupFailure);
         }

@@ -105,7 +105,11 @@ public class ProfileResumePdfGenerationWorkflow {
             );
         } catch (RuntimeException | Error failure) {
             try {
-                generatedResumeAssetService.discardFailedGeneratedFile(generatedFile.path());
+                if (document == null) {
+                    generatedResumeAssetService.discardFailedGeneratedFile(generatedFile.path());
+                } else {
+                    generatedResumeAssetService.discardFailedGeneratedFile(document.id(), generatedFile.path());
+                }
             } catch (RuntimeException cleanupFailure) {
                 failure.addSuppressed(cleanupFailure);
             }

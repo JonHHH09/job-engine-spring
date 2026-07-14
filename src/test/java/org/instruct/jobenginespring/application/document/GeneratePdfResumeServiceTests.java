@@ -723,7 +723,7 @@ class GeneratePdfResumeServiceTests {
         );
 
         assertSame(replacementFailure, thrown);
-        verify(assets).discardFailedGeneratedFile(any());
+        verify(assets).discardFailedGeneratedFile(eq(document.id()), any());
     }
 
     private static ProfileResumePdfGenerationWorkflow.GenerateProfileResumePdfCommand command(Path outputDirectory) {
@@ -763,6 +763,14 @@ class GeneratePdfResumeServiceTests {
         }).when(cleanupService).enqueueAfterCompletion(any(String.class));
         when(cleanupService.enqueueAfterCommit(any(String.class))).thenAnswer(invocation -> {
             files.deleteIfExists(invocation.getArgument(0));
+            return UUID.randomUUID();
+        });
+        doAnswer(invocation -> {
+            files.deleteIfExists(invocation.getArgument(1));
+            return null;
+        }).when(cleanupService).enqueueAfterCompletion(any(UUID.class), any(String.class));
+        when(cleanupService.enqueueAfterCommit(any(UUID.class), any(String.class))).thenAnswer(invocation -> {
+            files.deleteIfExists(invocation.getArgument(1));
             return UUID.randomUUID();
         });
         return new GeneratedResumeAssetService(

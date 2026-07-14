@@ -43,10 +43,14 @@ public class GeneratedResumeCleanupPreparation {
     public Optional<PreparedCleanup> prepare(UUID taskId) {
         Instant now = clock.instant();
         return cleanupRepository.claim(taskId, now, now.plus(GeneratedResumeCleanupExecutor.CLAIM_LEASE))
-                .map(filePath -> new PreparedCleanup(
-                        filePath,
-                        documentRepository.prepareGeneratedFileCleanup(filePath)
-                ));
+                .map(filePath -> {
+                    cleanupRepository.findDocumentId(taskId)
+                            .ifPresent(documentRepository::deleteFileIfUnreferenced);
+                    return new PreparedCleanup(
+                            filePath,
+                            documentRepository.prepareGeneratedFileCleanup(filePath)
+                    );
+                });
     }
 
     public record PreparedCleanup(String filePath, boolean deleteFile) {

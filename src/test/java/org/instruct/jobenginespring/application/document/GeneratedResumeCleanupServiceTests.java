@@ -101,6 +101,22 @@ class GeneratedResumeCleanupServiceTests {
     }
 
     @Test
+    void cleanupDeletesOnlyThePersistedGeneratedDocumentId() {
+        UUID documentId = UUID.randomUUID();
+        when(cleanupRepository.findDueTaskIds(NOW, GeneratedResumeCleanupService.RETRY_BATCH_SIZE))
+                .thenReturn(List.of(TASK_ID));
+        when(cleanupRepository.claim(TASK_ID, NOW, NOW.plus(GeneratedResumeCleanupService.CLAIM_LEASE)))
+                .thenReturn(Optional.of("generated.pdf"));
+        when(cleanupRepository.findDocumentId(TASK_ID)).thenReturn(Optional.of(documentId));
+        when(documentRepository.prepareGeneratedFileCleanup("generated.pdf")).thenReturn(true);
+
+        service.retryDueTasks();
+
+        verify(documentRepository).deleteFileIfUnreferenced(documentId);
+        verify(fileRepository).deleteIfExists("generated.pdf");
+    }
+
+    @Test
     void durableStateFailureInAfterCommitCallbackNeverEscapes() {
         when(cleanupRepository.enqueue("old.pdf", NOW)).thenReturn(TASK_ID);
         when(cleanupRepository.claim(TASK_ID, NOW, NOW.plus(GeneratedResumeCleanupService.CLAIM_LEASE)))

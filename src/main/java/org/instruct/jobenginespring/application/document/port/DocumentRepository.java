@@ -30,8 +30,7 @@ public interface DocumentRepository {
     boolean deleteFileIfUnreferenced(UUID fileId);
 
     /**
-     * Removes database state for generated documents matching {@code filePath} only when no generated-resume
-     * reference still requires that physical path.
+     * Checks whether any generated-resume reference still requires {@code filePath}.
      *
      * @return {@code true} when physical deletion is safe, or {@code false} when the path must be preserved
      */

@@ -207,7 +207,7 @@ class PostgresDocumentRepositoryIntegrationTests {
                     """, UUID.randomUUID(), resumeId, FILE_ID, filePath, Timestamp.from(NOW), Timestamp.from(NOW));
         });
 
-        assertFalse(repository.prepareGeneratedFileCleanup(
+        assertTrue(repository.prepareGeneratedFileCleanup(
                 "/alternate/germany_candidate_aaaaaaaa_de_unique.pdf"
         ));
         assertFalse(repository.prepareGeneratedFileCleanup(filePath));
@@ -216,8 +216,38 @@ class PostgresDocumentRepositoryIntegrationTests {
         jdbc.update("DELETE FROM resume.resumes WHERE id = ?", resumeId);
 
         assertTrue(repository.prepareGeneratedFileCleanup(filePath));
+        assertTrue(repository.findFileMetadataById(FILE_ID).isPresent());
+        assertTrue(repository.deleteFileIfUnreferenced(FILE_ID));
         assertFalse(repository.findFileMetadataById(FILE_ID).isPresent());
         assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM document.blobs", Integer.class));
+    }
+
+    @Test
+    void generatedCleanupPreservesUnrelatedStoredDocumentWithSameFileName() {
+        String fileName = "germany_candidate_aaaaaaaa_de_unique.pdf";
+        StoredDocumentFile generatedPdf = new StoredDocumentFile(
+                FILE_ID, fileName, "application/pdf", PDF_CONTENT.length, SHA256, PDF_CONTENT, NOW, NOW
+        );
+        UUID unrelatedId = UUID.randomUUID();
+        byte[] unrelatedContent = "%PDF-1.3\nunrelated".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        StoredDocumentFile unrelatedPdf = new StoredDocumentFile(
+                unrelatedId,
+                fileName,
+                "application/pdf",
+                unrelatedContent.length,
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                unrelatedContent,
+                NOW,
+                NOW
+        );
+        repository.saveFile(generatedPdf);
+        repository.saveFile(unrelatedPdf);
+
+        assertTrue(repository.deleteFileIfUnreferenced(FILE_ID));
+        assertTrue(repository.prepareGeneratedFileCleanup("/private/generated/" + fileName));
+
+        assertFalse(repository.findFileMetadataById(FILE_ID).isPresent());
+        assertTrue(repository.findFileMetadataById(unrelatedId).isPresent());
     }
 
     @Test
