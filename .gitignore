@@ -49,22 +49,8 @@ build/
 *.keystore
 
 ### Local private inputs and OS metadata ###
-/tmp/imports/
-/tmp/pdfs/
-/output/
+/tmp/
 .DS_Store
-
-/tmp/generated-pdfs/*
-!/tmp/generated-pdfs/.gitkeep
-!/tmp/generated-pdfs/master-resume/
-/tmp/generated-pdfs/master-resume/*
-!/tmp/generated-pdfs/master-resume/.gitkeep
-!/tmp/generated-pdfs/canadian-resume/
-/tmp/generated-pdfs/canadian-resume/*
-!/tmp/generated-pdfs/canadian-resume/.gitkeep
-!/tmp/generated-pdfs/german-resume/
-/tmp/generated-pdfs/german-resume/*
-!/tmp/generated-pdfs/german-resume/.gitkeep
 /backups/postgres/
 /.worktrees/
 /docs/
