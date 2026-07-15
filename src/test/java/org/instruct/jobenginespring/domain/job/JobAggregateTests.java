@@ -51,6 +51,16 @@ class JobAggregateTests {
         assertEquals("textIngestion jobId must match job id", exception.getMessage());
     }
 
+    @Test
+    void rejectsNegativeJobRevision() {
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> new JobPosting(
+                JOB_ID, "text", "Example source", "Backend Engineer", "Example Corp", "Remote",
+                "Build backend services", null, null, null, NOW, "fingerprint", NOW, NOW, -1
+        ));
+
+        assertEquals("revision must not be negative", exception.getMessage());
+    }
+
     private static JobPosting posting(String sourceMethod) {
         return new JobPosting(
                 JOB_ID,

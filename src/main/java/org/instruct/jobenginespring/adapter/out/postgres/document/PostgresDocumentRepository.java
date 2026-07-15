@@ -10,10 +10,15 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -22,6 +27,9 @@ import java.util.UUID;
 @ConditionalOnProperty(prefix = "job-engine.document.postgres", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class PostgresDocumentRepository implements DocumentRepository {
 
+    private static final TypeReference<List<PdfExtractionRecord.PageProjection>> PAGE_PROJECTIONS_TYPE = new TypeReference<>() {
+    };
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final RowMapper<StoredDocumentMetadata> METADATA_MAPPER = PostgresDocumentRepository::mapMetadata;
     private static final RowMapper<StoredDocumentFile> FILE_MAPPER = PostgresDocumentRepository::mapFile;
     private static final RowMapper<PdfExtractionRecord> EXTRACTION_MAPPER = PostgresDocumentRepository::mapExtraction;
@@ -35,6 +43,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public StoredDocumentMetadata saveFile(StoredDocumentFile file) {
         Objects.requireNonNull(file, "file must not be null");
         namedJdbc.update("""
@@ -73,27 +82,6 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
-    public Optional<StoredDocumentMetadata> findFileMetadataBySha256(String sha256) {
-        return jdbc.sql("""
-                        SELECT stored_document.id,
-                               stored_document.original_file_name,
-                               stored_document.media_type,
-                               blob.byte_size,
-                               blob.sha256,
-                               stored_document.created_at,
-                               stored_document.updated_at
-                        FROM document.documents stored_document
-                        JOIN document.blobs blob ON blob.id = stored_document.blob_id
-                        WHERE blob.sha256 = :sha256
-                        ORDER BY stored_document.created_at DESC, stored_document.id
-                        LIMIT 1
-                        """)
-                .param("sha256", sha256)
-                .query(METADATA_MAPPER)
-                .optional();
-    }
-
-    @Override
     public Optional<StoredDocumentFile> findFileContentById(UUID fileId) {
         return jdbc.sql("""
                         SELECT stored_document.id,
@@ -116,7 +104,8 @@ public class PostgresDocumentRepository implements DocumentRepository {
     @Override
     public Optional<PdfExtractionRecord> findPdfExtractionByFileId(UUID fileId) {
         return jdbc.sql("""
-                        SELECT id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
+                        SELECT id, file_id, extractor, character_count, page_count, truncated, extracted_text,
+                               page_projections::text AS page_projections, created_at
                         FROM document.pdf_extractions
                         WHERE file_id = :fileId
                         """)
@@ -126,17 +115,21 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public PdfExtractionRecord savePdfExtraction(PdfExtractionRecord extraction) {
         Objects.requireNonNull(extraction, "extraction must not be null");
         MapSqlParameterSource parameters = extractionParameters(extraction);
         return jdbc.sql("""
                         INSERT INTO document.pdf_extractions (
-                            id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
+                            id, file_id, extractor, character_count, page_count, truncated, extracted_text,
+                            page_projections, created_at
                         ) VALUES (
-                            :id, :fileId, :extractor, :characterCount, :pageCount, :truncated, :extractedText, :createdAt
+                            :id, :fileId, :extractor, :characterCount, :pageCount, :truncated, :extractedText,
+                            CAST(:pageProjections AS jsonb), :createdAt
                         )
                         ON CONFLICT (file_id) DO UPDATE SET file_id = EXCLUDED.file_id
-                        RETURNING id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
+                        RETURNING id, file_id, extractor, character_count, page_count, truncated, extracted_text,
+                                  page_projections::text AS page_projections, created_at
                         """)
                 .params(parameters.getValues())
                 .query(EXTRACTION_MAPPER)
@@ -144,6 +137,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public PdfExtractionRecord updatePdfExtraction(PdfExtractionRecord extraction) {
         Objects.requireNonNull(extraction, "extraction must not be null");
         namedJdbc.update("""
@@ -153,6 +147,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
                     page_count = :pageCount,
                     truncated = :truncated,
                     extracted_text = :extractedText,
+                    page_projections = CAST(:pageProjections AS jsonb),
                     created_at = :createdAt
                 WHERE id = :id AND file_id = :fileId
                 """, extractionParameters(extraction));
@@ -161,7 +156,8 @@ public class PostgresDocumentRepository implements DocumentRepository {
 
     private PdfExtractionRecord findExtractionById(UUID extractionId) {
         return jdbc.sql("""
-                        SELECT id, file_id, extractor, character_count, page_count, truncated, extracted_text, created_at
+                        SELECT id, file_id, extractor, character_count, page_count, truncated, extracted_text,
+                               page_projections::text AS page_projections, created_at
                         FROM document.pdf_extractions
                         WHERE id = :id
                         """)
@@ -171,6 +167,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
     }
 
     @Override
+    @Transactional
     public boolean deleteFileIfUnreferenced(UUID fileId) {
         Optional<UUID> deletedBlobId = jdbc.sql("""
                         DELETE FROM document.documents stored_document
@@ -216,6 +213,30 @@ public class PostgresDocumentRepository implements DocumentRepository {
         return deletedBlobId.isPresent();
     }
 
+    @Override
+    @Transactional
+    public boolean prepareGeneratedFileCleanup(String filePath) {
+        String safeFilePath = Objects.requireNonNull(filePath, "filePath must not be null");
+        return !generatedResumeReferenceExists(safeFilePath);
+    }
+
+    private boolean generatedResumeReferenceExists(String filePath) {
+        return jdbc.sql("""
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM profile.profile_resume_documents
+                            WHERE file_path = :filePath
+                            UNION ALL
+                            SELECT 1
+                            FROM resume.resume_variants
+                            WHERE file_path = :filePath
+                        )
+                        """)
+                .param("filePath", filePath)
+                .query(Boolean.class)
+                .single();
+    }
+
     private static MapSqlParameterSource fileParameters(StoredDocumentFile file) {
         return new MapSqlParameterSource()
                 .addValue("id", file.id())
@@ -238,6 +259,7 @@ public class PostgresDocumentRepository implements DocumentRepository {
                 .addValue("pageCount", extraction.pageCount())
                 .addValue("truncated", extraction.truncated())
                 .addValue("extractedText", extraction.extractedText())
+                .addValue("pageProjections", writePageProjections(extraction.pages()))
                 .addValue("createdAt", Timestamp.from(extraction.createdAt()));
     }
 
@@ -275,7 +297,20 @@ public class PostgresDocumentRepository implements DocumentRepository {
                 resultSet.getInt("page_count"),
                 resultSet.getBoolean("truncated"),
                 resultSet.getString("extracted_text"),
+                readPageProjections(resultSet.getString("page_projections")),
                 resultSet.getTimestamp("created_at").toInstant()
         );
+    }
+
+    private static String writePageProjections(List<PdfExtractionRecord.PageProjection> pages) {
+        return OBJECT_MAPPER.writeValueAsString(pages);
+    }
+
+    private static List<PdfExtractionRecord.PageProjection> readPageProjections(String json) throws SQLException {
+        try {
+            return OBJECT_MAPPER.readValue(json, PAGE_PROJECTIONS_TYPE);
+        } catch (JacksonException exception) {
+            throw new SQLException("invalid persisted PDF page projections", exception);
+        }
     }
 }

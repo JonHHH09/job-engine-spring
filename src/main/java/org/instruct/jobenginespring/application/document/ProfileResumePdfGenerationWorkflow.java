@@ -71,22 +71,25 @@ public class ProfileResumePdfGenerationWorkflow {
                 ),
                 safeCommand.pageNumberLocale()
         );
-        generatedResumeAssetService.deleteGeneratedFileOnRollback(generatedFile.path());
+        StoredDocumentMetadata document = null;
         try {
-            StoredDocumentMetadata document = documentStorageService.storeGeneratedDocumentFile(
+            document = documentStorageService.storeGeneratedDocumentFile(
                     Path.of(generatedFile.path()),
                     DocumentStorageService.PDF_MEDIA_TYPE
             );
             Instant now = clock.instant();
-            ProfileResumeDocumentRepository.Replacement replacement = generatedResumeAssetService.replace(new ProfileResumeDocument(
-                    UUID.randomUUID(),
-                    profileId,
-                    document.id(),
-                    generatedFile.path(),
-                    resumeType,
-                    now,
-                    now
-            ));
+            ProfileResumeDocumentRepository.Replacement replacement = generatedResumeAssetService.replace(
+                    new ProfileResumeDocument(
+                            UUID.randomUUID(),
+                            profileId,
+                            document.id(),
+                            generatedFile.path(),
+                            resumeType,
+                            now,
+                            now
+                    ),
+                    generatedFile.path()
+            );
             ProfileResumeDocument savedLink = replacement.saved();
 
             return new GeneratedProfileResumePdf(
@@ -102,7 +105,11 @@ public class ProfileResumePdfGenerationWorkflow {
             );
         } catch (RuntimeException | Error failure) {
             try {
-                generatedResumeAssetService.discardFailedGeneratedFile(generatedFile.path());
+                if (document == null) {
+                    generatedResumeAssetService.discardFailedGeneratedFile(generatedFile.path());
+                } else {
+                    generatedResumeAssetService.discardFailedGeneratedFile(document.id(), generatedFile.path());
+                }
             } catch (RuntimeException cleanupFailure) {
                 failure.addSuppressed(cleanupFailure);
             }

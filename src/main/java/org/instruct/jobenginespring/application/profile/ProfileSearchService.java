@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
+import org.instruct.jobenginespring.application.search.SearchTextNormalizer;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -19,17 +20,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.text.Normalizer;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.regex.Pattern;
 
 /** Deterministic profile search use case over the normalized profile aggregate. */
 @Service
@@ -38,25 +35,28 @@ public class ProfileSearchService {
 
     private static final int DEFAULT_LIMIT = 20;
     private static final int MAX_LIMIT = 100;
-    private static final Pattern TOKEN_SPLIT = Pattern.compile("[^a-z0-9+#.]+", Pattern.CASE_INSENSITIVE);
-
     @NonNull
     private final ProfileRepository profileRepository;
     @Transactional(readOnly = true)
     public ProfileSearchResult searchProfiles(ProfileSearchRequest request) {
         ProfileSearchRequest safeRequest = validate(request);
         List<String> queryTokens = tokens(safeRequest.query());
-        List<ProfileSearchMatch> matches = profileRepository.listProfileAggregates().stream()
+        var candidates = profileRepository.searchProfileCandidates(queryTokens, safeRequest.limit());
+        List<ProfileSearchMatch> matches = candidates.items().stream()
                 .map(aggregate -> match(aggregate, queryTokens))
                 .filter(match -> match.score() > 0)
                 .sorted(Comparator.comparingInt(ProfileSearchMatch::score).reversed()
-                        .thenComparing(match -> match.profile().fullName())
-                        .thenComparing(match -> match.profile().id()))
+                        // UUID text order exactly matches PostgreSQL's UUID byte order and avoids
+                        // deployment-specific text collation at the bounded-candidate boundary.
+                        .thenComparing(match -> match.profile().id().toString()))
                 .toList();
         List<ProfileSearchMatch> returned = matches.stream()
                 .limit(safeRequest.limit())
                 .toList();
-        return new ProfileSearchResult(safeRequest.query().strip(), queryTokens, matches.size(), returned.size(), returned);
+        int matchedCount = candidates.matchedCount() < 0 ? matches.size() : candidates.matchedCount();
+        Integer totalMatches = candidates.hasMore() ? null : matchedCount;
+        return new ProfileSearchResult(safeRequest.query().strip(), queryTokens, totalMatches,
+                matchedCount, candidates.hasMore(), returned.size(), returned);
     }
 
     private static ProfileSearchRequest validate(ProfileSearchRequest request) {
@@ -66,15 +66,23 @@ public class ProfileSearchService {
         if (request.query() == null || request.query().isBlank()) {
             throw validation("query", "must not be blank");
         }
-        List<String> queryTokens = tokens(request.query());
+        String query = request.query().strip();
+        if (query.codePointCount(0, query.length()) > SearchTextNormalizer.MAX_QUERY_CHARACTERS) {
+            throw validation("query", "must not exceed " + SearchTextNormalizer.MAX_QUERY_CHARACTERS + " characters");
+        }
+        List<String> queryTokens = tokens(query);
         if (queryTokens.isEmpty()) {
             throw validation("query", "must contain searchable text");
+        }
+        if (queryTokens.size() > SearchTextNormalizer.MAX_QUERY_TOKENS) {
+            throw validation("query", "must contain at most " + SearchTextNormalizer.MAX_QUERY_TOKENS
+                    + " searchable terms");
         }
         int limit = request.limit() == null ? DEFAULT_LIMIT : request.limit();
         if (limit < 1 || limit > MAX_LIMIT) {
             throw validation("limit", "must be between 1 and " + MAX_LIMIT);
         }
-        return new ProfileSearchRequest(request.query().strip(), limit);
+        return new ProfileSearchRequest(query, limit);
     }
 
     private static ProfileSearchMatch match(ProfileAggregate aggregate, List<String> queryTokens) {
@@ -186,16 +194,7 @@ public class ProfileSearchService {
         if (text == null || text.isBlank()) {
             return List.of();
         }
-        String normalized = Normalizer.normalize(text.strip().toLowerCase(Locale.ROOT), Normalizer.Form.NFKD)
-                .replaceAll("\\p{M}", "");
-        String[] rawTokens = TOKEN_SPLIT.split(normalized);
-        List<String> tokens = new ArrayList<>();
-        for (String token : rawTokens) {
-            if (!token.isBlank()) {
-                tokens.add(token);
-            }
-        }
-        return List.copyOf(new LinkedHashSet<>(tokens));
+        return SearchTextNormalizer.tokens(text);
     }
 
     private static ApplicationException validation(String field, String reason) {
@@ -213,7 +212,9 @@ public class ProfileSearchService {
     public record ProfileSearchResult(
             String query,
             List<String> queryTokens,
-            int totalMatches,
+            Integer totalMatches,
+            int matchedCount,
+            boolean hasMore,
             int returnedCount,
             List<ProfileSearchMatch> profiles
     ) {
@@ -221,6 +222,7 @@ public class ProfileSearchService {
             queryTokens = queryTokens == null ? List.of() : List.copyOf(queryTokens);
             profiles = profiles == null ? List.of() : List.copyOf(profiles);
         }
+
     }
 
     public record ProfileSearchMatch(UserProfile profile, int score, List<String> matchedFields) {

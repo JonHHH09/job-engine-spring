@@ -12,6 +12,9 @@ import org.instruct.jobenginespring.domain.profile.ProjectTechnology;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
 import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
 import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
+import org.instruct.jobenginespring.application.pagination.SearchCandidates;
 
 import java.util.List;
 import java.util.Optional;
@@ -25,7 +28,11 @@ import java.util.UUID;
  */
 public interface ProfileRepository {
 
-    List<UserProfile> listProfiles();
+    default List<UserProfile> listProfiles() {
+        return listProfiles(PageRequest.of(null, null, "profiles", "all")).items();
+    }
+
+    Page<UserProfile> listProfiles(PageRequest request);
 
     Optional<UserProfile> findProfileById(UUID profileId);
 
@@ -45,9 +52,21 @@ public interface ProfileRepository {
 
     List<ProjectTechnology> listProjectTechnologies(UUID profileId);
 
-    List<ProfileAggregate> listProfileAggregates();
+    Page<ProfileAggregate> listProfileAggregates(PageRequest request);
+
+    default SearchCandidates<ProfileAggregate> searchProfileCandidates(List<String> queryTokens, int limit) {
+        var aggregates = listProfileAggregates(PageRequest.of(PageRequest.MAX_LIMIT, null,
+                "profile-search-fallback", queryTokens.toString())).items();
+        return new SearchCandidates<>(-1, aggregates);
+    }
 
     ProfileAggregate saveProfileAggregate(ProfileAggregate aggregate);
+
+    default Optional<ProfileAggregate> replaceProfileAggregate(ProfileAggregate aggregate, long expectedRevision) {
+        return findProfileById(aggregate.profile().id())
+                .filter(existing -> existing.revision() == expectedRevision)
+                .map(ignored -> saveProfileAggregate(aggregate));
+    }
 
     boolean deleteProfile(UUID profileId);
 

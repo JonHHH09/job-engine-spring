@@ -4,7 +4,6 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import lombok.RequiredArgsConstructor;
 import org.instruct.jobenginespring.application.error.ApplicationExceptionMapper;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService;
-import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.IngestProfileFromStoredPdfRequest;
 import org.springframework.ai.mcp.annotation.McpTool;
 import org.springframework.ai.mcp.annotation.McpToolParam;
 import org.springframework.stereotype.Component;
@@ -27,7 +26,9 @@ public class ProfilePdfIngestionMcpAdapter {
             @McpToolParam(required = true, description = "Stored PDF profile ingestion request")
             IngestProfileFromStoredPdfRequest request
     ) {
-        return call(() -> profilePdfIngestionService.ingestProfileFromStoredPdf(request));
+        return call(() -> profilePdfIngestionService.ingestProfileFromStoredPdf(
+                request == null ? null : request.toServiceRequest()
+        ));
     }
 
     @McpTool(
@@ -51,6 +52,24 @@ public class ProfilePdfIngestionMcpAdapter {
                     .isError(true)
                     .structuredContent(exceptionMapper.toErrorResponse(exception))
                     .build();
+        }
+    }
+
+    public record IngestProfileFromStoredPdfRequest(
+            @McpToolParam(required = true, description = "Stored PDF document UUID") UUID documentId,
+            @McpToolParam(required = false, description = "Existing profile UUID to replace") UUID existingProfileId,
+            @McpToolParam(required = false, description = "Must be true to replace an existing profile") Boolean overwriteExistingProfile,
+            @McpToolParam(required = false, description = "Maximum extracted characters") Integer maxCharacters,
+            @McpToolParam(required = false, description = "Required latest profile revision when overwriting") Long expectedRevision
+    ) {
+        ProfilePdfIngestionService.IngestProfileFromStoredPdfRequest toServiceRequest() {
+            return new ProfilePdfIngestionService.IngestProfileFromStoredPdfRequest(
+                    documentId,
+                    existingProfileId,
+                    overwriteExistingProfile,
+                    maxCharacters,
+                    expectedRevision
+            );
         }
     }
 }

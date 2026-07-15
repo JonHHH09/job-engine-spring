@@ -50,6 +50,8 @@ class ProfileSearchMcpAdapterTests {
                 List.of("java"),
                 1,
                 1,
+                false,
+                1,
                 List.of(new ProfileSearchMatch(sampleProfile(), 7, List.of("skills")))
         );
         when(profileSearchService.searchProfiles(request)).thenReturn(serviceResult);

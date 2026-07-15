@@ -8,6 +8,7 @@ import org.instruct.jobenginespring.application.job.JobAnalysisService;
 import org.instruct.jobenginespring.application.job.JobAnalysisService.AddJobFromAnalysisResult;
 import org.instruct.jobenginespring.application.job.JobAnalysisService.AnalyzeJobLinkResult;
 import org.instruct.jobenginespring.application.job.JobService;
+import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.job.JobService.AddJobResult;
 import org.instruct.jobenginespring.application.job.JobService.DeleteJobResult;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
@@ -68,15 +69,27 @@ class JobMcpAdapterTests {
     @Test
     void listJobsDelegatesToServiceWithObjectWrapper() {
         JobPosting posting = samplePosting();
-        when(jobService.listJobs()).thenReturn(List.of(posting));
+        when(jobService.listJobs(1, null)).thenReturn(new Page<>(List.of(posting), "cursor"));
 
-        CallToolResult result = adapter.listJobs();
+        CallToolResult result = adapter.listJobs(new JobMcpAdapter.ListRequest(1, null));
 
         assertFalse(result.isError());
         JobMcpAdapter.ListJobsResult content = assertInstanceOf(JobMcpAdapter.ListJobsResult.class, result.structuredContent());
         assertEquals(List.of(posting), content.jobs());
-        assertEquals(List.of(), new JobMcpAdapter.ListJobsResult(null).jobs());
-        verify(jobService).listJobs();
+        assertEquals("cursor", content.nextCursor());
+        assertEquals(List.of(), new JobMcpAdapter.ListJobsResult(null, null).jobs());
+        verify(jobService).listJobs(1, null);
+    }
+
+    @Test
+    void listJobsTreatsNullRequestAsLegacyDefaultPage() {
+        when(jobService.listJobs(null, null)).thenReturn(new Page<>(List.of(samplePosting()), null));
+
+        CallToolResult result = adapter.listJobs(null);
+
+        assertFalse(result.isError());
+        assertEquals(1, assertInstanceOf(JobMcpAdapter.ListJobsResult.class, result.structuredContent()).jobs().size());
+        verify(jobService).listJobs(null, null);
     }
 
     @Test
@@ -109,7 +122,8 @@ class JobMcpAdapterTests {
         JobService.AddJobFromLinkRequest serviceLinkRequest = linkRequest.toServiceRequest();
         JobService.JobSearchRequest serviceSearchRequest = searchRequest.toServiceRequest();
         AddJobResult addResult = new AddJobResult("created_job", sampleAggregate());
-        JobService.JobSearchResult searchResult = new JobService.JobSearchResult("java", List.of("java"), 1, 0, List.of());
+        JobService.JobSearchResult searchResult = new JobService.JobSearchResult(
+                "java", List.of("java"), 1, 1, false, 0, List.of());
         when(jobService.addJobFromText(serviceTextRequest)).thenReturn(addResult);
         when(jobService.addJobFromLink(serviceLinkRequest)).thenReturn(addResult);
         when(jobService.searchJobs(serviceSearchRequest)).thenReturn(searchResult);
@@ -126,6 +140,7 @@ class JobMcpAdapterTests {
     void updateAndDeleteToolsDelegateToService() {
         JobMcpAdapter.UpdateJobRequest updateRequest = new JobMcpAdapter.UpdateJobRequest(
                 JOB_ID,
+                0L,
                 "manual paste",
                 "Senior Java Developer",
                 "Example Corp",
@@ -153,6 +168,7 @@ class JobMcpAdapterTests {
     void updateJobRequestMapsFieldsToServiceRequest() {
         JobMcpAdapter.UpdateJobRequest updateRequest = new JobMcpAdapter.UpdateJobRequest(
                 JOB_ID,
+                0L,
                 "manual paste",
                 "Senior Java Developer",
                 "Example Corp",
@@ -167,6 +183,7 @@ class JobMcpAdapterTests {
 
         assertEquals(new JobService.UpdateJobRequest(
                 JOB_ID,
+                0L,
                 "manual paste",
                 "Senior Java Developer",
                 "Example Corp",
@@ -238,6 +255,7 @@ class JobMcpAdapterTests {
         assertFieldRequired(JobMcpAdapter.JobSearchRequest.class, "query", true);
         assertFieldRequired(JobMcpAdapter.JobSearchRequest.class, "limit", false);
         assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "jobId", true);
+        assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "expectedRevision", true);
         assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "title", false);
         assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "skills", false);
         assertFieldRequired(JobMcpAdapter.AnalyzeJobLinkRequest.class, "url", true);
@@ -246,9 +264,9 @@ class JobMcpAdapterTests {
 
     @Test
     void unexpectedErrorsDoNotExposeExceptionMessages() {
-        when(jobService.listJobs()).thenThrow(new RuntimeException("sensitive backend detail"));
+        when(jobService.listJobs(null, null)).thenThrow(new RuntimeException("sensitive backend detail"));
 
-        ApplicationErrorResponse response = assertErrorResponse(adapter.listJobs());
+        ApplicationErrorResponse response = assertErrorResponse(adapter.listJobs(null));
 
         assertEquals("internal_error", response.code());
         assertEquals("Unexpected application error", response.message());

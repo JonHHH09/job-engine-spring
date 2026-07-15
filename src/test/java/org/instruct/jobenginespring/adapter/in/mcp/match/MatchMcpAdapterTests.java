@@ -3,13 +3,16 @@ package org.instruct.jobenginespring.adapter.in.mcp.match;
 import org.junit.jupiter.api.Test;
 import org.instruct.jobenginespring.application.error.ApplicationErrorResponse;
 import org.instruct.jobenginespring.application.match.MatchAnalysisService;
+import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.domain.match.*;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.ai.mcp.annotation.McpTool;
+import org.springframework.ai.mcp.annotation.McpToolParam;
 
 import java.lang.reflect.RecordComponent;
+import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -105,32 +108,59 @@ class MatchMcpAdapterTests {
                 Instant.EPOCH, Instant.EPOCH);
         var batch = new MatchAnalysisService.BatchResult(List.of(view), List.of());
         var reviewResult = new MatchAnalysisService.ReviewResult(review, disagreement);
-        when(service.analyzeAll(profileId)).thenReturn(batch);
+        when(service.analyzeAll(profileId, null, null)).thenReturn(batch);
         when(service.getReport(reportId)).thenReturn(view);
-        when(service.listReports(profileId, jobId)).thenReturn(List.of(view));
+        when(service.listReports(profileId, jobId, 1, null)).thenReturn(new Page<>(List.of(view), "cursor"));
         when(service.submitReview(any())).thenReturn(reviewResult);
         when(service.getReview(reviewId)).thenReturn(review);
-        when(service.listReviews(reportId)).thenReturn(List.of(review));
-        when(service.listDisagreements(reportId)).thenReturn(List.of(disagreement));
+        when(service.listReviews(reportId, null, null)).thenReturn(new Page<>(List.of(review), "review-cursor"));
+        when(service.listDisagreements(reportId, null, null)).thenReturn(new Page<>(List.of(disagreement), "disagreement-cursor"));
         when(service.acknowledgeDisagreement(disagreementId, null)).thenReturn(disagreement);
 
         assertSame(batch, adapter.analyzeAll(new MatchMcpAdapter.ProfileRequest(profileId)).structuredContent());
         assertSame(view, adapter.getReport(new MatchMcpAdapter.IdRequest(reportId)).structuredContent());
         assertEquals(List.of(view), assertInstanceOf(MatchMcpAdapter.Reports.class,
-                adapter.listReports(new MatchMcpAdapter.ReportFilter(profileId, jobId)).structuredContent()).reports());
+                adapter.listReports(new MatchMcpAdapter.ReportFilter(profileId, jobId, 1, null)).structuredContent()).reports());
         var request = new MatchMcpAdapter.ReviewRequest(reportId, "human", "provider-neutral", "v1", 50,
                 MatchOutcome.PARTIAL_MATCH, false, review.components(), review.evidence(), "score_adjustment");
         assertSame(reviewResult, adapter.submitReview(request).structuredContent());
         assertSame(review, adapter.getReview(new MatchMcpAdapter.IdRequest(reviewId)).structuredContent());
         assertEquals(List.of(review), assertInstanceOf(MatchMcpAdapter.Reviews.class,
-                adapter.listReviews(new MatchMcpAdapter.ReportRequest(reportId)).structuredContent()).reviews());
-        assertEquals(List.of(disagreement), assertInstanceOf(MatchMcpAdapter.Disagreements.class,
-                adapter.listDisagreements(new MatchMcpAdapter.DisagreementFilter(reportId)).structuredContent()).disagreements());
+                adapter.listReviews(new MatchMcpAdapter.ReviewFilter(reportId)).structuredContent()).reviews());
+        var disagreements = assertInstanceOf(MatchMcpAdapter.Disagreements.class,
+                adapter.listDisagreements(new MatchMcpAdapter.DisagreementFilter(reportId)).structuredContent());
+        assertEquals(List.of(disagreement), disagreements.disagreements());
+        assertEquals("disagreement-cursor", disagreements.nextCursor());
         assertSame(disagreement, adapter.acknowledge(
                 new MatchMcpAdapter.AcknowledgeRequest(disagreementId, null)).structuredContent());
 
         verify(service).submitReview(argThat(draft -> draft.reportId().equals(reportId)
                 && draft.summary().equals("score_adjustment")));
+    }
+
+    @Test
+    void pagingSchemasKeepLegacyFieldsAndMakeNewFieldsOptional() {
+        assertFieldRequired(MatchMcpAdapter.ProfileRequest.class, "profileId", true);
+        assertFieldRequired(MatchMcpAdapter.ProfileRequest.class, "limit", false);
+        assertFieldRequired(MatchMcpAdapter.ProfileRequest.class, "cursor", false);
+        assertFieldRequired(MatchMcpAdapter.ReportFilter.class, "profileId", false);
+        assertFieldRequired(MatchMcpAdapter.ReportFilter.class, "jobId", false);
+        assertFieldRequired(MatchMcpAdapter.ReportFilter.class, "limit", false);
+        assertFieldRequired(MatchMcpAdapter.ReportFilter.class, "cursor", false);
+        assertFieldRequired(MatchMcpAdapter.ReviewFilter.class, "reportId", false);
+        assertFieldRequired(MatchMcpAdapter.ReviewFilter.class, "limit", false);
+        assertFieldRequired(MatchMcpAdapter.ReviewFilter.class, "cursor", false);
+        assertFieldRequired(MatchMcpAdapter.DisagreementFilter.class, "reportId", false);
+        assertFieldRequired(MatchMcpAdapter.DisagreementFilter.class, "limit", false);
+        assertFieldRequired(MatchMcpAdapter.DisagreementFilter.class, "cursor", false);
+
+        var profileId = UUID.randomUUID();
+        assertEquals(new MatchMcpAdapter.ProfileRequest(profileId, null, null),
+                new MatchMcpAdapter.ProfileRequest(profileId));
+        assertEquals(new MatchMcpAdapter.ReviewFilter(null, null, null),
+                new MatchMcpAdapter.ReviewFilter(null));
+        assertEquals(new MatchMcpAdapter.DisagreementFilter(null, null, null),
+                new MatchMcpAdapter.DisagreementFilter(null));
     }
 
     @Test
@@ -166,9 +196,9 @@ class MatchMcpAdapterTests {
 
     @Test
     void responseRecordsDefensivelyCopyTheirLists() {
-        assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Reports(null));
-        assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Reviews(null));
-        assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Disagreements(null));
+        assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Reports(null, null));
+        assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Reviews(null, null));
+        assertThrows(NullPointerException.class, () -> new MatchMcpAdapter.Disagreements(null, null));
     }
 
 
@@ -176,6 +206,21 @@ class MatchMcpAdapterTests {
         return new MatchDisagreement(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "divergence-v1",
                 Set.of(DisagreementReason.OVERALL_DELTA), List.of(), DisagreementStatus.LINKED, "JOB-54",
                 Instant.EPOCH, Instant.EPOCH);
+    }
+
+    private static void assertFieldRequired(Class<? extends Record> recordType, String fieldName, boolean required) {
+        RecordComponent component = Arrays.stream(recordType.getRecordComponents())
+                .filter(candidate -> candidate.getName().equals(fieldName))
+                .findFirst().orElseThrow();
+        var annotation = component.getAccessor().getAnnotation(McpToolParam.class);
+        if (annotation == null) {
+            try {
+                annotation = recordType.getDeclaredField(fieldName).getAnnotation(McpToolParam.class);
+            } catch (NoSuchFieldException exception) {
+                throw new AssertionError(exception);
+            }
+        }
+        assertEquals(required, annotation.required(), fieldName);
     }
 
     private static MatchReport report(UUID profileId, UUID jobId, UUID reportId) {

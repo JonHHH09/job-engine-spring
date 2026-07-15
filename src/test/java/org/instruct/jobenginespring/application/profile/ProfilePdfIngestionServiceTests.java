@@ -10,6 +10,7 @@ import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionServi
 import org.instruct.jobenginespring.application.profile.ProfileIdentityMatcher.ProfileIdentityMatch;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
 import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
+import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository.LinkedPdfSource;
 import org.instruct.jobenginespring.application.profile.port.ProfileTextExtractor;
 import org.instruct.jobenginespring.domain.document.StoredDocumentMetadata;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -102,7 +103,7 @@ class ProfilePdfIngestionServiceTests {
         );
 
         assertEquals(IngestionStatus.DUPLICATE_PROFILE_CANDIDATE, result.status());
-        assertEquals(PROFILE_ID, result.profileId());
+        assertEquals(null, result.profileId());
         assertEquals(PROFILE_ID, result.candidateProfileId());
         assertEquals(List.of("email", "link:linkedin"), result.matchedOn());
         assertEquals("rerun with existingProfileId and overwriteExistingProfile=true to replace", result.recommendedAction());
@@ -141,7 +142,7 @@ class ProfilePdfIngestionServiceTests {
     @Test
     void repeatedIngestionReturnsExistingSourceLinkWithoutCreatingProfile() {
         ProfilePdfSource existing = new ProfilePdfSource(SOURCE_ID, PROFILE_ID, EXTRACTION_ID, "resume_pdf", NOW);
-        sourceRepository.save(existing);
+        sourceRepository.saveLinked(existing, storedExtraction());
         when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(DOCUMENT_ID, null, false, true)))
                 .thenReturn(storedExtraction());
 
@@ -163,7 +164,7 @@ class ProfilePdfIngestionServiceTests {
         UUID duplicateDocumentId = UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff");
         UUID duplicateExtractionId = UUID.fromString("11111111-1111-1111-1111-111111111111");
         ProfilePdfSource existing = new ProfilePdfSource(SOURCE_ID, PROFILE_ID, EXTRACTION_ID, "resume_pdf", NOW);
-        sourceRepository.saveForSha256(existing, storedExtraction().document().sha256());
+        sourceRepository.saveLinkedForSha256(existing, storedExtraction(), storedExtraction().document().sha256());
         when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(duplicateDocumentId, null, false, true)))
                 .thenReturn(storedExtraction(duplicateDocumentId, duplicateExtractionId));
 
@@ -172,7 +173,7 @@ class ProfilePdfIngestionServiceTests {
         );
 
         assertEquals(PROFILE_ID, result.profileId());
-        assertEquals(duplicateDocumentId, result.documentId());
+        assertEquals(DOCUMENT_ID, result.documentId());
         assertEquals(EXTRACTION_ID, result.pdfExtractionId());
         assertEquals(SOURCE_ID, result.sourceLinkId());
         assertEquals(IngestionStatus.REUSED_EXISTING_SOURCE, result.status());
@@ -205,31 +206,39 @@ class ProfilePdfIngestionServiceTests {
                 .thenReturn(storedExtraction());
         when(profileTextExtractor.extractProfile(any())).thenReturn(writeRequest);
         when(profileIdentityMatcher.findStrongMatch(writeRequest)).thenReturn(Optional.empty());
-        when(profileService.updateProfile(PROFILE_ID, writeRequest)).thenReturn(profileAggregate(PROFILE_ID));
+        when(profileService.updateProfile(PROFILE_ID, 0L, writeRequest)).thenReturn(profileAggregate(PROFILE_ID));
 
         ProfilePdfIngestionService.ProfilePdfIngestionResult result = service.ingestProfileFromStoredPdf(
-                new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, PROFILE_ID, true, null)
+                new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, PROFILE_ID, true, null, 0L)
         );
 
         assertEquals(PROFILE_ID, result.profileId());
         assertEquals(IngestionStatus.UPDATED_PROFILE, result.status());
         assertFalse(result.createdProfile());
         assertFalse(result.existingProfileLink());
-        verify(profileService).updateProfile(PROFILE_ID, writeRequest);
+        verify(profileService).updateProfile(PROFILE_ID, 0L, writeRequest);
     }
 
     @Test
-    void rejectsExistingProfileAlreadyLinkedToAnotherExtraction() {
-        sourceRepository.save(new ProfilePdfSource(SOURCE_ID, PROFILE_ID, UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"), "resume_pdf", NOW));
+    void reusesExistingProfileLinkInsteadOfAttemptingAnotherMutation() {
+        UUID existingExtractionId = UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
+        sourceRepository.saveLinked(
+                new ProfilePdfSource(SOURCE_ID, PROFILE_ID, existingExtractionId, "resume_pdf", NOW),
+                storedExtraction(UUID.fromString("ffffffff-ffff-ffff-ffff-ffffffffffff"), existingExtractionId)
+        );
         when(documentStorageService.extractStoredPdfText(new ExtractStoredPdfTextRequest(DOCUMENT_ID, null, false, true)))
                 .thenReturn(storedExtraction());
 
-        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.ingestProfileFromStoredPdf(
+        ProfilePdfIngestionService.ProfilePdfIngestionResult result = service.ingestProfileFromStoredPdf(
                 new IngestProfileFromStoredPdfRequest(DOCUMENT_ID, PROFILE_ID, true, null)
-        ));
+        );
 
-        assertEquals("validation_error", exception.errorCode().code());
-        verify(profileTextExtractor, never()).extractProfile(any());
+        assertEquals(IngestionStatus.DUPLICATE_PROFILE_CANDIDATE, result.status());
+        assertEquals(null, result.profileId());
+        assertEquals(PROFILE_ID, result.candidateProfileId());
+        assertEquals(null, result.sourceLinkId());
+        assertFalse(result.existingProfileLink());
+        verify(profileService, never()).updateProfile(any(), any(), any());
     }
 
     @Test
@@ -281,6 +290,8 @@ class ProfilePdfIngestionServiceTests {
 
         private final java.util.Map<UUID, ProfilePdfSource> sourcesByProfileId = new java.util.LinkedHashMap<>();
         private final java.util.Map<String, ProfilePdfSource> sourcesBySha256 = new java.util.LinkedHashMap<>();
+        private final java.util.Map<UUID, LinkedPdfSource> linkedByExtractionId = new java.util.LinkedHashMap<>();
+        private final java.util.Map<String, LinkedPdfSource> linkedBySha256 = new java.util.LinkedHashMap<>();
 
         @Override
         public ProfilePdfSource save(ProfilePdfSource source) {
@@ -307,9 +318,46 @@ class ProfilePdfIngestionServiceTests {
             return Optional.ofNullable(sourcesBySha256.get(sha256));
         }
 
-        private void saveForSha256(ProfilePdfSource source, String sha256) {
+        @Override
+        public Optional<LinkedPdfSource> findLinkedByProfileId(UUID profileId) {
+            ProfilePdfSource source = sourcesByProfileId.get(profileId);
+            return source == null ? Optional.empty() : Optional.ofNullable(linkedByExtractionId.get(source.pdfExtractionId()));
+        }
+
+        @Override
+        public Optional<LinkedPdfSource> findLinkedByPdfExtractionId(UUID pdfExtractionId) {
+            return Optional.ofNullable(linkedByExtractionId.get(pdfExtractionId));
+        }
+
+        @Override
+        public Optional<LinkedPdfSource> findLinkedByDocumentSha256(String sha256) {
+            return Optional.ofNullable(linkedBySha256.get(sha256));
+        }
+
+        private void saveLinked(ProfilePdfSource source, StoredPdfTextExtractionResult extraction) {
             save(source);
+            linkedByExtractionId.put(source.pdfExtractionId(), linked(source, extraction));
+        }
+
+        private void saveLinkedForSha256(
+                ProfilePdfSource source,
+                StoredPdfTextExtractionResult extraction,
+                String sha256
+        ) {
+            saveLinked(source, extraction);
             sourcesBySha256.put(sha256, source);
+            linkedBySha256.put(sha256, linked(source, extraction));
+        }
+
+        private static LinkedPdfSource linked(ProfilePdfSource source, StoredPdfTextExtractionResult extraction) {
+            return new LinkedPdfSource(
+                    source,
+                    extraction.document().id(),
+                    extraction.document().originalFileName(),
+                    extraction.extraction().pageCount(),
+                    extraction.extraction().characterCount(),
+                    extraction.extraction().truncated()
+            );
         }
 
         private int count() {

@@ -31,10 +31,17 @@ public class JobMcpAdapter {
 
     @McpTool(
             name = "list_jobs",
-            description = "List stored job postings without returning source ingestion raw text."
+            description = "List a bounded page of stored job postings without returning source ingestion raw text."
     )
-    public CallToolResult listJobs() {
-        return call(() -> new ListJobsResult(jobService.listJobs()));
+    public CallToolResult listJobs(
+            @McpToolParam(required = false, description = "Optional page size and cursor from the previous response")
+            ListRequest request
+    ) {
+        return call(() -> {
+            var safeRequest = request == null ? new ListRequest(null, null) : request;
+            var page = jobService.listJobs(safeRequest.limit(), safeRequest.cursor());
+            return new ListJobsResult(page.items(), page.nextCursor());
+        });
     }
 
     @McpTool(
@@ -60,7 +67,7 @@ public class JobMcpAdapter {
 
     @McpTool(
             name = "update_job",
-            description = "Partially update a stored job. Omitted fields preserve existing values; provided skills replace existing skills."
+            description = "Partially update a stored job using its expected revision. Omitted fields preserve existing values; provided skills replace existing skills."
     )
     public CallToolResult updateJob(
             @McpToolParam(required = true, description = "Job partial update request")
@@ -137,14 +144,20 @@ public class JobMcpAdapter {
         }
     }
 
-    public record ListJobsResult(List<JobPosting> jobs) {
+    public record ListRequest(
+            @McpToolParam(required = false, description = "Maximum page size, 1-100") Integer limit,
+            @McpToolParam(required = false, description = "Opaque cursor returned by the previous page") String cursor
+    ) {
+    }
+
+    public record ListJobsResult(List<JobPosting> jobs, String nextCursor) {
         public ListJobsResult {
             jobs = jobs == null ? List.of() : List.copyOf(jobs);
         }
     }
 
     public record JobSearchRequest(
-            @McpToolParam(required = true, description = "Search query text") String query,
+            @McpToolParam(required = true, description = "Search query, maximum 256 characters and 16 searchable terms") String query,
             @McpToolParam(required = false, description = "Maximum number of results, 1-100") Integer limit
     ) {
         JobService.JobSearchRequest toServiceRequest() {
@@ -154,6 +167,7 @@ public class JobMcpAdapter {
 
     public record UpdateJobRequest(
             @McpToolParam(required = true, description = "Job UUID") UUID jobId,
+            @McpToolParam(required = true, description = "Revision returned by the latest job read") Long expectedRevision,
             @McpToolParam(required = false, description = "Source label") String sourceLabel,
             @McpToolParam(required = false, description = "Normalized job title") String title,
             @McpToolParam(required = false, description = "Company name") String company,
@@ -166,7 +180,7 @@ public class JobMcpAdapter {
             @McpToolParam(required = false, description = "Posting timestamp") Instant postedAt
     ) {
         JobService.UpdateJobRequest toServiceRequest() {
-            return new JobService.UpdateJobRequest(jobId, sourceLabel, title, company, location, description, skills,
+            return new JobService.UpdateJobRequest(jobId, expectedRevision, sourceLabel, title, company, location, description, skills,
                     experienceRequirement, employmentType, seniority, postedAt);
         }
     }

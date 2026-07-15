@@ -80,12 +80,11 @@ class PostgresResumeRepositoryIntegrationTests {
     void setUp() {
         jdbc.update("TRUNCATE TABLE resume.resumes, profile.profiles, job_schema.jobs, document.documents, document.blobs CASCADE");
         NamedParameterJdbcTemplate named = new NamedParameterJdbcTemplate(jdbc);
-        JdbcClient client = JdbcClient.create(named);
         profileRepository = new PostgresProfileRepository(named);
         jobRepository = new PostgresJobRepository(named);
         documentRepository = new PostgresDocumentRepository(named);
-        resumeRepository = new PostgresResumeRepository(client);
-        personalDetailsRepository = new PostgresProfilePersonalDetailsRepository(client);
+        resumeRepository = new PostgresResumeRepository(named);
+        personalDetailsRepository = new PostgresProfilePersonalDetailsRepository(JdbcClient.create(named));
     }
 
     @Test

@@ -27,14 +27,10 @@ class DocumentCoverageEdgeCaseTests {
         Method readContent = method(DocumentStorageService.class, "readContent", Path.class);
         assertApplicationException(readContent, disappeared);
 
-        Method validateFileSize = method(PdfTextExtractionService.class, "validateFileSize", Path.class);
-        assertApplicationException(validateFileSize, disappeared);
-
-        Method hasPdfHeader = method(PdfTextExtractionService.class, "hasPdfHeader", Path.class);
-        assertApplicationException(hasPdfHeader, disappeared);
+        assertThrows(ApplicationException.class, () -> PdfTextExtractionService.readBoundedContent(disappeared));
 
         Path shortPdf = Files.write(tempDir.resolve("short.pdf"), new byte[]{'%', 'P'});
-        hasPdfHeader.invoke(null, shortPdf);
+        assertThrows(ApplicationException.class, () -> PdfTextExtractionService.readLocalPdfSnapshot(shortPdf));
 
         PDDocument brokenDocument = mock(PDDocument.class);
         doThrow(new IOException("close failed")).when(brokenDocument).close();

@@ -63,7 +63,9 @@ final class ProfileWriteValidator {
             LinkWriteRequest link = nullSafe(links).get(index);
             requireItem(link, "links", index);
             String type = normalizeRequired(link.linkType(), field("links", index, "linkType"));
-            String url = requireText(link.url(), field("links", index, "url")).trim();
+            String url = ProfileWriteCanonicalizer.canonicalUrl(
+                    requireText(link.url(), field("links", index, "url"))
+            );
             requireUnique(seenLinkKeys, type + "\u0000" + url, field("links", index, "url"),
                     "duplicates another link type/url in this request");
         }

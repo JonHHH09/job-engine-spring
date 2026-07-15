@@ -14,7 +14,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -28,7 +27,7 @@ import java.util.UUID;
 public class DocumentStorageService {
 
     public static final String PDF_MEDIA_TYPE = "application/pdf";
-    private static final String PDF_EXTRACTOR = "spring-ai-page-pdf-document-reader:canonical-250000-v1";
+    private static final String PDF_EXTRACTOR = "spring-ai-page-pdf-document-reader:canonical-250000-pages-v2";
     private static final byte[] PDF_MAGIC = new byte[]{'%', 'P', 'D', 'F', '-'};
 
     @NonNull
@@ -57,7 +56,6 @@ public class DocumentStorageService {
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
-    @Transactional
     public StoredDocumentMetadata storeDocumentFile(StoreDocumentFileRequest request) {
         StoreDocumentFileRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
         Path path = importPolicy.requireAllowed(validatePath(safeRequest.path()));
@@ -86,7 +84,6 @@ public class DocumentStorageService {
                 .orElseThrow(() -> notFound(documentId));
     }
 
-    @Transactional
     public StoredPdfTextExtractionResult extractStoredPdfText(ExtractStoredPdfTextRequest request) {
         ExtractStoredPdfTextRequest safeRequest = Objects.requireNonNull(request, "request must not be null");
         UUID documentId = validateDocumentId(safeRequest.documentId());
@@ -103,8 +100,7 @@ public class DocumentStorageService {
         }
 
         PdfTextExtractionResult extraction = pdfTextExtractionService.extractText(
-                file.content(),
-                file.originalFileName(),
+                file,
                 safeRequest.maxCharacters(),
                 safeRequest.includePages()
         );
@@ -168,27 +164,16 @@ public class DocumentStorageService {
             PdfTextExtractionResult canonical,
             ExtractStoredPdfTextRequest request
     ) {
-        if (request.includePages() == null || request.includePages()) {
-            PdfTextExtractionResult response = pdfTextExtractionService.extractText(
-                    file.content(),
-                    file.originalFileName(),
-                    request.maxCharacters(),
-                    true
-            );
-            return new StoredPdfTextExtractionResult(file.metadata(), extractionId, response);
-        }
-
         return new StoredPdfTextExtractionResult(
                 file.metadata(),
                 extractionId,
-                PdfTextExtractionService.applyRequestView(canonical, request.maxCharacters(), false)
+                PdfTextExtractionService.applyRequestView(canonical, request.maxCharacters(), request.includePages())
         );
     }
 
     private PdfTextExtractionResult extractCanonical(StoredDocumentFile file) {
         return pdfTextExtractionService.extractText(
-                file.content(),
-                file.originalFileName(),
+                file,
                 PdfTextExtractionService.MAX_CHARACTERS_LIMIT,
                 true
         );
@@ -203,6 +188,9 @@ public class DocumentStorageService {
                 extraction.pageCount(),
                 extraction.truncated(),
                 extraction.text(),
+                extraction.pages().stream()
+                        .map(page -> new PdfExtractionRecord.PageProjection(page.pageNumber(), page.text()))
+                        .toList(),
                 clock.instant()
         );
     }
@@ -214,7 +202,9 @@ public class DocumentStorageService {
                 extraction.characterCount(),
                 extraction.truncated(),
                 extraction.extractedText(),
-                java.util.List.of()
+                extraction.pages().stream()
+                        .map(page -> new PdfTextExtractionService.ExtractedPdfPage(page.pageNumber(), page.text()))
+                        .toList()
         );
     }
 
@@ -249,11 +239,7 @@ public class DocumentStorageService {
     }
 
     private static byte[] readContent(Path path) {
-        try {
-            return Files.readAllBytes(path);
-        } catch (IOException exception) {
-            throw validation("path", "file is not readable");
-        }
+        return PdfTextExtractionService.readBoundedContent(path);
     }
 
     private static void validateByteSize(long byteSize) {

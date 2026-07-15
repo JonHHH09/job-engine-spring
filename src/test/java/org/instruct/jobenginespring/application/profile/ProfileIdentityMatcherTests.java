@@ -80,11 +80,20 @@ class ProfileIdentityMatcherTests {
         assertEquals("", ProfileIdentityMatcher.normalizeUrl(null));
         assertEquals("", ProfileIdentityMatcher.normalizeUrl(" "));
         assertEquals("https:", ProfileIdentityMatcher.normalizeUrl("https://"));
-        assertEquals("http:///path", ProfileIdentityMatcher.normalizeUrl("http:///path"));
+        assertEquals("https:///path", ProfileIdentityMatcher.normalizeUrl("http:///path"));
         assertEquals("https://example.com", ProfileIdentityMatcher.normalizeUrl("mailto:USER@EXAMPLE.COM"));
-        assertEquals("http://example.com/path", ProfileIdentityMatcher.normalizeUrl("HTTP://Example.COM/path/"));
+        assertEquals("https://example.com/path", ProfileIdentityMatcher.normalizeUrl("HTTP://Example.COM/path/"));
         assertEquals("https://example.com", ProfileIdentityMatcher.normalizeUrl("example.com/"));
         assertEquals("https://bad[host", ProfileIdentityMatcher.normalizeUrl("bad[host/?query=true"));
+    }
+
+    @Test
+    void canonicalUrlCollapsesSchemeQueryFragmentAndTrailingSlashVariants() {
+        assertEquals("https://example.com/profile", ProfileIdentityMatcher.normalizeUrl("example.com/profile"));
+        assertEquals("https://example.com/profile", ProfileIdentityMatcher.normalizeUrl("http://EXAMPLE.com/profile/?q=1#bio"));
+        assertEquals("https://example.com/profile", ProfileIdentityMatcher.normalizeUrl("https://example.com/profile/#bio"));
+        assertEquals("https://example.com/profile", ProfileIdentityMatcher.normalizeUrl("http://example.com:80/profile"));
+        assertEquals("https://example.com/profile", ProfileIdentityMatcher.normalizeUrl("https://example.com:443/profile"));
     }
 
     @Test
@@ -108,8 +117,9 @@ class ProfileIdentityMatcherTests {
         }
 
         @Override
-        public List<org.instruct.jobenginespring.domain.profile.UserProfile> listProfiles() {
-            return List.of();
+        public org.instruct.jobenginespring.application.pagination.Page<org.instruct.jobenginespring.domain.profile.UserProfile>
+        listProfiles(org.instruct.jobenginespring.application.pagination.PageRequest request) {
+            return new org.instruct.jobenginespring.application.pagination.Page<>(List.of(), null);
         }
 
         @Override
@@ -118,8 +128,9 @@ class ProfileIdentityMatcherTests {
         }
 
         @Override
-        public List<org.instruct.jobenginespring.domain.profile.ProfileAggregate> listProfileAggregates() {
-            return List.of();
+        public org.instruct.jobenginespring.application.pagination.Page<org.instruct.jobenginespring.domain.profile.ProfileAggregate>
+        listProfileAggregates(org.instruct.jobenginespring.application.pagination.PageRequest request) {
+            return new org.instruct.jobenginespring.application.pagination.Page<>(List.of(), null);
         }
 
         @Override

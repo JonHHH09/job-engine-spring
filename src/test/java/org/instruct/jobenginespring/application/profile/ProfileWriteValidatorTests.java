@@ -66,8 +66,8 @@ class ProfileWriteValidatorTests {
                 new ContactWriteRequest(null, " location ", "Montreal", null)
         )), "contacts[1].contactValue", "duplicates another contact type/value in this request");
         assertInvalid(requestWithLinks(List.of(
-                new LinkWriteRequest(null, "Portfolio", "https://example.test", null),
-                new LinkWriteRequest(null, " portfolio ", "https://example.test", null)
+                new LinkWriteRequest(null, "Portfolio", "example.test/profile", null),
+                new LinkWriteRequest(null, " portfolio ", "HTTP://EXAMPLE.test/profile/?q=1#bio", null)
         )), "links[1].url", "duplicates another link type/url in this request");
         assertInvalid(requestWithLanguages(List.of(
                 new LanguageWriteRequest(null, "English", "english", null, 0),

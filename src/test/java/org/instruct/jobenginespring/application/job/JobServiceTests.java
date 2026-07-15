@@ -10,6 +10,8 @@ import org.instruct.jobenginespring.application.job.JobService.JobSearchRequest;
 import org.instruct.jobenginespring.application.job.JobService.UpdateJobRequest;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
@@ -154,7 +156,7 @@ class JobServiceTests {
                 null
         ));
         String legacyFingerprint = DigestUtils.sha256Hex("backend developer\nexample corp\nremote\nbuild apis");
-        repository.updateJobAggregate(withCanonicalFingerprint(existing.job(), legacyFingerprint));
+        repository.updateJobAggregate(withCanonicalFingerprint(existing.job(), legacyFingerprint), existing.job().job().revision()).orElseThrow();
 
         AddJobResult duplicate = service.addJobFromText(new AddJobFromTextRequest(
                 "Different source text",
@@ -524,6 +526,7 @@ class JobServiceTests {
         ));
 
         assertEquals(List.of(created.job().job()), service.listJobs());
+        assertEquals(List.of(created.job().job()), service.listJobs(1, null).items());
         assertEquals(Optional.of(created.job()), service.getJob(created.job().job().id()));
         assertThrows(NullPointerException.class, () -> service.getJob(null));
     }
@@ -547,6 +550,7 @@ class JobServiceTests {
 
         JobAggregate updated = service.updateJob(new UpdateJobRequest(
                 jobId,
+                0L,
                 null,
                 "Senior Backend Developer",
                 null,
@@ -595,6 +599,7 @@ class JobServiceTests {
 
         JobAggregate updated = service.updateJob(new UpdateJobRequest(
                 jobId,
+                0L,
                 " updated source ",
                 null,
                 " ",
@@ -641,6 +646,7 @@ class JobServiceTests {
 
         JobAggregate updated = service.updateJob(new UpdateJobRequest(
                 jobId,
+                0L,
                 "refined source",
                 null,
                 null,
@@ -673,10 +679,11 @@ class JobServiceTests {
                 null
         ));
         String legacyFingerprint = DigestUtils.sha256Hex("backend developer\nexample corp\nremote\nbuild backend services");
-        repository.updateJobAggregate(withCanonicalFingerprint(created.job(), legacyFingerprint));
+        repository.updateJobAggregate(withCanonicalFingerprint(created.job(), legacyFingerprint), created.job().job().revision()).orElseThrow();
 
         JobAggregate updated = service.updateJob(new UpdateJobRequest(
                 created.job().job().id(),
+                0L,
                 "refined source",
                 null,
                 null,
@@ -714,6 +721,7 @@ class JobServiceTests {
 
         JobAggregate updated = service.updateJob(new UpdateJobRequest(
                 created.job().job().id(),
+                0L,
                 "refined source",
                 null,
                 null,
@@ -734,12 +742,15 @@ class JobServiceTests {
     void updateJobRejectsInvalidRequestsAndMissingJobs() {
         assertInvalidUpdateRequest(null, "request", "must not be null");
         assertInvalidUpdateRequest(new UpdateJobRequest(null, null, null, null, null, null, null, null, null, null, null), "jobId", "must not be null");
+        assertInvalidUpdateRequest(new UpdateJobRequest(UUID.randomUUID(), null, null, null, null, null, null, null, null, null, null, null), "expectedRevision", "must not be null");
+        assertInvalidUpdateRequest(new UpdateJobRequest(UUID.randomUUID(), -1L, null, null, null, null, null, null, null, null, null, null), "expectedRevision", "must not be negative");
         assertInvalidUpdateRequest(new UpdateJobRequest(UUID.randomUUID(), null, " ", null, null, null, null, null, null, null, null), "title", "must not be blank");
         assertInvalidUpdateRequest(new UpdateJobRequest(UUID.randomUUID(), null, null, null, null, " ", null, null, null, null, null), "description", "must not be blank");
 
         UUID missingId = UUID.fromString("99999999-1111-1111-1111-999999999999");
         ApplicationException missing = assertThrows(ApplicationException.class, () -> service.updateJob(new UpdateJobRequest(
                 missingId,
+                0L,
                 null,
                 "Senior Backend Developer",
                 null,
@@ -788,6 +799,7 @@ class JobServiceTests {
 
         ApplicationException duplicate = assertThrows(ApplicationException.class, () -> service.updateJob(new UpdateJobRequest(
                 secondId,
+                0L,
                 null,
                 first.job().job().title(),
                 first.job().job().company(),
@@ -806,6 +818,73 @@ class JobServiceTests {
                 "reason", "duplicates existing job " + first.job().job().id()
         ), duplicate.details());
         assertEquals(second.job(), repository.findJobAggregate(secondId).orElseThrow());
+    }
+
+    @Test
+    void updateJobRejectsStaleExpectedRevisionWithoutReplacingSkills() {
+        JobAggregate created = service.addJobFromText(new AddJobFromTextRequest(
+                "Platform engineer\nSkills: Java", "manual", "Platform Engineer", "Example",
+                "Remote", null, List.of("Java"), null, null, null, null
+        )).job();
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateJob(new UpdateJobRequest(
+                created.job().id(), created.job().revision() + 1, null, "Stale title", null, null,
+                null, List.of("Kubernetes"), null, null, null, null
+        )));
+
+        assertEquals("conflict", exception.errorCode().code());
+        assertEquals(Map.of(
+                "resource", "job",
+                "jobId", created.job().id().toString(),
+                "expectedRevision", "1"
+        ), exception.details());
+        JobAggregate persisted = service.getJob(created.job().id()).orElseThrow();
+        assertEquals("Platform Engineer", persisted.job().title());
+        assertEquals(List.of("java"), persisted.skills().stream().map(JobSkill::normalizedSkill).toList());
+    }
+
+    @Test
+    void updateJobReportsConflictWhenCompareAndSetLosesRace() {
+        JobAggregate created = service.addJobFromText(new AddJobFromTextRequest(
+                "Platform engineer", "manual", "Platform Engineer", "Example", "Remote",
+                null, List.of("Java"), null, null, null, null
+        )).job();
+        repository.rejectNextUpdate = true;
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateJob(new UpdateJobRequest(
+                created.job().id(), created.job().revision(), null, "Concurrent title", null, null,
+                null, null, null, null, null, null
+        )));
+
+        assertEquals("conflict", exception.errorCode().code());
+        assertEquals("Platform Engineer", service.getJob(created.job().id()).orElseThrow().job().title());
+    }
+
+    @Test
+    void updateJobMapsRevisionExhaustionToSanitizedConflict() {
+        JobAggregate created = service.addJobFromText(new AddJobFromTextRequest(
+                "Platform engineer", "manual", "Platform Engineer", "Example", "Remote",
+                null, List.of("Java"), null, null, null, null
+        )).job();
+        JobPosting job = created.job();
+        repository.aggregates.put(job.id(), new JobAggregate(
+                new JobPosting(job.id(), job.sourceMethod(), job.sourceLabel(), job.title(), job.company(), job.location(),
+                        job.description(), job.experienceRequirement(), job.employmentType(), job.seniority(), job.postedAt(),
+                        job.canonicalFingerprint(), job.createdAt(), job.updatedAt(), Long.MAX_VALUE),
+                created.skills(), created.linkIngestion(), created.textIngestion()
+        ));
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateJob(new UpdateJobRequest(
+                job.id(), Long.MAX_VALUE, null, "Overflow", null, null, null, null, null, null, null, null
+        )));
+
+        assertEquals("conflict", exception.errorCode().code());
+        assertEquals(Map.of(
+                "resource", "job",
+                "jobId", job.id().toString(),
+                "expectedRevision", Long.toString(Long.MAX_VALUE)
+        ), exception.details());
+        assertEquals(Long.MAX_VALUE, repository.findJobAggregate(job.id()).orElseThrow().job().revision());
     }
 
     @Test
@@ -908,6 +987,16 @@ class JobServiceTests {
         assertEquals(Map.of("field", "query", "reason", "must not be blank"), searchException.details());
         ApplicationException punctuationSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("!!!", 10)));
         assertEquals(Map.of("field", "query", "reason", "must contain searchable text"), punctuationSearchException.details());
+        ApplicationException longSearchException = assertThrows(ApplicationException.class,
+                () -> service.searchJobs(new JobSearchRequest("a".repeat(257), 10)));
+        assertEquals(Map.of("field", "query", "reason", "must not exceed 256 characters"),
+                longSearchException.details());
+        ApplicationException manyTermsSearchException = assertThrows(ApplicationException.class,
+                () -> service.searchJobs(new JobSearchRequest(
+                        java.util.stream.IntStream.range(0, 17).mapToObj(index -> "term" + index)
+                                .collect(java.util.stream.Collectors.joining(" ")), 10)));
+        assertEquals(Map.of("field", "query", "reason", "must contain at most 16 searchable terms"),
+                manyTermsSearchException.details());
         ApplicationException limitSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("java", 101)));
         assertEquals(Map.of("field", "limit", "reason", "must be between 1 and 100"), limitSearchException.details());
         ApplicationException lowLimitSearchException = assertThrows(ApplicationException.class, () -> service.searchJobs(new JobSearchRequest("java", 0)));
@@ -978,8 +1067,8 @@ class JobServiceTests {
         assertEquals(List.of(), new JobAggregate(new JobPosting(
                 aggregateJobId, "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint", NOW, NOW
         ), null, null, new JobTextIngestion(UUID.randomUUID(), aggregateJobId, null, "hash", NOW)).skills());
-        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, null).queryTokens());
-        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, null).jobs());
+        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, false, 0, null).queryTokens());
+        assertEquals(List.of(), new JobService.JobSearchResult("java", null, 0, 0, false, 0, null).jobs());
         JobPosting posting = new JobPosting(
                 UUID.randomUUID(), "text", null, "Title", null, null, "Description", null, null, null, null, "fingerprint-2", NOW, NOW
         );
@@ -1121,12 +1210,13 @@ class JobServiceTests {
     private static final class FakeJobRepository implements JobRepository {
         private final Map<UUID, JobAggregate> aggregates = new LinkedHashMap<>();
         private JobAggregate saveOverride;
+        private boolean rejectNextUpdate;
         private int listJobAggregatesCalls;
         private int findJobAggregateCalls;
 
         @Override
-        public List<JobPosting> listJobs() {
-            return aggregates.values().stream().map(JobAggregate::job).toList();
+        public Page<JobPosting> listJobs(PageRequest request) {
+            return new Page<>(aggregates.values().stream().limit(request.limit()).map(JobAggregate::job).toList(), null);
         }
 
         @Override
@@ -1136,9 +1226,17 @@ class JobServiceTests {
         }
 
         @Override
-        public List<JobAggregate> listJobAggregates() {
+        public Page<JobAggregate> listJobAggregates(PageRequest request) {
             listJobAggregatesCalls++;
-            return List.copyOf(aggregates.values());
+            return new Page<>(aggregates.values().stream().limit(request.limit()).toList(), null);
+        }
+
+        @Override
+        public org.instruct.jobenginespring.application.pagination.SearchCandidates<JobAggregate> searchJobCandidates(
+                List<String> queryTokens, int limit) {
+            listJobAggregatesCalls++;
+            return new org.instruct.jobenginespring.application.pagination.SearchCandidates<>(
+                    -1, List.copyOf(aggregates.values()));
         }
 
         @Override
@@ -1176,9 +1274,17 @@ class JobServiceTests {
         }
 
         @Override
-        public JobAggregate updateJobAggregate(JobAggregate aggregate) {
+        public Optional<JobAggregate> updateJobAggregate(JobAggregate aggregate, long expectedRevision) {
+            if (rejectNextUpdate) {
+                rejectNextUpdate = false;
+                return Optional.empty();
+            }
+            JobAggregate current = aggregates.get(aggregate.job().id());
+            if (current == null || current.job().revision() != expectedRevision) {
+                return Optional.empty();
+            }
             aggregates.put(aggregate.job().id(), aggregate);
-            return aggregate;
+            return Optional.of(aggregate);
         }
 
         @Override

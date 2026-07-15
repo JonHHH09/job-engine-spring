@@ -13,7 +13,8 @@ public record UserProfile(
         String rawResumeText,
         Instant createdAt,
         Instant updatedAt,
-        List<Double> embedding
+        List<Double> embedding,
+        long revision
 ) {
     public UserProfile {
         ProfileRecordSupport.requireId(id, "id");
@@ -21,7 +22,23 @@ public record UserProfile(
         ProfileRecordSupport.requireText(email, "email");
         ProfileRecordSupport.requireInstant(createdAt, "createdAt");
         ProfileRecordSupport.requireInstant(updatedAt, "updatedAt");
+        if (revision < 0) {
+            throw new IllegalArgumentException("revision must not be negative");
+        }
         embedding = ProfileRecordSupport.immutableCopy(embedding);
+    }
+
+    public UserProfile(
+            UUID id,
+            String fullName,
+            String email,
+            String summary,
+            String rawResumeText,
+            Instant createdAt,
+            Instant updatedAt,
+            List<Double> embedding
+    ) {
+        this(id, fullName, email, summary, rawResumeText, createdAt, updatedAt, embedding, 0);
     }
 
     public UserProfile(
@@ -33,6 +50,6 @@ public record UserProfile(
             Instant createdAt,
             Instant updatedAt
     ) {
-        this(id, fullName, email, summary, rawResumeText, createdAt, updatedAt, null);
+        this(id, fullName, email, summary, rawResumeText, createdAt, updatedAt, null, 0);
     }
 }

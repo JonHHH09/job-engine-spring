@@ -87,6 +87,7 @@ class ProfileServiceTests {
         assertEquals("spring ai", created.skills().getFirst().normalizedSkill());
         assertEquals("backend", created.skills().getFirst().category());
         assertEquals(List.of(created.profile()), service.listProfiles());
+        assertEquals(List.of(created.profile()), service.listProfiles(1, null).items());
     }
 
 
@@ -171,7 +172,7 @@ class ProfileServiceTests {
                 null
         ));
 
-        ProfileAggregate updated = service.updateProfile(created.profile().id(), new ProfileWriteRequest(
+        ProfileAggregate updated = service.updateProfile(created.profile().id(), created.profile().revision(), new ProfileWriteRequest(
                 "Agentic Dev",
                 "agentic@example.com",
                 "Updated",
@@ -190,6 +191,101 @@ class ProfileServiceTests {
         assertEquals(List.of(), updated.contacts());
         assertEquals("java", updated.skills().getFirst().normalizedSkill());
         assertEquals(2, updated.skills().getFirst().displayOrder());
+    }
+
+    @Test
+    void updateProfileRejectsStaleExpectedRevisionWithoutReplacingChildren() {
+        ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", "Initial",
+                List.of(new ContactWriteRequest(null, "location", "Remote", null)),
+                null, null, null, null, null, null
+        ));
+        ProfileWriteRequest replacement = new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", "Stale replacement",
+                null, null, null, null, null, null, null
+        );
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () ->
+                service.updateProfile(created.profile().id(), created.profile().revision() + 1, replacement));
+
+        assertEquals("conflict", exception.errorCode().code());
+        assertEquals(Map.of(
+                "resource", "profile",
+                "profileId", created.profile().id().toString(),
+                "expectedRevision", "1"
+        ), exception.details());
+        ProfileAggregate persisted = service.getProfile(created.profile().id()).orElseThrow();
+        assertEquals("Initial", persisted.profile().summary());
+        assertEquals(List.of("location"), persisted.contacts().stream().map(ProfileContact::contactType).toList());
+    }
+
+    @Test
+    void updateProfileValidatesExpectedRevision() {
+        ProfileWriteRequest request = new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", null, null, null, null, null, null, null, null
+        );
+
+        ApplicationException missing = assertThrows(ApplicationException.class, () ->
+                service.updateProfile(UUID.randomUUID(), null, request));
+        ApplicationException negative = assertThrows(ApplicationException.class, () ->
+                service.updateProfile(UUID.randomUUID(), -1L, request));
+
+        assertEquals(Map.of("field", "expectedRevision", "reason", "must not be null"), missing.details());
+        assertEquals(Map.of("field", "expectedRevision", "reason", "must not be negative"), negative.details());
+    }
+
+    @Test
+    void updateProfileReportsConflictWhenCompareAndSetLosesRace() {
+        ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", "Initial", null, null, null, null, null, null, null
+        ));
+        repository.rejectNextReplacement = true;
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateProfile(
+                created.profile().id(), created.profile().revision(), new ProfileWriteRequest(
+                        "Agentic Dev", "agentic@example.com", "Concurrent", null, null, null, null, null, null, null
+                )
+        ));
+
+        assertEquals("conflict", exception.errorCode().code());
+        assertEquals("Initial", service.getProfile(created.profile().id()).orElseThrow().profile().summary());
+    }
+
+    @Test
+    void updateProfileMapsRevisionExhaustionToSanitizedConflict() {
+        ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", "Initial", null, null, null, null, null, null, null
+        ));
+        UserProfile profile = created.profile();
+        repository.saveProfileAggregate(new ProfileAggregate(
+                new UserProfile(profile.id(), profile.fullName(), profile.email(), profile.summary(),
+                        profile.rawResumeText(), profile.createdAt(), profile.updatedAt(), profile.embedding(), Long.MAX_VALUE),
+                created.contacts(), created.links(), created.skills(), created.languages(), created.education(),
+                created.experiences(), created.projects(), created.projectTechnologies()
+        ));
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateProfile(
+                profile.id(), Long.MAX_VALUE, new ProfileWriteRequest(
+                        "Agentic Dev", "agentic@example.com", "Overflow", null, null, null, null, null, null, null
+                )
+        ));
+
+        assertEquals("conflict", exception.errorCode().code());
+        assertEquals(Map.of(
+                "resource", "profile",
+                "profileId", profile.id().toString(),
+                "expectedRevision", Long.toString(Long.MAX_VALUE)
+        ), exception.details());
+        assertEquals(Long.MAX_VALUE, repository.findProfileById(profile.id()).orElseThrow().revision());
+    }
+
+    @Test
+    void defaultProfileRepositoryReplacementRejectsStaleRevision() {
+        ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", null, null, null, null, null, null, null, null
+        ));
+
+        assertEquals(Optional.empty(), repository.replaceProfileAggregate(created, created.profile().revision() + 1));
     }
 
     @Test
@@ -217,7 +313,7 @@ class ProfileServiceTests {
     void updateMissingProfileFails() {
         UUID missingProfileId = UUID.fromString("11111111-1111-1111-1111-111111111111");
 
-        ProfileNotFoundException exception = assertThrows(ProfileNotFoundException.class, () -> service.updateProfile(missingProfileId, new ProfileWriteRequest(
+        ProfileNotFoundException exception = assertThrows(ProfileNotFoundException.class, () -> service.updateProfile(missingProfileId, 0L, new ProfileWriteRequest(
                 "Missing",
                 "missing@example.com",
                 null,
@@ -252,8 +348,8 @@ class ProfileServiceTests {
 
         assertInvalidProfileWriteRequest(null, "request", "must not be null");
         assertThrows(NullPointerException.class, () -> service.getProfile(null));
-        assertThrows(NullPointerException.class, () -> service.updateProfile(null, request));
-        ApplicationException updateException = assertThrows(ApplicationException.class, () -> service.updateProfile(UUID.randomUUID(), null));
+        assertThrows(NullPointerException.class, () -> service.updateProfile(null, 0L, request));
+        ApplicationException updateException = assertThrows(ApplicationException.class, () -> service.updateProfile(UUID.randomUUID(), 0L, null));
         assertEquals("validation_error", updateException.errorCode().code());
         assertEquals(Map.of("field", "request", "reason", "must not be null"), updateException.details());
         assertThrows(NullPointerException.class, () -> service.deleteProfile(null));
@@ -310,6 +406,7 @@ class ProfileServiceTests {
 
         ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateProfile(
                 missingProfileId,
+                0L,
                 new ProfileWriteRequest("Agentic Dev", "agentic@example.com", null, null, null,
                         List.of(new SkillWriteRequest(null, "Java", null, "backend", -1)), null, null, null, null)
         ));
@@ -328,10 +425,13 @@ class ProfileServiceTests {
 
     private static final class FakeProfileRepository implements ProfileRepository {
         private final Map<UUID, ProfileAggregate> aggregates = new LinkedHashMap<>();
+        private boolean rejectNextReplacement;
 
         @Override
-        public List<UserProfile> listProfiles() {
-            return aggregates.values().stream().map(ProfileAggregate::profile).toList();
+        public org.instruct.jobenginespring.application.pagination.Page<UserProfile> listProfiles(
+                org.instruct.jobenginespring.application.pagination.PageRequest request) {
+            return new org.instruct.jobenginespring.application.pagination.Page<>(aggregates.values().stream()
+                    .limit(request.limit()).map(ProfileAggregate::profile).toList(), null);
         }
 
         @Override
@@ -340,8 +440,10 @@ class ProfileServiceTests {
         }
 
         @Override
-        public List<ProfileAggregate> listProfileAggregates() {
-            return List.copyOf(aggregates.values());
+        public org.instruct.jobenginespring.application.pagination.Page<ProfileAggregate> listProfileAggregates(
+                org.instruct.jobenginespring.application.pagination.PageRequest request) {
+            return new org.instruct.jobenginespring.application.pagination.Page<>(aggregates.values().stream()
+                    .limit(request.limit()).toList(), null);
         }
 
         @Override
@@ -388,6 +490,15 @@ class ProfileServiceTests {
         public ProfileAggregate saveProfileAggregate(ProfileAggregate aggregate) {
             aggregates.put(aggregate.profile().id(), aggregate);
             return aggregate;
+        }
+
+        @Override
+        public Optional<ProfileAggregate> replaceProfileAggregate(ProfileAggregate aggregate, long expectedRevision) {
+            if (rejectNextReplacement) {
+                rejectNextReplacement = false;
+                return Optional.empty();
+            }
+            return ProfileRepository.super.replaceProfileAggregate(aggregate, expectedRevision);
         }
 
         @Override

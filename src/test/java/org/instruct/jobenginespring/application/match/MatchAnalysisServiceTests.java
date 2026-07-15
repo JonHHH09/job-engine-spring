@@ -2,6 +2,9 @@ package org.instruct.jobenginespring.application.match;
 
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository;
+import org.instruct.jobenginespring.application.match.port.MatchAnalysisRepository.ReportWithRevisions;
+import org.instruct.jobenginespring.application.pagination.Page;
+import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.domain.match.*;
 import org.junit.jupiter.api.Test;
@@ -107,16 +110,22 @@ class MatchAnalysisServiceTests {
 
     @Test
     void batchFailureNeverReturnsUnderlyingExceptionMessage() {
+        var profiles = mock(ProfileRepository.class);
         var jobs = mock(JobRepository.class);
-        var service = spy(new MatchAnalysisService(mock(ProfileRepository.class), jobs, mock(MatchAnalysisRepository.class),
-                new DeterministicMatchScorer(), Clock.fixed(NOW, ZoneOffset.UTC)));
+        var pairAnalyzer = mock(MatchPairAnalyzer.class);
+        var profile = mock(org.instruct.jobenginespring.domain.profile.ProfileAggregate.class);
+        var profileId = UUID.randomUUID();
+        var service = new MatchAnalysisService(profiles, jobs, mock(MatchAnalysisRepository.class), pairAnalyzer,
+                Clock.fixed(NOW, ZoneOffset.UTC));
         var aggregate = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
         var jobId = UUID.randomUUID();
         when(aggregate.job().id()).thenReturn(jobId);
-        when(jobs.listJobAggregates()).thenReturn(List.of(aggregate));
-        doThrow(new IllegalStateException("jdbc://private-host secret-token")).when(service).analyze(any(), eq(jobId));
+        when(profiles.findProfileAggregate(profileId)).thenReturn(Optional.of(profile));
+        when(jobs.listJobAggregates(any(PageRequest.class))).thenReturn(new Page<>(List.of(aggregate), null));
+        when(pairAnalyzer.analyze(profile, aggregate))
+                .thenThrow(new IllegalStateException("jdbc://private-host secret-token"));
 
-        var result = service.analyzeAll(UUID.randomUUID());
+        var result = service.analyzeAll(profileId);
 
         assertEquals("analysis failed", result.failed().getFirst().error());
     }
@@ -152,31 +161,33 @@ class MatchAnalysisServiceTests {
         var service = new MatchAnalysisService(profiles, jobs, repository, new DeterministicMatchScorer(),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         var report = report();
-        var profile = mock(org.instruct.jobenginespring.domain.profile.UserProfile.class);
-        var job = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
-        when(profile.updatedAt()).thenReturn(NOW.plusSeconds(1));
-        when(job.job().updatedAt()).thenReturn(NOW);
-        when(profiles.findProfileById(report.profileId())).thenReturn(Optional.of(profile));
-        when(jobs.findJobAggregate(report.jobId())).thenReturn(Optional.of(job));
-        when(repository.findReport(report.id())).thenReturn(Optional.of(report));
-        when(repository.listReports(report.profileId(), report.jobId())).thenReturn(List.of(report));
+        var revision = new ReportWithRevisions(report, NOW.plusSeconds(1), NOW);
+        when(repository.findReportWithRevisions(report.id())).thenReturn(Optional.of(revision));
+        var pageRequest = PageRequest.of(null, null, "match-reports",
+                "profile=" + report.profileId() + ";job=" + report.jobId());
+        when(repository.listReports(report.profileId(), report.jobId(), pageRequest))
+                .thenReturn(new Page<>(List.of(revision), null));
 
         assertTrue(service.getReport(report.id()).stale());
         assertEquals(1, service.listReports(report.profileId(), report.jobId()).size());
-        verify(repository).listReports(report.profileId(), report.jobId());
+        verify(repository).listReports(report.profileId(), report.jobId(), pageRequest);
+        verifyNoInteractions(profiles, jobs);
     }
 
     @Test
-    void listOperationsValidateRequiredReviewIdAndPreserveNullableDisagreementFilter() {
+    void listOperationsPreserveNullableFiltersAndUseBoundedDefaults() {
         var repository = mock(MatchAnalysisRepository.class);
         var service = new MatchAnalysisService(mock(ProfileRepository.class), mock(JobRepository.class), repository,
                 new DeterministicMatchScorer(), Clock.fixed(NOW, ZoneOffset.UTC));
 
-        assertThrows(NullPointerException.class, () -> service.listReviews(null));
+        when(repository.listReviews(eq(null), any(PageRequest.class))).thenReturn(new Page<>(List.of(), null));
+        when(repository.listDisagreements(eq(null), any(PageRequest.class))).thenReturn(new Page<>(List.of(), null));
+
+        assertEquals(List.of(), service.listReviews(null));
         assertEquals(List.of(), service.listDisagreements(null));
 
-        verify(repository).listDisagreements(null);
-        verify(repository, never()).listReviews(null);
+        verify(repository).listReviews(eq(null), argThat(request -> request.limit() == PageRequest.DEFAULT_LIMIT));
+        verify(repository).listDisagreements(eq(null), argThat(request -> request.limit() == PageRequest.DEFAULT_LIMIT));
     }
 
     @Test
@@ -205,9 +216,12 @@ class MatchAnalysisServiceTests {
 
     @Test
     void analyzeAllReturnsSuccessesAndFailuresAndValidatesProfile() {
+        var profiles = mock(ProfileRepository.class);
         var jobs = mock(JobRepository.class);
-        var service = spy(new MatchAnalysisService(mock(ProfileRepository.class), jobs, mock(MatchAnalysisRepository.class),
-                new DeterministicMatchScorer(), Clock.fixed(NOW, ZoneOffset.UTC)));
+        var pairAnalyzer = mock(MatchPairAnalyzer.class);
+        var service = new MatchAnalysisService(profiles, jobs, mock(MatchAnalysisRepository.class), pairAnalyzer,
+                Clock.fixed(NOW, ZoneOffset.UTC));
+        var profile = mock(org.instruct.jobenginespring.domain.profile.ProfileAggregate.class);
         var first = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
         var second = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
         var firstId = UUID.randomUUID();
@@ -216,15 +230,96 @@ class MatchAnalysisServiceTests {
         var view = new MatchAnalysisService.ReportView(report(), false);
         when(first.job().id()).thenReturn(firstId);
         when(second.job().id()).thenReturn(secondId);
-        when(jobs.listJobAggregates()).thenReturn(List.of(first, second));
-        doReturn(view).when(service).analyze(profileId, firstId);
-        doThrow(new IllegalStateException("private detail")).when(service).analyze(profileId, secondId);
+        when(profiles.findProfileAggregate(profileId)).thenReturn(Optional.of(profile));
+        when(jobs.listJobAggregates(any(PageRequest.class))).thenReturn(new Page<>(List.of(first, second), "next"));
+        when(pairAnalyzer.analyze(profile, first)).thenReturn(view.report());
+        when(pairAnalyzer.analyze(profile, second)).thenThrow(new IllegalStateException("private detail"));
 
         var result = service.analyzeAll(profileId);
 
         assertEquals(List.of(view), result.succeeded());
         assertEquals(List.of(new MatchAnalysisService.PairFailure(profileId, secondId, "analysis failed")), result.failed());
+        assertEquals("next", result.nextCursor());
         assertThrows(NullPointerException.class, () -> service.analyzeAll(null));
+        var missingProfileId = UUID.randomUUID();
+        when(profiles.findProfileAggregate(missingProfileId)).thenReturn(Optional.empty());
+        assertThrows(IllegalArgumentException.class, () -> service.analyzeAll(missingProfileId));
+    }
+
+    @Test
+    void analyzeAllLoadsTheProfileOnceAndReusesListedJobAggregates() {
+        var profiles = mock(ProfileRepository.class);
+        var jobs = mock(JobRepository.class);
+        var repository = mock(MatchAnalysisRepository.class);
+        var scorer = mock(DeterministicMatchScorer.class);
+        var profile = mock(org.instruct.jobenginespring.domain.profile.ProfileAggregate.class);
+        var first = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
+        var second = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
+        var profileId = UUID.randomUUID();
+        var firstId = UUID.randomUUID();
+        var secondId = UUID.randomUUID();
+        var firstReport = report();
+        var secondReport = report();
+        when(first.job().id()).thenReturn(firstId);
+        when(second.job().id()).thenReturn(secondId);
+        when(profiles.findProfileAggregate(profileId)).thenReturn(Optional.of(profile));
+        when(jobs.listJobAggregates(any(PageRequest.class))).thenReturn(new Page<>(List.of(first, second), null));
+        when(jobs.findJobAggregate(firstId)).thenReturn(Optional.of(first));
+        when(jobs.findJobAggregate(secondId)).thenReturn(Optional.of(second));
+        when(scorer.score(profile, first, NOW)).thenReturn(firstReport);
+        when(scorer.score(profile, second, NOW)).thenReturn(secondReport);
+        when(repository.saveReport(firstReport)).thenReturn(firstReport);
+        when(repository.saveReport(secondReport)).thenReturn(secondReport);
+        var service = new MatchAnalysisService(profiles, jobs, repository, scorer, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        var result = service.analyzeAll(profileId);
+
+        assertEquals(2, result.succeeded().size());
+        assertTrue(result.failed().isEmpty());
+        verify(profiles).findProfileAggregate(profileId);
+        verify(jobs, never()).findJobAggregate(any());
+        verify(scorer).score(profile, first, NOW);
+        verify(scorer).score(profile, second, NOW);
+    }
+
+    @Test
+    void analyzeAllDefaultsToTwentyRejectsOversizeAndBindsCursorToProfile() {
+        var profiles = mock(ProfileRepository.class);
+        var jobs = mock(JobRepository.class);
+        var profile = mock(org.instruct.jobenginespring.domain.profile.ProfileAggregate.class);
+        var firstProfileId = UUID.randomUUID();
+        var secondProfileId = UUID.randomUUID();
+        when(profiles.findProfileAggregate(firstProfileId)).thenReturn(Optional.of(profile));
+        when(profiles.findProfileAggregate(secondProfileId)).thenReturn(Optional.of(profile));
+        when(jobs.listJobAggregates(any(PageRequest.class))).thenReturn(new Page<>(List.of(), null));
+        var service = new MatchAnalysisService(profiles, jobs, mock(MatchAnalysisRepository.class),
+                mock(MatchPairAnalyzer.class), Clock.fixed(NOW, ZoneOffset.UTC));
+
+        service.analyzeAll(firstProfileId, null, null);
+        verify(jobs).listJobAggregates(argThat(request -> request.limit() == 20));
+        assertThrows(IllegalArgumentException.class, () -> service.analyzeAll(firstProfileId, 101, null));
+
+        var firstRequest = PageRequest.of(1, null, "analyze-all-job-matches", "profile=" + firstProfileId);
+        var cursor = firstRequest.nextCursor(NOW, NOW.minusSeconds(1), UUID.randomUUID());
+        assertThrows(RuntimeException.class, () -> service.analyzeAll(secondProfileId, 1, cursor));
+        assertThrows(RuntimeException.class, () -> service.analyzeAll(firstProfileId, 1, "malformed"));
+    }
+
+    @Test
+    void reviewAndDisagreementCursorsAreBoundToTheirFilters() {
+        var service = new MatchAnalysisService(mock(ProfileRepository.class), mock(JobRepository.class),
+                mock(MatchAnalysisRepository.class), new DeterministicMatchScorer(), Clock.fixed(NOW, ZoneOffset.UTC));
+        var firstReport = UUID.randomUUID();
+        var secondReport = UUID.randomUUID();
+        var reviewRequest = PageRequest.of(1, null, "match-reviews", "report=" + firstReport);
+        var reviewCursor = reviewRequest.nextCursor(NOW, NOW.minusSeconds(1), UUID.randomUUID());
+        var disagreementRequest = PageRequest.of(1, null, "match-disagreements", "report=" + firstReport);
+        var disagreementCursor = disagreementRequest.nextCursor(NOW, NOW.minusSeconds(1), UUID.randomUUID());
+
+        assertThrows(RuntimeException.class, () -> service.listReviews(secondReport, 1, reviewCursor));
+        assertThrows(RuntimeException.class, () -> service.listDisagreements(secondReport, 1, disagreementCursor));
+        assertThrows(RuntimeException.class, () -> service.listReviews(firstReport, 1, "malformed"));
+        assertThrows(RuntimeException.class, () -> service.listDisagreements(firstReport, 1, "malformed"));
     }
 
     @Test
@@ -235,19 +330,15 @@ class MatchAnalysisServiceTests {
         var service = new MatchAnalysisService(profiles, jobs, repository, new DeterministicMatchScorer(),
                 Clock.fixed(NOW, ZoneOffset.UTC));
         var report = report();
-        var profile = mock(org.instruct.jobenginespring.domain.profile.UserProfile.class);
-        var job = mock(org.instruct.jobenginespring.domain.job.JobAggregate.class, RETURNS_DEEP_STUBS);
-        when(repository.findReport(report.id())).thenReturn(Optional.of(report));
-        when(profile.updatedAt()).thenReturn(report.profileRevision());
-        when(job.job().updatedAt()).thenReturn(report.jobRevision());
-        when(profiles.findProfileById(report.profileId())).thenReturn(Optional.of(profile));
-        when(jobs.findJobAggregate(report.jobId())).thenReturn(Optional.of(job));
+        when(repository.findReportWithRevisions(report.id())).thenReturn(Optional.of(
+                new ReportWithRevisions(report, report.profileRevision(), report.jobRevision())));
         assertFalse(service.getReport(report.id()).stale());
 
-        when(profiles.findProfileById(report.profileId())).thenReturn(Optional.empty());
+        when(repository.findReportWithRevisions(report.id())).thenReturn(Optional.of(
+                new ReportWithRevisions(report, null, report.jobRevision())));
         assertTrue(service.getReport(report.id()).stale());
-        when(profiles.findProfileById(report.profileId())).thenReturn(Optional.of(profile));
-        when(jobs.findJobAggregate(report.jobId())).thenReturn(Optional.empty());
+        when(repository.findReportWithRevisions(report.id())).thenReturn(Optional.of(
+                new ReportWithRevisions(report, report.profileRevision(), null)));
         assertTrue(service.getReport(report.id()).stale());
     }
 
@@ -281,15 +372,15 @@ class MatchAnalysisServiceTests {
         assertThrows(NullPointerException.class, () -> new MatchAnalysisService(mock(ProfileRepository.class), mock(JobRepository.class),
                 null, new DeterministicMatchScorer(), Clock.systemUTC()));
         assertThrows(NullPointerException.class, () -> new MatchAnalysisService(mock(ProfileRepository.class), mock(JobRepository.class),
-                mock(MatchAnalysisRepository.class), null, Clock.systemUTC()));
+                mock(MatchAnalysisRepository.class), (DeterministicMatchScorer) null, Clock.systemUTC()));
         assertThrows(NullPointerException.class, () -> new MatchAnalysisService(mock(ProfileRepository.class), mock(JobRepository.class),
                 mock(MatchAnalysisRepository.class), new DeterministicMatchScorer(), null));
 
         var repository = mock(MatchAnalysisRepository.class);
         var service = new MatchAnalysisService(mock(ProfileRepository.class), mock(JobRepository.class), repository);
         var reportId = UUID.randomUUID();
-        when(repository.listReviews(reportId)).thenReturn(List.of());
-        when(repository.listDisagreements(reportId)).thenReturn(List.of());
+        when(repository.listReviews(eq(reportId), any(PageRequest.class))).thenReturn(new Page<>(List.of(), null));
+        when(repository.listDisagreements(eq(reportId), any(PageRequest.class))).thenReturn(new Page<>(List.of(), null));
         assertEquals(List.of(), service.listReviews(reportId));
         assertEquals(List.of(), service.listDisagreements(reportId));
         assertThrows(NullPointerException.class, () -> service.getReport(null));

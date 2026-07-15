@@ -36,9 +36,9 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Until a dedicated project conduct address is available, report abusive, harassing, or otherwise unacceptable behavior by using a contact method listed on the repository owner's [GitHub profile](https://github.com/JonHHH09) and requesting a private conduct-reporting channel. Do not include incident details in a public issue, pull request, discussion, comment, or initial contact message.
+Report abusive, harassing, or otherwise unacceptable behavior privately to [root@jonihysaj.dev](mailto:root@jonihysaj.dev). Do not include incident details in a public issue, pull request, discussion, or comment.
 
-This is a temporary pre-publication fallback. It must be replaced with a monitored private conduct-reporting address before the repository is made public. All complaints will be reviewed and investigated promptly and fairly.
+This address is monitored for private conduct reports. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 
