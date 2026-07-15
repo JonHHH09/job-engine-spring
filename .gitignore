@@ -50,6 +50,8 @@ build/
 
 ### Local private inputs and OS metadata ###
 /tmp/imports/
+/tmp/pdfs/
+/output/
 .DS_Store
 
 /tmp/generated-pdfs/*
