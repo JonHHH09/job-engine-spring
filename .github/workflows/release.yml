@@ -1,31 +1,48 @@
 name: Release MCP Container
 
 on:
-  push:
-    tags:
-      - 'v*'
+  pull_request:
+    branches:
+      - master
+    types:
+      - closed
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  # GitHub keeps at most one pending run per group. Automatic promotions are
+  # serialized and may coalesce during bursts; manual dry runs never share it.
+  group: ${{ github.event_name == 'workflow_dispatch' && format('release-dry-run-{0}', github.run_id) || 'release-master-promotion' }}
   cancel-in-progress: false
 
 jobs:
   verify:
     name: Verify release artifacts
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.ref == 'development' &&
+      github.event.pull_request.base.ref == 'master' &&
+      github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_version: ${{ steps.release.outputs.release_version }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
+      publish_release: ${{ steps.release.outputs.publish_release }}
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
 
       - name: Set up Java
         uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
@@ -37,47 +54,123 @@ jobs:
       - name: Resolve release version
         id: release
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_MERGED: ${{ github.event.pull_request.merged }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          EVENT_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          GITHUB_TOKEN: ${{ github.token }}
+          MERGE_COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PROMOTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            RELEASE_TAG="${GITHUB_REF_NAME}"
-            # Keep this SemVer subset aligned with scripts/release.sh.
-            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z-]*(\.[0-9A-Za-z][0-9A-Za-z-]*)*)?$ ]]; then
-              echo "Release tags must use vMAJOR.MINOR.PATCH format, optionally with a prerelease suffix." >&2
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            if [[ "$EVENT_MERGED" != "true" ||
+                  "$EVENT_HEAD_REF" != "development" ||
+                  "$EVENT_BASE_REF" != "master" ||
+                  "$EVENT_HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+              echo "Only a merged same-repository development -> master pull request may publish a release." >&2
               exit 1
             fi
+
+            SOURCE_SHA="$MERGE_COMMIT_SHA"
+            if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "The merged pull request did not provide a valid merge commit SHA." >&2
+              exit 1
+            fi
+            if [[ ! "$PROMOTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ || ! "$PULL_REQUEST_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+              echo "The merged pull request did not provide a valid promoted head SHA and pull request number." >&2
+              exit 1
+            fi
+
+            AUTH_HEADER="$(printf 'AUTHORIZATION: basic %s' "$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)")"
+            git -c "http.https://github.com/.extraheader=$AUTH_HEADER" fetch --force origin \
+              '+refs/heads/master:refs/remotes/origin/master' \
+              "+refs/pull/${PULL_REQUEST_NUMBER}/head:refs/remotes/pull/${PULL_REQUEST_NUMBER}/head" \
+              '+refs/tags/*:refs/tags/*'
+
+            MASTER_TIP="$(git rev-parse origin/master)"
+            if [[ "$SOURCE_SHA" != "$MASTER_TIP" ]]; then
+              echo "The merged pull request commit is no longer the current origin/master tip." >&2
+              echo "Merge commit: $SOURCE_SHA" >&2
+              echo "Master tip:   $MASTER_TIP" >&2
+              exit 1
+            fi
+
+            FETCHED_HEAD_SHA="$(git rev-parse "refs/remotes/pull/${PULL_REQUEST_NUMBER}/head")"
+            if [[ "$FETCHED_HEAD_SHA" != "$PROMOTED_HEAD_SHA" ]]; then
+              echo "The fetched pull request head does not match the promoted event head." >&2
+              echo "Event head:   $PROMOTED_HEAD_SHA" >&2
+              echo "Fetched head: $FETCHED_HEAD_SHA" >&2
+              exit 1
+            fi
+
+            SOURCE_TREE="$(git rev-parse "${SOURCE_SHA}^{tree}")"
+            PROMOTED_HEAD_TREE="$(git rev-parse "${PROMOTED_HEAD_SHA}^{tree}")"
+            if [[ "$SOURCE_TREE" != "$PROMOTED_HEAD_TREE" ]]; then
+              echo "The merged master tree is not identical to the promoted pull request head." >&2
+              echo "Master tree:        $SOURCE_TREE" >&2
+              echo "Promoted head tree: $PROMOTED_HEAD_TREE" >&2
+              exit 1
+            fi
+
+            STABLE_TAGS=()
+            while IFS= read -r stable_tag; do
+              STABLE_TAGS+=("$stable_tag")
+            done < <(
+              git tag --list | python3 -c '
+          import re
+          import sys
+
+          stable = []
+          for line in sys.stdin:
+              tag = line.strip()
+              match = re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag)
+              if match:
+                  stable.append((tuple(map(int, match.groups())), tag))
+          for _, tag in sorted(stable, reverse=True):
+              print(tag)
+          '
+            )
+
+            RELEASE_TAG=""
+            for existing_tag in "${STABLE_TAGS[@]}"; do
+              if [[ "$(git rev-parse "${existing_tag}^{commit}")" == "$SOURCE_SHA" ]]; then
+                RELEASE_TAG="$existing_tag"
+                echo "Reusing stable tag $RELEASE_TAG because it already targets this source commit."
+                break
+              fi
+            done
+
+            if [[ -z "$RELEASE_TAG" ]]; then
+              if (( ${#STABLE_TAGS[@]} == 0 )); then
+                RELEASE_TAG="v0.0.1"
+              else
+                HIGHEST_TAG="${STABLE_TAGS[0]}"
+                IFS=. read -r MAJOR MINOR PATCH <<< "${HIGHEST_TAG#v}"
+                RELEASE_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+              fi
+            fi
+
             RELEASE_VERSION="${RELEASE_TAG#v}"
             PUBLISH_RELEASE=true
           else
             RELEASE_TAG="dry-run-${GITHUB_RUN_ID}"
             RELEASE_VERSION="0.0.1-SNAPSHOT"
+            SOURCE_SHA="${GITHUB_SHA}"
             PUBLISH_RELEASE=false
           fi
 
           {
             echo "release_tag=$RELEASE_TAG"
             echo "release_version=$RELEASE_VERSION"
+            echo "source_sha=$SOURCE_SHA"
             echo "publish_release=$PUBLISH_RELEASE"
           } >> "$GITHUB_OUTPUT"
           echo "Resolved release tag: $RELEASE_TAG"
           echo "Resolved Maven version: $RELEASE_VERSION"
-
-      - name: Enforce release tag targets current master
-        if: ${{ steps.release.outputs.publish_release == 'true' }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
-        run: |
-          AUTH_HEADER="$(printf 'AUTHORIZATION: basic %s' "$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)")"
-          git -c "http.https://github.com/.extraheader=$AUTH_HEADER" fetch --no-tags origin master
-          TAG_TARGET="$(git rev-list -n 1 "$RELEASE_TAG")"
-          MASTER_TIP="$(git rev-parse origin/master)"
-
-          if [[ "$TAG_TARGET" != "$MASTER_TIP" ]]; then
-            echo "Release tag ${RELEASE_TAG} must point at the current origin/master tip." >&2
-            echo "Tag target: ${TAG_TARGET}" >&2
-            echo "Master tip:  ${MASTER_TIP}" >&2
-            exit 1
-          fi
+          echo "Resolved source commit: $SOURCE_SHA"
 
       - name: Run full verification and build jar
         run: ./mvnw clean -Drevision="${{ steps.release.outputs.release_version }}" -Pintegration-tests verify
@@ -245,7 +338,7 @@ jobs:
     name: Publish release artifacts
     runs-on: ubuntu-latest
     needs: verify
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    if: needs.verify.outputs.publish_release == 'true'
     timeout-minutes: 30
     permissions:
       contents: write
@@ -255,23 +348,66 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          fetch-depth: 0
           persist-credentials: false
+          ref: ${{ needs.verify.outputs.source_sha }}
 
       - name: Resolve release version
         id: release
         shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.verify.outputs.release_version }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
         run: |
-          RELEASE_TAG="${GITHUB_REF_NAME}"
-          # Keep this SemVer subset aligned with scripts/release.sh.
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z-]*(\.[0-9A-Za-z][0-9A-Za-z-]*)*)?$ ]]; then
-            echo "Release tags must use vMAJOR.MINOR.PATCH format, optionally with a prerelease suffix." >&2
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Automatic releases require a stable vMAJOR.MINOR.PATCH tag." >&2
             exit 1
           fi
-          RELEASE_VERSION="${RELEASE_TAG#v}"
+          if [[ "$RELEASE_VERSION" != "${RELEASE_TAG#v}" || ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Verify job produced inconsistent release metadata." >&2
+            exit 1
+          fi
           {
             echo "release_tag=$RELEASE_TAG"
             echo "release_version=$RELEASE_VERSION"
+            echo "source_sha=$SOURCE_SHA"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Revalidate master and create release tag
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        run: |
+          AUTH_HEADER="$(printf 'AUTHORIZATION: basic %s' "$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)")"
+          git -c "http.https://github.com/.extraheader=$AUTH_HEADER" fetch --force origin \
+            '+refs/heads/master:refs/remotes/origin/master' \
+            '+refs/tags/*:refs/tags/*'
+
+          MASTER_TIP="$(git rev-parse origin/master)"
+          if [[ "$SOURCE_SHA" != "$MASTER_TIP" ]]; then
+            echo "origin/master moved after release verification; refusing to publish stale artifacts." >&2
+            echo "Verified source: $SOURCE_SHA" >&2
+            echo "Master tip:     $MASTER_TIP" >&2
+            exit 1
+          fi
+
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            TAG_TARGET="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+            if [[ "$TAG_TARGET" != "$SOURCE_SHA" ]]; then
+              echo "Existing tag $RELEASE_TAG points at $TAG_TARGET, not verified source $SOURCE_SHA." >&2
+              exit 1
+            fi
+            echo "Reusing existing tag $RELEASE_TAG at verified source $SOURCE_SHA."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$RELEASE_TAG" -m "Release $RELEASE_TAG" "$SOURCE_SHA"
+            git -c "http.https://github.com/.extraheader=$AUTH_HEADER" push origin "refs/tags/$RELEASE_TAG"
+            echo "Created annotated tag $RELEASE_TAG at verified source $SOURCE_SHA."
+          fi
 
       - name: Download verified release artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -407,6 +543,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
           RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
           IMAGE_REF: ${{ steps.publish_image.outputs.image_ref }}
         run: |
           runtime_base_ref="$(python3 -c 'import pathlib,re; text=pathlib.Path("Dockerfile.release").read_text(); match=re.search(r"^FROM\s+([^\s@]+)@sha256:([0-9a-f]{64})\s*$", text, re.MULTILINE); assert match, "Dockerfile.release must pin its runtime base by sha256 digest"; print(f"{match.group(1)}@sha256:{match.group(2)}")')"
@@ -444,11 +581,11 @@ jobs:
             "builder": {
               "id": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
             },
-            "buildType": "https://github.com/JonHHH09/job-engine-spring/.github/workflows/release.yml@refs/heads/master",
+            "buildType": "${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}",
             "invocation": {
               "configSource": {
-                "uri": "git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${GITHUB_SHA}",
-                "digest": {"sha1": "${GITHUB_SHA}"},
+                "uri": "git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${SOURCE_SHA}",
+                "digest": {"sha1": "${SOURCE_SHA}"},
                 "entryPoint": ".github/workflows/release.yml"
               },
               "parameters": {
@@ -469,8 +606,8 @@ jobs:
             },
             "materials": [
               {
-                "uri": "git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${GITHUB_SHA}",
-                "digest": {"sha1": "${GITHUB_SHA}"}
+                "uri": "git+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}@${SOURCE_SHA}",
+                "digest": {"sha1": "${SOURCE_SHA}"}
               },
               {
                 "uri": "${runtime_base_purl}",
@@ -494,7 +631,7 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.publish_image.outputs.image_ref }}
         run: |
-          certificate_identity="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}"
+          certificate_identity="${GITHUB_SERVER_URL}/${GITHUB_WORKFLOW_REF}"
           certificate_issuer="https://token.actions.githubusercontent.com"
 
           cosign verify \
