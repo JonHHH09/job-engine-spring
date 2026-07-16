@@ -286,6 +286,36 @@ class ProfileServiceTests {
     }
 
     @Test
+    void updateProjectRejectsAnotherProjectCanonicalNameAndUrl() {
+        ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", "Initial", null, null, null, null, null, null,
+                List.of(
+                        new ProjectWriteRequest(null, "First project", "https://example.test/first", null, 0, null),
+                        new ProjectWriteRequest(null, "Second project", "https://example.test/second", null, 1, null)
+                )
+        ));
+        ProfileProject first = created.projects().getFirst();
+        ProfileProject second = created.projects().get(1);
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateProject(new ProjectUpdateRequest(
+                created.profile().id(), second.id(), created.profile().revision(), " FIRST PROJECT ", first.url(), null, null, null
+        )));
+
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals(Map.of("field", "name", "reason", "duplicates another project name/url in this profile"), exception.details());
+        ProfileAggregate persisted = service.getProfile(created.profile().id()).orElseThrow();
+        assertEquals(0L, persisted.profile().revision());
+        assertEquals(List.of("First project", "Second project"), persisted.projects().stream().map(ProfileProject::name).toList());
+
+        ProjectUpdateResult nonDuplicate = service.updateProject(new ProjectUpdateRequest(
+                created.profile().id(), first.id(), persisted.profile().revision(), null, null, null, 2, null
+        ));
+
+        assertEquals(1L, nonDuplicate.profileRevision());
+        assertEquals(2, nonDuplicate.project().displayOrder());
+    }
+
+    @Test
     void updateProjectValidatesEveryPartialRequestBoundary() {
         UUID profileId = UUID.fromString("11111111-1111-1111-1111-111111111111");
         UUID projectId = UUID.fromString("22222222-2222-2222-2222-222222222222");
