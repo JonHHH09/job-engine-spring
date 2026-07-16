@@ -12,10 +12,12 @@ import org.instruct.jobenginespring.domain.profile.ProjectTechnology;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
 import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
 import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
+import org.instruct.jobenginespring.application.profile.ProjectUpdateResult;
 import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.pagination.SearchCandidates;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -66,6 +68,16 @@ public interface ProfileRepository {
         return findProfileById(aggregate.profile().id())
                 .filter(existing -> existing.revision() == expectedRevision)
                 .map(ignored -> saveProfileAggregate(aggregate));
+    }
+
+    default Optional<ProjectUpdateResult> updateProject(
+            ProfileProject project,
+            long expectedRevision,
+            long newRevision,
+            Instant profileUpdatedAt,
+            List<ProjectTechnology> replacementTechnologies
+    ) {
+        throw new UnsupportedOperationException("Selective profile project updates are not supported by this repository");
     }
 
     boolean deleteProfile(UUID profileId);

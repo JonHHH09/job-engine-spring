@@ -5,6 +5,7 @@ import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationErrorResponse;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.ProfileService;
+import org.instruct.jobenginespring.application.profile.ProjectUpdateResult;
 import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -51,6 +52,7 @@ class ProfileMcpAdapterTests {
                 "get_profile",
                 "create_profile",
                 "update_profile",
+                "update_profile_project",
                 "delete_profile"
         ), toolNames);
     }
@@ -152,6 +154,66 @@ class ProfileMcpAdapterTests {
 
         assertSuccessfulContent(aggregate, result);
         verify(profileService).updateProfile(PROFILE_ID, 0L, request);
+    }
+
+    @Test
+    void updateProfileProjectToolDelegatesAndReturnsPersistedProjectResult() {
+        UUID projectId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        ProfileMcpAdapter.ProjectUpdateRequest request = new ProfileMcpAdapter.ProjectUpdateRequest(
+                PROFILE_ID, projectId, 0L, "Project", null, null, 1, null
+        );
+        ProfileService.ProjectUpdateRequest serviceRequest = request.toServiceRequest();
+        ProjectUpdateResult expected = new ProjectUpdateResult(
+                new org.instruct.jobenginespring.domain.profile.ProfileProject(
+                        projectId, PROFILE_ID, "Project", null, null, 1, NOW
+                ),
+                1L
+        );
+        when(profileService.updateProject(serviceRequest)).thenReturn(expected);
+
+        CallToolResult result = adapter.updateProfileProject(request);
+
+        assertSuccessfulContent(expected, result);
+        verify(profileService).updateProject(serviceRequest);
+    }
+
+    @Test
+    void updateProfileProjectToolMapsStaleAndMissingProjectErrors() {
+        UUID projectId = UUID.fromString("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+        ProfileMcpAdapter.ProjectUpdateRequest staleRequest = new ProfileMcpAdapter.ProjectUpdateRequest(
+                PROFILE_ID, projectId, 0L, "Project", null, null, null, null
+        );
+        ProfileMcpAdapter.ProjectUpdateRequest missingRequest = new ProfileMcpAdapter.ProjectUpdateRequest(
+                PROFILE_ID, projectId, 1L, "Project", null, null, null, null
+        );
+        when(profileService.updateProject(staleRequest.toServiceRequest())).thenThrow(new ApplicationException(
+                ApplicationErrorCode.CONFLICT, "Profile revision conflict",
+                Map.of("resource", "profile", "profileId", PROFILE_ID.toString(), "expectedRevision", "0"), null
+        ));
+        when(profileService.updateProject(missingRequest.toServiceRequest())).thenThrow(
+                new ProfileService.ProjectNotFoundException(PROFILE_ID, projectId)
+        );
+
+        ApplicationErrorResponse stale = assertErrorResponse(adapter.updateProfileProject(staleRequest));
+        ApplicationErrorResponse missing = assertErrorResponse(adapter.updateProfileProject(missingRequest));
+
+        assertEquals("conflict", stale.code());
+        assertEquals("not_found", missing.code());
+        assertEquals(Map.of("resource", "project", "profileId", PROFILE_ID.toString(), "projectId", projectId.toString()),
+                missing.details());
+    }
+
+    @Test
+    void updateProfileProjectToolMapsNullRequestToSanitizedValidationError() {
+        when(profileService.updateProject(null)).thenThrow(new ApplicationException(
+                ApplicationErrorCode.VALIDATION_ERROR, "Invalid profile request",
+                Map.of("field", "request", "reason", "must not be null"), null
+        ));
+
+        ApplicationErrorResponse response = assertErrorResponse(adapter.updateProfileProject(null));
+
+        assertEquals("validation_error", response.code());
+        verify(profileService).updateProject(null);
     }
 
     @Test
