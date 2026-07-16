@@ -135,6 +135,7 @@ public class ProfileService {
                 safeRequest.displayOrder() == null ? currentProject.displayOrder() : safeRequest.displayOrder(),
                 currentProject.createdAt()
         );
+        validateUniqueProjectKey(existing.projects(), updatedProject);
         return profileRepository.updateProject(
                         updatedProject,
                         safeRequest.expectedRevision(),
@@ -395,6 +396,21 @@ public class ProfileService {
                 throw validation(prefix + ".normalizedTechnology", "duplicates another project technology in this request");
             }
         }
+    }
+
+    private static void validateUniqueProjectKey(List<ProfileProject> projects, ProfileProject updatedProject) {
+        String updatedKey = projectKey(updatedProject);
+        boolean duplicate = projects.stream()
+                .anyMatch(project -> !project.id().equals(updatedProject.id()) && projectKey(project).equals(updatedKey));
+        if (duplicate) {
+            throw validation("name", "duplicates another project name/url in this profile");
+        }
+    }
+
+    private static String projectKey(ProfileProject project) {
+        String name = java.util.Objects.toString(project.name(), "").trim().toLowerCase(java.util.Locale.ROOT);
+        String url = java.util.Objects.toString(project.url(), "").trim();
+        return name + "\u0000" + url;
     }
 
     private static void requireNonBlankWhenSupplied(String value, String field) {
