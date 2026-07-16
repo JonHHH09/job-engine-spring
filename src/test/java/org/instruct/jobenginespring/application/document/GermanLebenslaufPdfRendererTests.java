@@ -4,6 +4,7 @@ import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.text.PDFTextStripper;
+import org.apache.pdfbox.text.TextPosition;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.resume.StructuredResumeContent;
 import org.instruct.jobenginespring.application.resume.StructuredResumeContent.AdditionalEntry;
@@ -16,9 +17,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -142,6 +145,23 @@ class GermanLebenslaufPdfRendererTests {
     }
 
     @Test
+    void separatesTheCandidateNameFromTheContactLine() throws IOException {
+        GermanLebenslaufPdfRenderer renderer = new GermanLebenslaufPdfRenderer(tempDir);
+        StructuredResumeContent header = new StructuredResumeContent(
+                "HeaderName", "en", List.of(new PersonalField("ContactLine", "candidate@example.test")),
+                List.of(), List.of(), List.of(), List.of(), List.of()
+        );
+
+        var result = renderer.generate("header-spacing.pdf", header);
+
+        try (PDDocument document = Loader.loadPDF(Path.of(result.path()).toFile())) {
+            assertTrue(Math.abs(firstCharacterY(document, 'H') - firstCharacterY(document, 'C')) >= 15);
+            String instructions = new String(document.getPage(0).getContents().readAllBytes(), StandardCharsets.ISO_8859_1);
+            assertTrue(instructions.contains("\nS\n"));
+        }
+    }
+
+    @Test
     void normalizesControlCharactersAcrossAllRenderedTextPaths() throws IOException {
         GermanLebenslaufPdfRenderer renderer = new GermanLebenslaufPdfRenderer(tempDir);
         StructuredResumeContent controls = new StructuredResumeContent(
@@ -258,14 +278,27 @@ class GermanLebenslaufPdfRendererTests {
         );
         assertThrows(ApplicationException.class, () -> renderer.generate("unreadable-contact.pdf", unreadableContactUrl));
 
+        boolean sparseTrailingPageRejected = false;
+        for (int wordCount = 1200; wordCount <= 1800; wordCount += 25) {
+            ExperienceEntry almostPage = new ExperienceEntry(
+                    "Engineer", "Example", null, null, null, List.of("word ".repeat(wordCount))
+            );
+            StructuredResumeContent sparseTrailingPage = new StructuredResumeContent(
+                    "Alex Example", "en", List.of(), List.of(almostPage), List.of(), List.of(),
+                    List.of(new LanguageEntry("English", "fluent")), List.of()
+            );
+            try {
+                renderer.generate("sparse-trailing-" + wordCount + ".pdf", sparseTrailingPage);
+            } catch (ApplicationException exception) {
+                sparseTrailingPageRejected = true;
+                break;
+            }
+        }
+        assertTrue(sparseTrailingPageRejected);
+
         ExperienceEntry almostPage = new ExperienceEntry(
-                "Engineer", "Example", null, null, null, List.of("word ".repeat(1500))
+                "Engineer", "Example", null, null, null, List.of("word ".repeat(1400))
         );
-        StructuredResumeContent sparseTrailingPage = new StructuredResumeContent(
-                "Alex Example", "en", List.of(), List.of(almostPage), List.of(), List.of(),
-                List.of(new LanguageEntry("English", "fluent")), List.of()
-        );
-        assertThrows(ApplicationException.class, () -> renderer.generate("sparse-trailing.pdf", sparseTrailingPage));
 
         List<SkillGroup> trailingSkills = java.util.stream.IntStream.range(0, 10)
                 .mapToObj(index -> new SkillGroup("Category " + index, List.of("Skill A", "Skill B", "Skill C")))
@@ -328,5 +361,20 @@ class GermanLebenslaufPdfRendererTests {
 
     private static int countOccurrences(String text, String token) {
         return (text.length() - text.replace(token, "").length()) / token.length();
+    }
+
+    private static float firstCharacterY(PDDocument document, char expected) throws IOException {
+        List<Float> positions = new ArrayList<>();
+        PDFTextStripper stripper = new PDFTextStripper() {
+            @Override
+            protected void processTextPosition(TextPosition text) {
+                if (text.getUnicode().length() == 1 && text.getUnicode().charAt(0) == expected) {
+                    positions.add(text.getYDirAdj());
+                }
+            }
+        };
+        stripper.getText(document);
+        assertFalse(positions.isEmpty(), () -> "Expected character not rendered: " + expected);
+        return positions.getFirst();
     }
 }

@@ -103,6 +103,7 @@ final class GermanLebenslaufPdfRenderer {
     private Block header(StructuredResumeContent content) throws IOException {
         List<RenderLine> lines = new ArrayList<>();
         lines.addAll(wrap(content.fullName(), Style.NAME, 0));
+        lines.add(spacer(6));
         List<StructuredResumeContent.PersonalField> contacts = content.personalFields();
         for (int index = 0; index < contacts.size();) {
             String first = contactText(contacts.get(index));
@@ -117,6 +118,7 @@ final class GermanLebenslaufPdfRenderer {
                 index++;
             }
         }
+        lines.add(divider());
         lines.add(spacer(5));
         return new Block(lines);
     }
@@ -273,12 +275,16 @@ final class GermanLebenslaufPdfRenderer {
                     if (line.style() == Style.SPACER) {
                         continue;
                     }
-                    if (line.style() == Style.SECTION) {
+                    if (line.style() == Style.SECTION || line.style() == Style.DIVIDER) {
                         stream.setStrokingColor(ACCENT);
                         stream.setLineWidth(0.6f);
-                        stream.moveTo(MARGIN_X, y + 11);
-                        stream.lineTo(PAGE_SIZE.getWidth() - MARGIN_X, y + 11);
+                        float ruleY = line.style() == Style.SECTION ? y + 11 : y + 6;
+                        stream.moveTo(MARGIN_X, ruleY);
+                        stream.lineTo(PAGE_SIZE.getWidth() - MARGIN_X, ruleY);
                         stream.stroke();
+                    }
+                    if (line.style() == Style.DIVIDER) {
+                        continue;
                     }
                     if (line.style() == Style.BULLET) {
                         drawText(stream, regular, 9, TEXT, MARGIN_X + 2, y, "•");
@@ -391,6 +397,7 @@ final class GermanLebenslaufPdfRenderer {
     private static RenderLine line(String text, Style style, float indent) {
         return new RenderLine(WinAnsiPdfText.sanitize(text), style, indent, style.leading, style.fontSize); }
     private static RenderLine spacer(float height) { return new RenderLine("", Style.SPACER, 0, height, 0); }
+    private static RenderLine divider() { return new RenderLine("", Style.DIVIDER, 0, Style.DIVIDER.leading, 0); }
 
     private static String contactText(StructuredResumeContent.PersonalField field) {
         return field.label() + ": " + field.value(); }
@@ -461,6 +468,7 @@ final class GermanLebenslaufPdfRenderer {
     private enum Style {
         NAME(22, 25, true, TEXT),
         CONTACT(8.5f, 10, false, MUTED),
+        DIVIDER(0, 12, false, ACCENT),
         SECTION(10, 15, true, ACCENT),
         ENTRY(9.5f, 11, true, TEXT),
         META(8.5f, 10, false, MUTED),
