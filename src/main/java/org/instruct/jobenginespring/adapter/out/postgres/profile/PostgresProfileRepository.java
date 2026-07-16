@@ -3,6 +3,7 @@ package org.instruct.jobenginespring.adapter.out.postgres.profile;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
 import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
+import org.instruct.jobenginespring.application.profile.ProjectUpdateResult;
 import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.pagination.SearchCandidates;
@@ -402,6 +403,69 @@ public class PostgresProfileRepository implements ProfileRepository {
         replaceChildren(aggregate);
         rebuildSearchTerms(aggregate);
         return findProfileAggregate(profile.id());
+    }
+
+    @Override
+    @Transactional
+    public Optional<ProjectUpdateResult> updateProject(
+            ProfileProject project,
+            long expectedRevision,
+            long newRevision,
+            Instant profileUpdatedAt,
+            List<ProjectTechnology> replacementTechnologies
+    ) {
+        int profileUpdated = jdbc.sql("""
+                        UPDATE profile.profiles
+                        SET updated_at = :updatedAt,
+                            revision = :newRevision
+                        WHERE id = :profileId
+                          AND revision = :expectedRevision
+                          AND EXISTS (
+                              SELECT 1 FROM profile.projects
+                              WHERE id = :projectId AND profile_id = :profileId
+                          )
+                        """)
+                .param("profileId", project.profileId())
+                .param("projectId", project.id())
+                .param("expectedRevision", expectedRevision)
+                .param("newRevision", newRevision)
+                .param("updatedAt", Timestamp.from(profileUpdatedAt))
+                .update();
+        if (profileUpdated != 1) {
+            return Optional.empty();
+        }
+        jdbc.sql("""
+                        UPDATE profile.projects
+                        SET name = :name,
+                            url = :url,
+                            description = :description,
+                            display_order = :displayOrder
+                        WHERE id = :projectId AND profile_id = :profileId
+                        """)
+                .param("projectId", project.id())
+                .param("profileId", project.profileId())
+                .param("name", project.name())
+                .param("url", project.url())
+                .param("description", project.description())
+                .param("displayOrder", project.displayOrder())
+                .update();
+        if (replacementTechnologies != null) {
+            jdbc.sql("DELETE FROM profile.project_technologies WHERE project_id = :projectId")
+                    .param("projectId", project.id())
+                    .update();
+            batchInsert("""
+                            INSERT INTO profile.project_technologies
+                                (id, project_id, technology, normalized_technology, display_order, created_at)
+                            VALUES (:id, :projectId, :technology, :normalizedTechnology, :displayOrder, :createdAt)
+                            """, replacementTechnologies);
+        }
+        ProfileAggregate aggregate = findProfileAggregate(project.profileId()).orElseThrow();
+        rebuildSearchTerms(aggregate);
+        ProfileProject persistedProject = aggregate.projects().stream()
+                .filter(candidate -> candidate.id().equals(project.id()))
+                .findFirst()
+                .orElseThrow();
+        return Optional.of(new ProjectUpdateResult(persistedProject, aggregate.profile().revision()));
     }
 
     @Override

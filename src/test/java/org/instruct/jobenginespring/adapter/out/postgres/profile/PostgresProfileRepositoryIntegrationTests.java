@@ -4,6 +4,7 @@ import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
 import org.instruct.jobenginespring.application.profile.ProfileIdentitySearch;
+import org.instruct.jobenginespring.application.profile.ProjectUpdateResult;
 import org.instruct.jobenginespring.domain.profile.Education;
 import org.instruct.jobenginespring.domain.profile.Experience;
 import org.instruct.jobenginespring.domain.profile.ProfileAggregate;
@@ -247,6 +248,60 @@ class PostgresProfileRepositoryIntegrationTests {
         assertEquals(List.of("postgresql"), saved.skills().stream().map(ProfileSkill::normalizedSkill).toList());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM profile.profile_contacts WHERE profile_id = ?", Integer.class, PROFILE_ID));
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM profile.profile_skills WHERE profile_id = ?", Integer.class, PROFILE_ID));
+    }
+
+    @Test
+    void updateProjectPatchesOneProjectAndReplacesOnlyItsTechnologies() {
+        ProfileAggregate original = repository.saveProfileAggregate(completeAggregate());
+        UUID replacementTechnologyId = UUID.fromString("12121212-1212-1212-1212-121212121212");
+        ProjectTechnology replacementTechnology = new ProjectTechnology(
+                replacementTechnologyId, PROJECT_ID, "Spring AI", "spring ai", 0, NOW.plusSeconds(1)
+        );
+        ProfileProject replacement = new ProfileProject(
+                PROJECT_ID, PROFILE_ID, "Updated project", "https://example.test/updated",
+                "Updated description", List.of(replacementTechnology), 2, NOW
+        );
+
+        ProjectUpdateResult result = repository.updateProject(
+                replacement, original.profile().revision(), 1L, NOW.plusSeconds(1), List.of(replacementTechnology)
+        ).orElseThrow();
+
+        assertEquals(1L, result.profileRevision());
+        assertEquals("Updated project", result.project().name());
+        assertEquals(List.of("spring ai"), result.project().technologies().stream()
+                .map(ProjectTechnology::normalizedTechnology).toList());
+        ProfileAggregate persisted = repository.findProfileAggregate(PROFILE_ID).orElseThrow();
+        assertEquals(1L, persisted.profile().revision());
+        assertEquals(List.of("location"), persisted.contacts().stream().map(ProfileContact::contactType).toList());
+        assertEquals(List.of("Updated project"), persisted.projects().stream().map(ProfileProject::name).toList());
+        assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM profile.project_technologies WHERE project_id = ?",
+                Integer.class, PROJECT_ID));
+
+        ProjectUpdateResult retainedTechnologies = repository.updateProject(
+                new ProfileProject(
+                        PROJECT_ID, PROFILE_ID, "Updated project", "https://example.test/updated",
+                        "Updated description", result.project().technologies(), 3, NOW
+                ),
+                result.profileRevision(), 2L, NOW.plusSeconds(2), null
+        ).orElseThrow();
+
+        assertEquals(List.of("spring ai"), retainedTechnologies.project().technologies().stream()
+                .map(ProjectTechnology::normalizedTechnology).toList());
+    }
+
+    @Test
+    void updateProjectRejectsStaleRevisionAndMissingProjectWithoutMutation() {
+        repository.saveProfileAggregate(completeAggregate());
+        ProfileProject project = repository.listProjects(PROFILE_ID).getFirst();
+
+        assertTrue(repository.updateProject(project, 1L, 2L, NOW.plusSeconds(1), null).isEmpty());
+        assertTrue(repository.updateProject(new ProfileProject(
+                UUID.randomUUID(), PROFILE_ID, "Missing", null, null, 0, NOW
+        ), 0L, 1L, NOW.plusSeconds(1), null).isEmpty());
+
+        ProfileAggregate persisted = repository.findProfileAggregate(PROFILE_ID).orElseThrow();
+        assertEquals(0L, persisted.profile().revision());
+        assertEquals("Profile Repository", persisted.projects().getFirst().name());
     }
 
     @Test
