@@ -7,6 +7,6 @@ import java.util.Objects;
 /** Persisted result of an optimistic single-project profile update. */
 public record ProjectUpdateResult(ProfileProject project, long profileRevision) {
     public ProjectUpdateResult {
-        project = Objects.requireNonNull(project, "project must not be null");
+        Objects.requireNonNull(project, "project must not be null");
     }
 }
