@@ -310,7 +310,7 @@ public class GenerateGermanTailoredResumeService {
             ResumeSection section = new ResumeSection(
                     UUID.randomUUID(), variant.id(), ResumeSection.LANGUAGES,
                     ResumeVariant.LANGUAGE_DE.equals(content.language()) ? "Sprachen" : "Languages",
-                    sectionOrder++
+                    sectionOrder
             );
             List<EntryWrite> entries = new ArrayList<>();
             int entryOrder = 0;
