@@ -72,6 +72,17 @@ public class ProfileMcpAdapter {
     }
 
     @McpTool(
+            name = "update_profile_project",
+            description = "Partially update one profile project using the current profile revision; omitted project fields are preserved and supplied technologies replace that project's technologies."
+    )
+    public CallToolResult updateProfileProject(
+            @McpToolParam(required = true, description = "Profile project partial update request")
+            ProjectUpdateRequest request
+    ) {
+        return call(() -> profileService.updateProject(request == null ? null : request.toServiceRequest()));
+    }
+
+    @McpTool(
             name = "delete_profile",
             description = "Delete a profile aggregate by profile UUID. Child profile data is removed by database cascade."
     )
@@ -107,6 +118,24 @@ public class ProfileMcpAdapter {
     public record ListProfilesResult(List<UserProfile> profiles, String nextCursor) {
         public ListProfilesResult {
             profiles = profiles == null ? List.of() : List.copyOf(profiles);
+        }
+    }
+
+    public record ProjectUpdateRequest(
+            @McpToolParam(required = true, description = "Profile UUID") UUID profileId,
+            @McpToolParam(required = true, description = "Existing project UUID") UUID projectId,
+            @McpToolParam(required = true, description = "Revision returned by the latest profile read") Long expectedRevision,
+            @McpToolParam(required = false, description = "Project name") String name,
+            @McpToolParam(required = false, description = "Project URL") String url,
+            @McpToolParam(required = false, description = "Project description") String description,
+            @McpToolParam(required = false, description = "Project display order") Integer displayOrder,
+            @McpToolParam(required = false, description = "Replacement project technologies; omit to preserve existing technologies")
+            List<ProfileService.ProjectTechnologyWriteRequest> technologies
+    ) {
+        ProfileService.ProjectUpdateRequest toServiceRequest() {
+            return new ProfileService.ProjectUpdateRequest(
+                    profileId, projectId, expectedRevision, name, url, description, displayOrder, technologies
+            );
         }
     }
 }

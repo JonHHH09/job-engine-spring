@@ -108,6 +108,44 @@ public class ProfileService {
     }
 
     @Transactional
+    public ProjectUpdateResult updateProject(ProjectUpdateRequest request) {
+        ProjectUpdateRequest safeRequest = canonicalizeProjectUpdate(validateProjectUpdate(request));
+        ProfileAggregate existing = profileRepository.findProfileAggregate(safeRequest.profileId())
+                .orElseThrow(() -> new ProfileNotFoundException(safeRequest.profileId()));
+        UserProfile currentProfile = existing.profile();
+        if (currentProfile.revision() != safeRequest.expectedRevision()) {
+            throw updateConflict(currentProfile.id(), safeRequest.expectedRevision());
+        }
+        ProfileProject currentProject = existing.projects().stream()
+                .filter(project -> project.id().equals(safeRequest.projectId()))
+                .findFirst()
+                .orElseThrow(() -> new ProjectNotFoundException(safeRequest.profileId(), safeRequest.projectId()));
+        long newRevision = nextRevision(currentProfile.revision(), currentProfile.id(), safeRequest.expectedRevision());
+        Instant now = clock.instant();
+        List<ProjectTechnology> replacementTechnologies = safeRequest.technologies() == null
+                ? null
+                : replacementProjectTechnologies(currentProject.id(), safeRequest.technologies(), now);
+        ProfileProject updatedProject = new ProfileProject(
+                currentProject.id(),
+                currentProject.profileId(),
+                safeRequest.name() == null ? currentProject.name() : safeRequest.name(),
+                safeRequest.url() == null ? currentProject.url() : safeRequest.url(),
+                safeRequest.description() == null ? currentProject.description() : safeRequest.description(),
+                replacementTechnologies == null ? currentProject.technologies() : replacementTechnologies,
+                safeRequest.displayOrder() == null ? currentProject.displayOrder() : safeRequest.displayOrder(),
+                currentProject.createdAt()
+        );
+        return profileRepository.updateProject(
+                        updatedProject,
+                        safeRequest.expectedRevision(),
+                        newRevision,
+                        now,
+                        replacementTechnologies
+                )
+                .orElseThrow(() -> updateConflict(currentProfile.id(), safeRequest.expectedRevision()));
+    }
+
+    @Transactional
     public boolean deleteProfile(UUID profileId) {
         Objects.requireNonNull(profileId, "profileId must not be null");
         return generatedResumeAssetService.deleteProfile(profileId);
@@ -267,8 +305,106 @@ public class ProfileService {
                 .toList();
     }
 
+    private static List<ProjectTechnology> replacementProjectTechnologies(
+            UUID projectId,
+            List<ProjectTechnologyWriteRequest> technologies,
+            Instant createdAt
+    ) {
+        return technologies.stream()
+                .map(technology -> new ProjectTechnology(
+                        UUID.randomUUID(),
+                        projectId,
+                        technology.technology(),
+                        technology.normalizedTechnology(),
+                        technology.displayOrder(),
+                        createdAt
+                ))
+                .toList();
+    }
+
     private static UUID newId(UUID id) {
         return id == null ? UUID.randomUUID() : id;
+    }
+
+    private static ProjectUpdateRequest validateProjectUpdate(ProjectUpdateRequest request) {
+        if (request == null) {
+            throw validation("request", "must not be null");
+        }
+        if (request.profileId() == null) {
+            throw validation("profileId", "must not be null");
+        }
+        if (request.projectId() == null) {
+            throw validation("projectId", "must not be null");
+        }
+        if (request.expectedRevision() == null) {
+            throw validation("expectedRevision", "must not be null");
+        }
+        if (request.expectedRevision() < 0) {
+            throw validation("expectedRevision", "must not be negative");
+        }
+        if (request.name() == null && request.url() == null && request.description() == null
+                && request.displayOrder() == null && request.technologies() == null) {
+            throw validation("request", "must specify at least one project field");
+        }
+        requireNonBlankWhenSupplied(request.name(), "name");
+        requireNonBlankWhenSupplied(request.url(), "url");
+        requireNonBlankWhenSupplied(request.description(), "description");
+        if (request.displayOrder() != null && request.displayOrder() < 0) {
+            throw validation("displayOrder", "must be greater than or equal to 0");
+        }
+        validateProjectTechnologies(request.technologies());
+        return request;
+    }
+
+    private static ProjectUpdateRequest canonicalizeProjectUpdate(ProjectUpdateRequest request) {
+        return new ProjectUpdateRequest(
+                request.profileId(), request.projectId(), request.expectedRevision(),
+                clean(request.name()), clean(request.url()), clean(request.description()), request.displayOrder(),
+                request.technologies() == null ? null : request.technologies().stream()
+                        .map(technology -> new ProjectTechnologyWriteRequest(
+                                technology.id(), clean(technology.technology()), clean(technology.normalizedTechnology()),
+                                technology.displayOrder()))
+                        .toList()
+        );
+    }
+
+    private static void validateProjectTechnologies(List<ProjectTechnologyWriteRequest> technologies) {
+        if (technologies == null) {
+            return;
+        }
+        java.util.Set<String> normalizedTechnologies = new java.util.HashSet<>();
+        for (int index = 0; index < technologies.size(); index++) {
+            ProjectTechnologyWriteRequest technology = technologies.get(index);
+            String prefix = "technologies[" + index + "]";
+            if (technology == null) {
+                throw validation(prefix, "must not be null");
+            }
+            if (technology.technology() == null || technology.technology().isBlank()) {
+                throw validation(prefix + ".technology", "must not be blank");
+            }
+            if (technology.normalizedTechnology() != null && technology.normalizedTechnology().isBlank()) {
+                throw validation(prefix + ".normalizedTechnology", "must not be blank when supplied");
+            }
+            if (technology.displayOrder() < 0) {
+                throw validation(prefix + ".displayOrder", "must be greater than or equal to 0");
+            }
+            String normalized = (technology.normalizedTechnology() == null
+                    ? technology.technology()
+                    : technology.normalizedTechnology()).trim().toLowerCase(java.util.Locale.ROOT);
+            if (!normalizedTechnologies.add(normalized)) {
+                throw validation(prefix + ".normalizedTechnology", "duplicates another project technology in this request");
+            }
+        }
+    }
+
+    private static void requireNonBlankWhenSupplied(String value, String field) {
+        if (value != null && value.isBlank()) {
+            throw validation(field, "must not be blank");
+        }
+    }
+
+    private static String clean(String value) {
+        return value == null ? null : value.trim();
     }
 
     public record ProfileWriteRequest(
@@ -334,12 +470,35 @@ public class ProfileService {
     public record ProjectTechnologyWriteRequest(UUID id, String technology, String normalizedTechnology, int displayOrder) {
     }
 
+    public record ProjectUpdateRequest(
+            UUID profileId,
+            UUID projectId,
+            Long expectedRevision,
+            String name,
+            String url,
+            String description,
+            Integer displayOrder,
+            List<ProjectTechnologyWriteRequest> technologies
+    ) {
+    }
+
     public static final class ProfileNotFoundException extends ApplicationException {
         public ProfileNotFoundException(UUID profileId) {
             super(
                     ApplicationErrorCode.NOT_FOUND,
                     "Profile not found: " + profileId,
                     Map.of("resource", "profile", "profileId", String.valueOf(profileId)),
+                    null
+            );
+        }
+    }
+
+    public static final class ProjectNotFoundException extends ApplicationException {
+        public ProjectNotFoundException(UUID profileId, UUID projectId) {
+            super(
+                    ApplicationErrorCode.NOT_FOUND,
+                    "Profile project not found: " + projectId,
+                    Map.of("resource", "project", "profileId", profileId.toString(), "projectId", projectId.toString()),
                     null
             );
         }

@@ -6,6 +6,7 @@ import org.instruct.jobenginespring.application.profile.ProfileService.Experienc
 import org.instruct.jobenginespring.application.profile.ProfileService.LanguageWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.LinkWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileNotFoundException;
+import org.instruct.jobenginespring.application.profile.ProfileService.ProjectUpdateRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProjectTechnologyWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProjectWriteRequest;
@@ -41,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Answers.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -217,6 +219,154 @@ class ProfileServiceTests {
         ProfileAggregate persisted = service.getProfile(created.profile().id()).orElseThrow();
         assertEquals("Initial", persisted.profile().summary());
         assertEquals(List.of("location"), persisted.contacts().stream().map(ProfileContact::contactType).toList());
+    }
+
+    @Test
+    void updateProjectPatchesOnlyTheSelectedProjectAndReplacesTechnologiesWhenSupplied() {
+        ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", "Initial",
+                List.of(new ContactWriteRequest(null, "location", "Remote", null)),
+                null, null, null, null, null,
+                List.of(new ProjectWriteRequest(
+                        UUID.fromString("77777777-7777-7777-7777-777777777777"),
+                        "Initial project", "https://example.test/initial", "Initial description", 1,
+                        List.of(new ProjectTechnologyWriteRequest(null, "Java", null, 0))
+                ))
+        ));
+        ProfileProject original = created.projects().getFirst();
+
+        ProjectUpdateResult result = service.updateProject(new ProjectUpdateRequest(
+                created.profile().id(),
+                original.id(),
+                created.profile().revision(),
+                " Updated project ",
+                " https://example.test/updated ",
+                " Updated description ",
+                2,
+                List.of(new ProjectTechnologyWriteRequest(null, " PostgreSQL ", null, 0))
+        ));
+
+        assertEquals(created.profile().revision() + 1, result.profileRevision());
+        assertEquals("Updated project", result.project().name());
+        assertEquals("https://example.test/updated", result.project().url());
+        assertEquals("Updated description", result.project().description());
+        assertEquals(2, result.project().displayOrder());
+        assertEquals(List.of("PostgreSQL"), result.project().technologies().stream()
+                .map(ProjectTechnology::technology).toList());
+        ProjectUpdateResult preservedTechnologies = service.updateProject(new ProjectUpdateRequest(
+                created.profile().id(), original.id(), result.profileRevision(), null, null, null, 3, null
+        ));
+        assertEquals(List.of("PostgreSQL"), preservedTechnologies.project().technologies().stream()
+                .map(ProjectTechnology::technology).toList());
+        ProfileAggregate persisted = service.getProfile(created.profile().id()).orElseThrow();
+        assertEquals(List.of("location"), persisted.contacts().stream().map(ProfileContact::contactType).toList());
+        assertEquals(preservedTechnologies.project(), persisted.projects().getFirst());
+    }
+
+    @Test
+    void updateProjectRejectsStaleRevisionAndMissingProjectWithoutMutatingProfile() {
+        ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", "Initial", null, null, null, null, null, null,
+                List.of(new ProjectWriteRequest(null, "Initial project", null, null, 0, null))
+        ));
+        UUID projectId = created.projects().getFirst().id();
+
+        ApplicationException stale = assertThrows(ApplicationException.class, () -> service.updateProject(new ProjectUpdateRequest(
+                created.profile().id(), projectId, 1L, "Stale", null, null, null, null
+        )));
+        ApplicationException missing = assertThrows(ApplicationException.class, () -> service.updateProject(new ProjectUpdateRequest(
+                created.profile().id(), UUID.randomUUID(), 0L, "Missing", null, null, null, null
+        )));
+
+        assertEquals("conflict", stale.errorCode().code());
+        assertEquals("not_found", missing.errorCode().code());
+        ProfileAggregate persisted = service.getProfile(created.profile().id()).orElseThrow();
+        assertEquals(0L, persisted.profile().revision());
+        assertEquals("Initial project", persisted.projects().getFirst().name());
+    }
+
+    @Test
+    void updateProjectValidatesEveryPartialRequestBoundary() {
+        UUID profileId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID projectId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+
+        assertInvalidProjectUpdate(null, "request", "must not be null");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(null, projectId, 0L, "Project", null, null, null, null),
+                "profileId", "must not be null");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, null, 0L, "Project", null, null, null, null),
+                "projectId", "must not be null");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, null, "Project", null, null, null, null),
+                "expectedRevision", "must not be null");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, -1L, "Project", null, null, null, null),
+                "expectedRevision", "must not be negative");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, null, null, null, null, null),
+                "request", "must specify at least one project field");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, " ", null, null, null, null),
+                "name", "must not be blank");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, null, " ", null, null, null),
+                "url", "must not be blank");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, null, null, " ", null, null),
+                "description", "must not be blank");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, null, null, null, -1, null),
+                "displayOrder", "must be greater than or equal to 0");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, null, null, null, null,
+                        java.util.Collections.singletonList(null)),
+                "technologies[0]", "must not be null");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, null, null, null, null,
+                        List.of(new ProjectTechnologyWriteRequest(null, null, null, 0))),
+                "technologies[0].technology", "must not be blank");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, null, null, null, null,
+                        List.of(new ProjectTechnologyWriteRequest(null, " ", null, 0))),
+                "technologies[0].technology", "must not be blank");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, null, null, null, null,
+                        List.of(new ProjectTechnologyWriteRequest(null, "Java", " ", 0))),
+                "technologies[0].normalizedTechnology", "must not be blank when supplied");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, null, null, null, null,
+                        List.of(new ProjectTechnologyWriteRequest(null, "Java", null, -1))),
+                "technologies[0].displayOrder", "must be greater than or equal to 0");
+        assertInvalidProjectUpdate(new ProjectUpdateRequest(profileId, projectId, 0L, null, null, null, null,
+                        List.of(
+                                new ProjectTechnologyWriteRequest(null, "Java", "java", 0),
+                                new ProjectTechnologyWriteRequest(null, "JAVA", "Java", 1)
+                        )),
+                "technologies[1].normalizedTechnology", "duplicates another project technology in this request");
+    }
+
+    @Test
+    void updateProjectReportsMissingProfile() {
+        UUID profileId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+        UUID projectId = UUID.fromString("22222222-2222-2222-2222-222222222222");
+        ProjectUpdateRequest request = new ProjectUpdateRequest(profileId, projectId, 0L, "Project", null, null, null, List.of());
+
+        ProfileNotFoundException missing = assertThrows(ProfileNotFoundException.class, () -> service.updateProject(request));
+        assertEquals(profileId.toString(), missing.details().get("profileId"));
+    }
+
+    @Test
+    void unsupportedRepositoryFailsClosedForSelectiveProjectUpdates() {
+        ProfileRepository unsupported = mock(ProfileRepository.class, CALLS_REAL_METHODS);
+
+        assertThrows(UnsupportedOperationException.class, () -> unsupported.updateProject(
+                new ProfileProject(UUID.randomUUID(), UUID.randomUUID(), "Project", null, null, 0, NOW),
+                0L, 1L, NOW, List.of()
+        ));
+    }
+
+    @Test
+    void updateProjectReportsConflictWhenRepositoryCompareAndSetLosesRace() {
+        ProfileAggregate created = service.createProfile(new ProfileWriteRequest(
+                "Agentic Dev", "agentic@example.com", null, null, null, null, null, null, null,
+                List.of(new ProjectWriteRequest(null, "Project", null, null, 0, null))
+        ));
+        repository.rejectNextProjectUpdate = true;
+
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateProject(new ProjectUpdateRequest(
+                created.profile().id(), created.projects().getFirst().id(), created.profile().revision(),
+                "Concurrent", null, null, null, null
+        )));
+
+        assertEquals("conflict", exception.errorCode().code());
+        assertEquals("Project", service.getProfile(created.profile().id()).orElseThrow().projects().getFirst().name());
     }
 
     @Test
@@ -423,9 +573,17 @@ class ProfileServiceTests {
         assertEquals(Map.of("field", field, "reason", reason), exception.details());
     }
 
+    private void assertInvalidProjectUpdate(ProjectUpdateRequest request, String field, String reason) {
+        ApplicationException exception = assertThrows(ApplicationException.class, () -> service.updateProject(request));
+
+        assertEquals("validation_error", exception.errorCode().code());
+        assertEquals(Map.of("field", field, "reason", reason), exception.details());
+    }
+
     private static final class FakeProfileRepository implements ProfileRepository {
         private final Map<UUID, ProfileAggregate> aggregates = new LinkedHashMap<>();
         private boolean rejectNextReplacement;
+        private boolean rejectNextProjectUpdate;
 
         @Override
         public org.instruct.jobenginespring.application.pagination.Page<UserProfile> listProfiles(
@@ -499,6 +657,42 @@ class ProfileServiceTests {
                 return Optional.empty();
             }
             return ProfileRepository.super.replaceProfileAggregate(aggregate, expectedRevision);
+        }
+
+        @Override
+        public Optional<ProjectUpdateResult> updateProject(
+                ProfileProject project,
+                long expectedRevision,
+                long newRevision,
+                Instant profileUpdatedAt,
+                List<ProjectTechnology> replacementTechnologies
+        ) {
+            ProfileAggregate existing = aggregates.get(project.profileId());
+            if (rejectNextProjectUpdate) {
+                rejectNextProjectUpdate = false;
+                return Optional.empty();
+            }
+            if (existing == null || existing.profile().revision() != expectedRevision
+                    || existing.projects().stream().noneMatch(candidate -> candidate.id().equals(project.id()))) {
+                return Optional.empty();
+            }
+            UserProfile currentProfile = existing.profile();
+            UserProfile updatedProfile = new UserProfile(
+                    currentProfile.id(), currentProfile.fullName(), currentProfile.email(), currentProfile.summary(),
+                    currentProfile.rawResumeText(), currentProfile.createdAt(), profileUpdatedAt,
+                    currentProfile.embedding(), newRevision
+            );
+            List<ProfileProject> projects = existing.projects().stream()
+                    .map(candidate -> candidate.id().equals(project.id()) ? project : candidate)
+                    .toList();
+            List<ProjectTechnology> technologies = projects.stream()
+                    .flatMap(candidate -> candidate.technologies().stream())
+                    .toList();
+            aggregates.put(project.profileId(), new ProfileAggregate(
+                    updatedProfile, existing.contacts(), existing.links(), existing.skills(), existing.languages(),
+                    existing.education(), existing.experiences(), projects, technologies
+            ));
+            return Optional.of(new ProjectUpdateResult(project, updatedProfile.revision()));
         }
 
         @Override
