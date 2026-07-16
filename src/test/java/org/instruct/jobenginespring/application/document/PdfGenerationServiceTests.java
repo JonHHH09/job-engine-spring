@@ -178,6 +178,12 @@ class PdfGenerationServiceTests {
     }
 
     @Test
+    void recognizesGermanUnknownAndMonthYearResumeDateLines() throws Exception {
+        assertTrue((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "unbekannt - heute"));
+        assertTrue((Boolean) invoke("isResumeDateLine", new Class<?>[]{String.class}, "01/2024 - heute"));
+    }
+
+    @Test
     void paginationKeepsSectionHeadingWithFollowingContent() throws Exception {
         int linesPerPage = firstPageLineCountForGeneratedFiller();
         List<String> lines = new java.util.ArrayList<>();

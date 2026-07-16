@@ -7,11 +7,11 @@ import java.util.Objects;
 
 /**
  * Language-neutral structured Lebenslauf content used before persistence and PDF rendering.
- * No professional-summary section (German norm).
  */
 public record StructuredResumeContent(
         String fullName,
         String language,
+        String summary,
         List<PersonalField> personalFields,
         List<ExperienceEntry> experiences,
         List<EducationEntry> education,
@@ -27,12 +27,26 @@ public record StructuredResumeContent(
         }
         Objects.requireNonNull(language, "language must not be null");
         language = language.strip().toLowerCase();
+        summary = blankToNull(summary);
         personalFields = copy(personalFields);
         experiences = copy(experiences);
         education = copy(education);
         skillGroups = copy(skillGroups);
         languages = copy(languages);
         additional = copy(additional);
+    }
+
+    public StructuredResumeContent(
+            String fullName,
+            String language,
+            List<PersonalField> personalFields,
+            List<ExperienceEntry> experiences,
+            List<EducationEntry> education,
+            List<SkillGroup> skillGroups,
+            List<LanguageEntry> languages,
+            List<AdditionalEntry> additional
+    ) {
+        this(fullName, language, null, personalFields, experiences, education, skillGroups, languages, additional);
     }
 
     private static <T> List<T> copy(List<T> values) {

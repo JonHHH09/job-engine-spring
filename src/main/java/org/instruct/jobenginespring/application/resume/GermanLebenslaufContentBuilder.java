@@ -28,12 +28,12 @@ import java.util.stream.Collectors;
 
 /**
  * Builds English structured Lebenslauf content tailored to a job from profile data.
- * Omits North-American style professional summary.
  */
 public final class GermanLebenslaufContentBuilder {
 
     private static final int MAX_EXPERIENCE_BULLETS = 5;
     private static final int MAX_ADDITIONAL_PROJECTS = 2;
+    private static final int MAX_SELECTED_SKILLS = 24;
 
     private GermanLebenslaufContentBuilder() {
     }
@@ -68,6 +68,7 @@ public final class GermanLebenslaufContentBuilder {
         return new StructuredResumeContent(
                 profile.profile().fullName(),
                 ResumeVariant.LANGUAGE_EN,
+                profile.profile().summary(),
                 personal,
                 experiences,
                 education,
@@ -158,11 +159,19 @@ public final class GermanLebenslaufContentBuilder {
     }
 
     private static List<StructuredResumeContent.SkillGroup> skillGroups(List<ProfileSkill> skills, Set<String> jobTokens) {
-        Map<String, List<ProfileSkill>> byCategory = skills.stream()
+        List<ProfileSkill> ranked = skills.stream()
                 .sorted(Comparator
                         .comparingInt((ProfileSkill skill) -> -skillOverlapScore(skill.skill(), jobTokens))
+                        .thenComparingInt(skill -> -categoryPriority(skill.category()))
                         .thenComparingInt(ProfileSkill::displayOrder)
                         .thenComparing(ProfileSkill::skill))
+                .toList();
+        List<ProfileSkill> relevant = ranked.stream()
+                .filter(skill -> skillOverlapScore(skill.skill(), jobTokens) > 0)
+                .toList();
+        List<ProfileSkill> selected = relevant.isEmpty() ? ranked : relevant;
+        Map<String, List<ProfileSkill>> byCategory = selected.stream()
+                .limit(MAX_SELECTED_SKILLS)
                 .collect(Collectors.groupingBy(
                         skill -> defaultText(skill.category(), "Technical"),
                         LinkedHashMap::new,
@@ -175,6 +184,26 @@ public final class GermanLebenslaufContentBuilder {
                 categorySkills.stream().map(ProfileSkill::skill).toList()
         )));
         return groups;
+    }
+
+    private static int categoryPriority(String category) {
+        String normalized = Objects.toString(category, "").toLowerCase(Locale.ROOT);
+        if (normalized.contains("machine learning") || normalized.contains("mlops")) {
+            return 5;
+        }
+        if (normalized.contains("architecture")) {
+            return 4;
+        }
+        if (normalized.contains("cloud") || normalized.contains("ops")) {
+            return 3;
+        }
+        if (normalized.contains("backend") || normalized.contains("data")) {
+            return 2;
+        }
+        if (normalized.contains("security")) {
+            return 1;
+        }
+        return 0;
     }
 
     private static List<StructuredResumeContent.LanguageEntry> languages(List<ProfileLanguage> languages) {

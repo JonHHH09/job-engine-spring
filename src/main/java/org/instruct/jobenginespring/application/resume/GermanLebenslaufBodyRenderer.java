@@ -9,7 +9,7 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * Renders structured Lebenslauf content into PDF body text (no summary section).
+ * Renders structured Lebenslauf content into PDF body text.
  * Contact lines sit under the name without a PERSONAL DATA section header.
  */
 public final class GermanLebenslaufBodyRenderer {
@@ -30,6 +30,12 @@ public final class GermanLebenslaufBodyRenderer {
         }
         appendBlank(body);
 
+        if (hasText(safe.summary())) {
+            appendSection(body, german ? "PROFIL" : "PROFILE");
+            appendLine(body, safe.summary());
+            appendBlank(body);
+        }
+
         if (!safe.experiences().isEmpty()) {
             appendSection(body, german ? "BERUFSERFAHRUNG" : "PROFESSIONAL EXPERIENCE");
             safe.experiences().forEach(experience -> {
@@ -37,6 +43,19 @@ public final class GermanLebenslaufBodyRenderer {
                 appendLine(body, period(experience.startDate(), experience.endDate(), german)
                         + (hasText(experience.location()) ? " | " + experience.location() : ""));
                 experience.bullets().forEach(bullet -> appendLine(body, "- " + bullet));
+                appendBlank(body);
+            });
+        }
+
+        if (!safe.additional().isEmpty()) {
+            appendSection(body, german ? "PROJEKTE" : "PROJECTS");
+            safe.additional().forEach(item -> {
+                String header = item.title();
+                if (hasText(item.organization())) {
+                    header = header + " | " + item.organization();
+                }
+                appendLine(body, header);
+                item.bullets().forEach(bullet -> appendLine(body, "- " + bullet));
                 appendBlank(body);
             });
         }
@@ -67,19 +86,6 @@ public final class GermanLebenslaufBodyRenderer {
                             : language.language())
                     .collect(Collectors.joining(", ")));
             appendBlank(body);
-        }
-
-        if (!safe.additional().isEmpty()) {
-            appendSection(body, german ? "PROJEKTE" : "PROJECTS");
-            safe.additional().forEach(item -> {
-                String header = item.title();
-                if (hasText(item.organization())) {
-                    header = header + " | " + item.organization();
-                }
-                appendLine(body, header);
-                item.bullets().forEach(bullet -> appendLine(body, "- " + bullet));
-                appendBlank(body);
-            });
         }
 
         return body.toString().strip();
