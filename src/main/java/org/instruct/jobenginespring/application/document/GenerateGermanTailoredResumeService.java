@@ -9,7 +9,6 @@ import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.profile.ProfileService.ProfileNotFoundException;
 import org.instruct.jobenginespring.application.profile.port.ProfilePersonalDetailsRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
-import org.instruct.jobenginespring.application.resume.GermanLebenslaufBodyRenderer;
 import org.instruct.jobenginespring.application.resume.GermanLebenslaufContentBuilder;
 import org.instruct.jobenginespring.application.resume.GermanLebenslaufContentReview;
 import org.instruct.jobenginespring.application.resume.OfflineGermanResumeTranslator;
@@ -186,10 +185,7 @@ public class GenerateGermanTailoredResumeService {
             String language
     ) {
         String fileName = buildFileName(profile.profile().fullName(), profile.profile().id(), language);
-        String title = content.fullName() + (ResumeVariant.LANGUAGE_DE.equals(language) ? " - Lebenslauf" : " - CV");
-        GeneratedPdfFileResult generatedFile = new PdfGenerationService(outputDirectory).generateCompactResumePdfFile(
-                new PdfGenerationService.GeneratePdfFileRequest(fileName, title, GermanLebenslaufBodyRenderer.render(content))
-        );
+        GeneratedPdfFileResult generatedFile = new GermanLebenslaufPdfRenderer(outputDirectory).generate(fileName, content);
         try {
             StoredDocumentMetadata document = documentStorageService.storeGeneratedDocumentFile(
                     Path.of(generatedFile.path()),
@@ -223,6 +219,19 @@ public class GenerateGermanTailoredResumeService {
         }
         sections.add(new SectionWrite(contactSection, contactEntries));
 
+        if (content.summary() != null) {
+            ResumeSection section = new ResumeSection(
+                    UUID.randomUUID(), variant.id(), ResumeSection.SUMMARY,
+                    ResumeVariant.LANGUAGE_DE.equals(content.language()) ? "Profil" : "Profile",
+                    sectionOrder++
+            );
+            ResumeEntry entry = new ResumeEntry(
+                    UUID.randomUUID(), section.id(), ResumeEntry.SUMMARY, 0,
+                    section.title(), null, null, null, null, content.summary()
+            );
+            sections.add(new SectionWrite(section, List.of(new EntryWrite(entry, List.of()))));
+        }
+
         if (!content.experiences().isEmpty()) {
             ResumeSection section = new ResumeSection(
                     UUID.randomUUID(), variant.id(), ResumeSection.EXPERIENCE,
@@ -238,6 +247,24 @@ public class GenerateGermanTailoredResumeService {
                         experience.startDate(), experience.endDate(), null
                 );
                 entries.add(new EntryWrite(entry, bullets(entry.id(), experience.bullets())));
+            }
+            sections.add(new SectionWrite(section, entries));
+        }
+
+        if (!content.additional().isEmpty()) {
+            ResumeSection section = new ResumeSection(
+                    UUID.randomUUID(), variant.id(), ResumeSection.ADDITIONAL,
+                    ResumeVariant.LANGUAGE_DE.equals(content.language()) ? "Projekte" : "Projects",
+                    sectionOrder++
+            );
+            List<EntryWrite> entries = new ArrayList<>();
+            int entryOrder = 0;
+            for (StructuredResumeContent.AdditionalEntry additional : content.additional()) {
+                ResumeEntry entry = new ResumeEntry(
+                        UUID.randomUUID(), section.id(), ResumeEntry.PROJECT, entryOrder++,
+                        additional.title(), additional.organization(), null, null, null, null
+                );
+                entries.add(new EntryWrite(entry, bullets(entry.id(), additional.bullets())));
             }
             sections.add(new SectionWrite(section, entries));
         }
@@ -293,24 +320,6 @@ public class GenerateGermanTailoredResumeService {
                         language.language(), null, null, null, null, language.proficiency()
                 );
                 entries.add(new EntryWrite(entry, List.of()));
-            }
-            sections.add(new SectionWrite(section, entries));
-        }
-
-        if (!content.additional().isEmpty()) {
-            ResumeSection section = new ResumeSection(
-                    UUID.randomUUID(), variant.id(), ResumeSection.ADDITIONAL,
-                    ResumeVariant.LANGUAGE_DE.equals(content.language()) ? "Projekte" : "Projects",
-                    sectionOrder
-            );
-            List<EntryWrite> entries = new ArrayList<>();
-            int entryOrder = 0;
-            for (StructuredResumeContent.AdditionalEntry additional : content.additional()) {
-                ResumeEntry entry = new ResumeEntry(
-                        UUID.randomUUID(), section.id(), ResumeEntry.PROJECT, entryOrder++,
-                        additional.title(), additional.organization(), null, null, null, null
-                );
-                entries.add(new EntryWrite(entry, bullets(entry.id(), additional.bullets())));
             }
             sections.add(new SectionWrite(section, entries));
         }

@@ -27,7 +27,9 @@ import org.instruct.jobenginespring.domain.profile.ProfileProject;
 import org.instruct.jobenginespring.domain.profile.ProfileSkill;
 import org.instruct.jobenginespring.domain.profile.ProjectTechnology;
 import org.instruct.jobenginespring.domain.profile.UserProfile;
+import org.instruct.jobenginespring.domain.resume.ResumeSection;
 import org.instruct.jobenginespring.domain.resume.ResumeVariant;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -294,6 +296,26 @@ class GenerateGermanTailoredResumeServiceTests {
         var result = service.generate(new GenerateGermanTailoredResumeService.GenerateGermanTailoredResumeRequest(PROFILE_ID, JOB_ID, true));
         assertEquals(2, result.variants().size());
         assertTrue(result.variants().getFirst().generatedFile().fileName().startsWith("germany_joni-hysaj_"));
+        ArgumentCaptor<ResumeRepository.ResumeAggregateWrite> writeCaptor =
+                ArgumentCaptor.forClass(ResumeRepository.ResumeAggregateWrite.class);
+        verify(resumeRepository).replaceGermanyResume(writeCaptor.capture());
+        writeCaptor.getValue().variants().forEach(variant -> {
+            List<String> sectionTypes = variant.sections().stream()
+                    .map(section -> section.section().sectionType())
+                    .toList();
+            List<Integer> displayOrders = variant.sections().stream()
+                    .map(section -> section.section().displayOrder())
+                    .toList();
+            assertTrue(sectionTypes.indexOf(ResumeSection.SUMMARY)
+                    < sectionTypes.indexOf(ResumeSection.EXPERIENCE));
+            assertTrue(sectionTypes.indexOf(ResumeSection.ADDITIONAL)
+                    < sectionTypes.indexOf(ResumeSection.EDUCATION));
+            assertEquals(java.util.stream.IntStream.range(0, displayOrders.size()).boxed().toList(), displayOrders);
+            assertTrue(variant.sections().stream()
+                    .filter(section -> ResumeSection.SUMMARY.equals(section.section().sectionType()))
+                    .flatMap(section -> section.entries().stream())
+                    .anyMatch(entry -> "Summary ignored".equals(entry.entry().metadata())));
+        });
     }
 
     @Test

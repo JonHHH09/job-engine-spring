@@ -18,6 +18,7 @@ public record ResumeEntry(
         String metadata
 ) {
     public static final String PERSONAL_FIELD = "personal_field";
+    public static final String SUMMARY = "summary";
     public static final String EXPERIENCE = "experience";
     public static final String EDUCATION = "education";
     public static final String SKILL_GROUP = "skill_group";
