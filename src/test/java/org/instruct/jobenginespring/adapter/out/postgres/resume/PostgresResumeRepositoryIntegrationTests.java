@@ -117,7 +117,21 @@ class PostgresResumeRepositoryIntegrationTests {
         assertEquals(2, resumeRepository.findVariants(first.id()).size());
         assertEquals(1, jdbc.queryForObject("SELECT count(*) FROM resume.resumes", Integer.class));
         assertEquals(2, jdbc.queryForObject("SELECT count(*) FROM resume.resume_variants", Integer.class));
-        assertTrue(jdbc.queryForObject("SELECT count(*) FROM resume.resume_sections", Integer.class) >= 2);
+        firstReplace.variants().forEach(variant -> assertEquals(
+                List.of(
+                        ResumeSection.PERSONAL,
+                        ResumeSection.SUMMARY,
+                        ResumeSection.EXPERIENCE,
+                        ResumeSection.ADDITIONAL,
+                        ResumeSection.EDUCATION,
+                        ResumeSection.SKILLS,
+                        ResumeSection.LANGUAGES
+                ),
+                jdbc.queryForList("""
+                        SELECT section_type FROM resume.resume_sections
+                        WHERE variant_id = ? ORDER BY display_order
+                        """, String.class, variant.id())
+        ));
         assertTrue(jdbc.queryForObject("SELECT count(*) FROM resume.resume_entries", Integer.class) >= 2);
         assertTrue(jdbc.queryForObject("SELECT count(*) FROM resume.resume_entry_bullets", Integer.class) >= 2);
 
@@ -135,15 +149,36 @@ class PostgresResumeRepositoryIntegrationTests {
     }
 
     private VariantWrite variant(ResumeVariant variant, String personalTitle) {
-        ResumeSection personal = new ResumeSection(UUID.randomUUID(), variant.id(), ResumeSection.PERSONAL, personalTitle, 0);
-        ResumeEntry email = new ResumeEntry(UUID.randomUUID(), personal.id(), ResumeEntry.PERSONAL_FIELD, 0, "Email", null, null, null, null, "a@example.test");
-        ResumeSection experience = new ResumeSection(UUID.randomUUID(), variant.id(), ResumeSection.EXPERIENCE, "Experience", 1);
-        ResumeEntry role = new ResumeEntry(UUID.randomUUID(), experience.id(), ResumeEntry.EXPERIENCE, 0, "Engineer", "Acme", "Montreal", LocalDate.of(2023, 1, 1), LocalDate.of(2024, 1, 1), null);
-        ResumeEntryBullet bullet = new ResumeEntryBullet(UUID.randomUUID(), role.id(), 0, "Built systems");
-        return new VariantWrite(variant, List.of(
-                new SectionWrite(personal, List.of(new EntryWrite(email, List.of()))),
-                new SectionWrite(experience, List.of(new EntryWrite(role, List.of(bullet))))
-        ));
+        List<String> sectionTypes = List.of(
+                ResumeSection.PERSONAL,
+                ResumeSection.SUMMARY,
+                ResumeSection.EXPERIENCE,
+                ResumeSection.ADDITIONAL,
+                ResumeSection.EDUCATION,
+                ResumeSection.SKILLS,
+                ResumeSection.LANGUAGES
+        );
+        List<SectionWrite> sections = new java.util.ArrayList<>();
+        for (int index = 0; index < sectionTypes.size(); index++) {
+            String sectionType = sectionTypes.get(index);
+            ResumeSection section = new ResumeSection(
+                    UUID.randomUUID(), variant.id(), sectionType,
+                    index == 0 ? personalTitle : sectionType, index
+            );
+            ResumeEntry entry = new ResumeEntry(
+                    UUID.randomUUID(), section.id(),
+                    ResumeSection.EXPERIENCE.equals(sectionType) ? ResumeEntry.EXPERIENCE : ResumeEntry.PERSONAL_FIELD, 0,
+                    sectionType, null, null,
+                    ResumeSection.EXPERIENCE.equals(sectionType) ? LocalDate.of(2023, 1, 1) : null,
+                    ResumeSection.EXPERIENCE.equals(sectionType) ? LocalDate.of(2024, 1, 1) : null,
+                    "value"
+            );
+            List<ResumeEntryBullet> bullets = ResumeSection.EXPERIENCE.equals(sectionType)
+                    ? List.of(new ResumeEntryBullet(UUID.randomUUID(), entry.id(), 0, "Built systems"))
+                    : List.of();
+            sections.add(new SectionWrite(section, List.of(new EntryWrite(entry, bullets))));
+        }
+        return new VariantWrite(variant, sections);
     }
 
     private void seedProfileJobAndDocuments() {

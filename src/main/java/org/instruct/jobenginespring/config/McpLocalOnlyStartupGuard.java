@@ -74,6 +74,9 @@ public class McpLocalOnlyStartupGuard implements EnvironmentPostProcessor, Order
 
     private static void requireValidPort(Environment environment) {
         String actual = environment.getProperty("server.port");
+        if (actual == null) {
+            throw localOnlyConfigurationException("server.port", "an integer from 1 through 65535", null);
+        }
         try {
             int port = Integer.parseInt(actual);
             if (port >= 1 && port <= 65_535) {

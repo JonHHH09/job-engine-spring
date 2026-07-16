@@ -204,6 +204,7 @@ public class OfflineGermanResumeTranslator {
         return new StructuredResumeContent(
                 source.fullName(),
                 ResumeVariant.LANGUAGE_DE,
+                translateText(source.summary()),
                 source.personalFields().stream()
                         .map(field -> new StructuredResumeContent.PersonalField(
                                 translateLabel(field.label()),

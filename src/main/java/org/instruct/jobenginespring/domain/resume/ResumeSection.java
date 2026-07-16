@@ -12,6 +12,7 @@ public record ResumeSection(
         int displayOrder
 ) {
     public static final String PERSONAL = "personal";
+    public static final String SUMMARY = "summary";
     public static final String EXPERIENCE = "experience";
     public static final String EDUCATION = "education";
     public static final String SKILLS = "skills";

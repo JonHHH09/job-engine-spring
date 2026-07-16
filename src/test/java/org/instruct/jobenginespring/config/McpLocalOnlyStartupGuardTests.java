@@ -92,6 +92,14 @@ class McpLocalOnlyStartupGuardTests {
                 .withProperty("server.port", "0");
         MockEnvironment nonNumericPort = streamableHttpEnvironment("127.0.0.1", "false")
                 .withProperty("server.port", "http");
+        MockEnvironment missingPort = new MockEnvironment()
+                .withProperty("job-engine.mcp.transport", "streamable-http")
+                .withProperty("job-engine.mcp.containerized", "false")
+                .withProperty("spring.ai.mcp.server.stdio", "false")
+                .withProperty("spring.ai.mcp.server.protocol", "streamable")
+                .withProperty("spring.ai.mcp.server.streamable-http.mcp-endpoint", "/mcp")
+                .withProperty("spring.main.web-application-type", "servlet")
+                .withProperty("server.address", "127.0.0.1");
 
         assertTrue(assertThrows(IllegalStateException.class,
                 () -> McpLocalOnlyStartupGuard.validate(publicHost)).getMessage().contains("server.address"));
@@ -109,6 +117,8 @@ class McpLocalOnlyStartupGuardTests {
                 () -> McpLocalOnlyStartupGuard.validate(zeroPort)).getMessage().contains("server.port"));
         assertTrue(assertThrows(IllegalStateException.class,
                 () -> McpLocalOnlyStartupGuard.validate(nonNumericPort)).getMessage().contains("server.port"));
+        assertTrue(assertThrows(IllegalStateException.class,
+                () -> McpLocalOnlyStartupGuard.validate(missingPort)).getMessage().contains("<unset>"));
     }
 
     @Test
