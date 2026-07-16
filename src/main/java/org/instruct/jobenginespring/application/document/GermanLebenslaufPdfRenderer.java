@@ -102,7 +102,7 @@ final class GermanLebenslaufPdfRenderer {
 
     private Block header(StructuredResumeContent content) throws IOException {
         List<RenderLine> lines = new ArrayList<>(wrap(content.fullName(), Style.NAME, 0));
-        lines.add(spacer(6));
+        lines.add(divider());
         List<StructuredResumeContent.PersonalField> contacts = content.personalFields();
         for (int index = 0; index < contacts.size();) {
             String first = contactText(contacts.get(index));
@@ -117,8 +117,6 @@ final class GermanLebenslaufPdfRenderer {
                 index++;
             }
         }
-        lines.add(divider());
-        lines.add(spacer(5));
         return new Block(lines);
     }
 
@@ -207,6 +205,7 @@ final class GermanLebenslaufPdfRenderer {
         lines.add(line(title, Style.SECTION, 0));
         return lines;
     }
+
 
     private List<PageLayout> paginate(List<Block> blocks) {
         List<PageLayout> pages = new ArrayList<>();

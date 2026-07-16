@@ -162,6 +162,26 @@ class GermanLebenslaufPdfRendererTests {
     }
 
     @Test
+    void rendersTheNameDividerAndUniformSectionDividers() throws IOException {
+        GermanLebenslaufPdfRenderer renderer = new GermanLebenslaufPdfRenderer(tempDir);
+        for (String language : List.of("en", "de")) {
+            StructuredResumeContent content = new StructuredResumeContent(
+                    "HeaderName", language, "Profile summary.",
+                    List.of(new PersonalField("Email", "candidate@example.test")),
+                    List.of(new ExperienceEntry("Engineer", "Example", null, null, null, List.of())),
+                    List.of(), List.of(), List.of(), List.of()
+            );
+
+            var result = renderer.generate("header-section-dividers-" + language + ".pdf", content);
+
+            try (PDDocument document = Loader.loadPDF(Path.of(result.path()).toFile())) {
+                String instructions = new String(document.getPage(0).getContents().readAllBytes(), StandardCharsets.ISO_8859_1);
+                assertEquals(3, countOccurrences(instructions, "\nS\n"));
+            }
+        }
+    }
+
+    @Test
     void normalizesControlCharactersAcrossAllRenderedTextPaths() throws IOException {
         GermanLebenslaufPdfRenderer renderer = new GermanLebenslaufPdfRenderer(tempDir);
         StructuredResumeContent controls = new StructuredResumeContent(
