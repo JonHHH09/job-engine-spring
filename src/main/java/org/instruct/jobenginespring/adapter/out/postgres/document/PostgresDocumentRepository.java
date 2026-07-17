@@ -184,6 +184,11 @@ public class PostgresDocumentRepository implements DocumentRepository {
                           )
                           AND NOT EXISTS (
                               SELECT 1
+                              FROM cover_letter.cover_letter_variants cover_letter_variant
+                              WHERE cover_letter_variant.document_id = stored_document.id
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1
                               FROM profile.profile_personal_details personal_details
                               WHERE personal_details.photo_document_id = stored_document.id
                           )
@@ -229,6 +234,10 @@ public class PostgresDocumentRepository implements DocumentRepository {
                             UNION ALL
                             SELECT 1
                             FROM resume.resume_variants
+                            WHERE file_path = :filePath
+                            UNION ALL
+                            SELECT 1
+                            FROM cover_letter.cover_letter_variants
                             WHERE file_path = :filePath
                         )
                         """)

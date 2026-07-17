@@ -52,6 +52,18 @@ public class PostgresResumeRepository implements ResumeRepository {
     }
 
     @Override
+    public Optional<Resume> findById(UUID resumeId) {
+        return jdbc.sql("""
+                        SELECT id, profile_id, job_id, format, profile_revision, job_revision, created_at, updated_at
+                        FROM resume.resumes
+                        WHERE id = :resumeId
+                        """)
+                .param("resumeId", resumeId)
+                .query(this::mapResume)
+                .optional();
+    }
+
+    @Override
     public List<ResumeVariant> findVariants(UUID resumeId) {
         return jdbc.sql("""
                         SELECT id, resume_id, language, document_id, file_path, created_at, updated_at
@@ -180,7 +192,7 @@ public class PostgresResumeRepository implements ResumeRepository {
 
     private void lockGermanyResume(UUID profileId, UUID jobId, String format) {
         jdbc.sql("SELECT pg_advisory_xact_lock(hashtextextended(:lockKey, 0))")
-                .param("lockKey", "german-tailored-resume:" + profileId + ":" + jobId + ":" + format)
+                .param("lockKey", ResumeRepository.germanyApplicationLockKey(profileId, jobId))
                 .query((resultSet, rowNumber) -> Boolean.TRUE)
                 .single();
     }

@@ -45,6 +45,7 @@ EXPECTED_TOOLS = {
     "add_job_from_link",
     "analyze_job_link",
     "add_job_from_analysis",
+    "generate_german_cover_letter",
 }
 
 

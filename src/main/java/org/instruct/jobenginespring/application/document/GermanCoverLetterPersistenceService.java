@@ -1,36 +1,31 @@
 package org.instruct.jobenginespring.application.document;
 
 import org.instruct.jobenginespring.application.coverletter.port.CoverLetterRepository;
+import org.instruct.jobenginespring.application.coverletter.port.CoverLetterRepository.CoverLetterAggregateWrite;
+import org.instruct.jobenginespring.application.coverletter.port.CoverLetterRepository.ReplaceResult;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
 import org.instruct.jobenginespring.application.document.port.TransactionLifecycle;
-import org.instruct.jobenginespring.application.resume.port.ResumeRepository;
-import org.instruct.jobenginespring.application.resume.port.ResumeRepository.ReplaceResult;
-import org.instruct.jobenginespring.application.resume.port.ResumeRepository.ResumeAggregateWrite;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Owns only the short database transaction that atomically replaces a generated German resume. */
+/** Owns the short database transaction that atomically replaces one German cover-letter variant. */
 @Service
-public class GermanResumePersistenceService {
+public class GermanCoverLetterPersistenceService {
 
-    private final ResumeRepository resumeRepository;
     private final CoverLetterRepository coverLetterRepository;
     private final DocumentRepository documentRepository;
     private final GeneratedResumeCleanupService cleanupService;
     private final TransactionLifecycle transactionLifecycle;
 
-    public GermanResumePersistenceService(
-            ResumeRepository resumeRepository,
+    public GermanCoverLetterPersistenceService(
             CoverLetterRepository coverLetterRepository,
             DocumentRepository documentRepository,
             GeneratedResumeCleanupService cleanupService,
             TransactionLifecycle transactionLifecycle
     ) {
-        this.resumeRepository = Objects.requireNonNull(resumeRepository, "resumeRepository must not be null");
         this.coverLetterRepository = Objects.requireNonNull(coverLetterRepository, "coverLetterRepository must not be null");
         this.documentRepository = Objects.requireNonNull(documentRepository, "documentRepository must not be null");
         this.cleanupService = Objects.requireNonNull(cleanupService, "cleanupService must not be null");
@@ -38,22 +33,13 @@ public class GermanResumePersistenceService {
     }
 
     @Transactional
-    public ReplaceResult replace(ResumeAggregateWrite write, List<GeneratedAsset> generatedAssets) {
+    public ReplaceResult replace(CoverLetterAggregateWrite write, GeneratedAsset generatedAsset) {
         Objects.requireNonNull(write, "write must not be null");
-        List<GeneratedAsset> safeAssets = List.copyOf(Objects.requireNonNull(generatedAssets, "generatedAssets must not be null"));
-        safeAssets.forEach(asset -> transactionLifecycle.afterRollback(
-                () -> cleanupService.enqueueNow(asset.documentId(), asset.filePath())
-        ));
+        GeneratedAsset asset = Objects.requireNonNull(generatedAsset, "generatedAsset must not be null");
+        transactionLifecycle.afterRollback(() -> cleanupService.enqueueNow(asset.documentId(), asset.filePath()));
 
-        var previousCoverLetters = coverLetterRepository.deleteByGermanyResumeIdentity(
-                write.resume().profileId(), write.resume().jobId()
-        );
-        ReplaceResult replaced = resumeRepository.replaceGermanyResume(write);
+        ReplaceResult replaced = coverLetterRepository.replace(write);
         replaced.previousVariants().forEach(previous -> {
-            documentRepository.deleteFileIfUnreferenced(previous.documentId());
-            cleanupService.enqueueAfterCommit(previous.documentId(), previous.filePath());
-        });
-        previousCoverLetters.forEach(previous -> {
             documentRepository.deleteFileIfUnreferenced(previous.documentId());
             cleanupService.enqueueAfterCommit(previous.documentId(), previous.filePath());
         });
