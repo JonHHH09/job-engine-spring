@@ -4,6 +4,7 @@ import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.adapter.out.postgres.document.PostgresGeneratedResumeCleanupRepository;
 import org.instruct.jobenginespring.adapter.out.postgres.document.PostgresDocumentRepository;
 import org.instruct.jobenginespring.adapter.out.postgres.job.PostgresJobRepository;
+import org.instruct.jobenginespring.application.coverletter.port.CoverLetterRepository;
 import org.instruct.jobenginespring.application.document.GermanResumePersistenceService;
 import org.instruct.jobenginespring.application.document.GeneratedResumeCleanupExecutor;
 import org.instruct.jobenginespring.application.document.GeneratedResumeCleanupFileDeletion;
@@ -175,6 +176,7 @@ class PersistenceTransactionProxyIntegrationTests {
         ));
         var resumePersistence = spy(new GermanResumePersistenceService(
                 mock(ResumeRepository.class),
+                mock(CoverLetterRepository.class),
                 mock(DocumentRepository.class),
                 mock(org.instruct.jobenginespring.application.document.GeneratedResumeCleanupService.class),
                 mock(TransactionLifecycle.class)

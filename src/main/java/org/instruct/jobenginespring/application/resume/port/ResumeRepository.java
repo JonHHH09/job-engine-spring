@@ -12,7 +12,13 @@ import java.util.UUID;
 
 public interface ResumeRepository {
 
+    static String germanyApplicationLockKey(UUID profileId, UUID jobId) {
+        return "germany-application:" + profileId + ":" + jobId;
+    }
+
     Optional<Resume> findByProfileJobFormat(UUID profileId, UUID jobId, String format);
+
+    Optional<Resume> findById(UUID resumeId);
 
     List<ResumeVariant> findVariants(UUID resumeId);
 

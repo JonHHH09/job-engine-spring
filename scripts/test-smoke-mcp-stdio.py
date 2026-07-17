@@ -41,6 +41,7 @@ EXPECTED_TOOLS = [
     "add_job_from_link",
     "analyze_job_link",
     "add_job_from_analysis",
+    "generate_german_cover_letter",
 ]
 
 
@@ -83,7 +84,7 @@ class SmokeMcpStdioTests(unittest.TestCase):
             )
 
         self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertIn("MCP STDIO smoke passed with 26 tools.", completed.stdout)
+        self.assertIn("MCP STDIO smoke passed with 27 tools.", completed.stdout)
 
 
 if __name__ == "__main__":
