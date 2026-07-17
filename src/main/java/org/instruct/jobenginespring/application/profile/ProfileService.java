@@ -159,6 +159,9 @@ public class ProfileService {
     @Transactional
     public boolean deleteProfile(UUID profileId) {
         Objects.requireNonNull(profileId, "profileId must not be null");
+        if (!profileRepository.lockProfileForDeletion(profileId)) {
+            return false;
+        }
         List<org.instruct.jobenginespring.domain.coverletter.CoverLetterVariant> coverLetterVariants =
                 germanCoverLetterPersistenceService.lockAndFindAllByProfileId(profileId);
         boolean deleted = generatedResumeAssetService.deleteProfile(profileId);

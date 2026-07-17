@@ -45,7 +45,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Answers.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -492,8 +492,42 @@ class ProfileServiceTests {
         assertTrue(service.deleteProfile(created.profile().id()));
         assertFalse(service.getProfile(created.profile().id()).isPresent());
         assertFalse(service.deleteProfile(created.profile().id()));
-        verify(germanCoverLetterPersistenceService, times(2)).lockAndFindAllByProfileId(created.profile().id());
+        verify(germanCoverLetterPersistenceService).lockAndFindAllByProfileId(created.profile().id());
         verify(germanCoverLetterPersistenceService).cleanupDeletedVariants(List.of());
+    }
+
+    @Test
+    void deleteProfileLocksSourceBeforeCapturingAndCleaningCoverLetterAssets() {
+        ProfileRepository profileRepository = mock(ProfileRepository.class);
+        GeneratedResumeAssetService assetService = mock(GeneratedResumeAssetService.class);
+        GermanCoverLetterPersistenceService coverLetters = mock(GermanCoverLetterPersistenceService.class);
+        UUID profileId = UUID.randomUUID();
+        when(profileRepository.lockProfileForDeletion(profileId)).thenReturn(true);
+        when(assetService.deleteProfile(profileId)).thenReturn(true);
+        when(coverLetters.lockAndFindAllByProfileId(profileId)).thenReturn(List.of());
+        ProfileService lockedService = new ProfileService(profileRepository, assetService, coverLetters, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertTrue(lockedService.deleteProfile(profileId));
+
+        var sequence = inOrder(profileRepository, coverLetters, assetService);
+        sequence.verify(profileRepository).lockProfileForDeletion(profileId);
+        sequence.verify(coverLetters).lockAndFindAllByProfileId(profileId);
+        sequence.verify(assetService).deleteProfile(profileId);
+        sequence.verify(coverLetters).cleanupDeletedVariants(List.of());
+    }
+
+    @Test
+    void deleteProfileDoesNotCleanCoverLetterAssetsWhenSourceDeletionFailsAfterLocking() {
+        ProfileRepository profileRepository = mock(ProfileRepository.class);
+        GeneratedResumeAssetService assetService = mock(GeneratedResumeAssetService.class);
+        GermanCoverLetterPersistenceService coverLetters = mock(GermanCoverLetterPersistenceService.class);
+        UUID profileId = UUID.randomUUID();
+        when(profileRepository.lockProfileForDeletion(profileId)).thenReturn(true);
+        when(assetService.deleteProfile(profileId)).thenReturn(false);
+        when(coverLetters.lockAndFindAllByProfileId(profileId)).thenReturn(List.of());
+        ProfileService lockedService = new ProfileService(profileRepository, assetService, coverLetters, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertFalse(lockedService.deleteProfile(profileId));
     }
 
     @Test

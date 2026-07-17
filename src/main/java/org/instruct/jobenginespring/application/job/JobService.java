@@ -157,6 +157,9 @@ public class JobService {
     @Transactional
     public DeleteJobResult deleteJob(UUID jobId) {
         Objects.requireNonNull(jobId, "jobId must not be null");
+        if (!jobRepository.lockJobForDeletion(jobId)) {
+            throw new JobNotFoundException(jobId);
+        }
         List<org.instruct.jobenginespring.domain.coverletter.CoverLetterVariant> coverLetterVariants =
                 germanCoverLetterPersistenceService.lockAndFindAllByJobId(jobId);
         if (!jobRepository.deleteJob(jobId)) {

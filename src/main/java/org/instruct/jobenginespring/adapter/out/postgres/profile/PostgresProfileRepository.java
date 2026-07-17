@@ -469,6 +469,16 @@ public class PostgresProfileRepository implements ProfileRepository {
     }
 
     @Override
+    @Transactional
+    public boolean lockProfileForDeletion(UUID profileId) {
+        return jdbc.sql("SELECT id FROM profile.profiles WHERE id = :profileId FOR UPDATE")
+                .param("profileId", profileId)
+                .query(UUID.class)
+                .optional()
+                .isPresent();
+    }
+
+    @Override
     public boolean deleteProfile(UUID profileId) {
         return jdbc.sql("DELETE FROM profile.profiles WHERE id = :profileId")
                 .param("profileId", profileId)

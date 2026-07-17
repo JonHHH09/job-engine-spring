@@ -182,6 +182,18 @@ class PostgresCoverLetterRepositoryIntegrationTests {
         assertTrue(documents.deleteFileIfUnreferenced(DOCUMENT_ID));
     }
 
+    @Test
+    void sourceDeletionLocksExistOnlyForTheCurrentProfileAndJob() {
+        NamedParameterJdbcTemplate named = new NamedParameterJdbcTemplate(jdbc);
+        PostgresProfileRepository profiles = new PostgresProfileRepository(named);
+        PostgresJobRepository jobs = new PostgresJobRepository(named);
+
+        assertTrue(profiles.lockProfileForDeletion(PROFILE_ID));
+        assertFalse(profiles.lockProfileForDeletion(UUID.randomUUID()));
+        assertTrue(jobs.lockJobForDeletion(JOB_ID));
+        assertFalse(jobs.lockJobForDeletion(UUID.randomUUID()));
+    }
+
     private CoverLetterAggregateWrite write(UUID documentId, String filePath, String paragraphText) {
         UUID coverLetterId = UUID.randomUUID();
         CoverLetter parent = new CoverLetter(

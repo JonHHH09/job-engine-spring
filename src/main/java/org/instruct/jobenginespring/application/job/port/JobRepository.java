@@ -35,4 +35,9 @@ public interface JobRepository {
     Optional<JobAggregate> updateJobAggregate(JobAggregate aggregate, long expectedRevision);
 
     boolean deleteJob(UUID jobId);
+
+    /** Locks an existing job for source deletion until the enclosing transaction completes. */
+    default boolean lockJobForDeletion(UUID jobId) {
+        return findJobAggregate(jobId).isPresent();
+    }
 }

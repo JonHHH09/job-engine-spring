@@ -40,8 +40,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class JobServiceTests {
 
@@ -919,8 +920,40 @@ class JobServiceTests {
         ApplicationException missing = assertThrows(ApplicationException.class, () -> service.deleteJob(jobId));
         assertEquals("not_found", missing.errorCode().code());
         assertEquals(Map.of("resource", "job", "jobId", jobId.toString()), missing.details());
-        verify(germanCoverLetterPersistenceService, times(2)).lockAndFindAllByJobId(jobId);
+        verify(germanCoverLetterPersistenceService).lockAndFindAllByJobId(jobId);
         verify(germanCoverLetterPersistenceService).cleanupDeletedVariants(List.of());
+    }
+
+    @Test
+    void deleteJobLocksSourceBeforeCapturingAndCleaningCoverLetterAssets() {
+        JobRepository jobRepository = mock(JobRepository.class);
+        GermanCoverLetterPersistenceService coverLetters = mock(GermanCoverLetterPersistenceService.class);
+        UUID jobId = UUID.randomUUID();
+        when(jobRepository.lockJobForDeletion(jobId)).thenReturn(true);
+        when(jobRepository.deleteJob(jobId)).thenReturn(true);
+        when(coverLetters.lockAndFindAllByJobId(jobId)).thenReturn(List.of());
+        JobService lockedService = new JobService(jobRepository, fetcher, coverLetters, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertEquals(new JobService.DeleteJobResult(jobId, true), lockedService.deleteJob(jobId));
+
+        var sequence = inOrder(jobRepository, coverLetters);
+        sequence.verify(jobRepository).lockJobForDeletion(jobId);
+        sequence.verify(coverLetters).lockAndFindAllByJobId(jobId);
+        sequence.verify(jobRepository).deleteJob(jobId);
+        sequence.verify(coverLetters).cleanupDeletedVariants(List.of());
+    }
+
+    @Test
+    void deleteJobReportsMissingSourceWhenDeletionFailsAfterLocking() {
+        JobRepository jobRepository = mock(JobRepository.class);
+        GermanCoverLetterPersistenceService coverLetters = mock(GermanCoverLetterPersistenceService.class);
+        UUID jobId = UUID.randomUUID();
+        when(jobRepository.lockJobForDeletion(jobId)).thenReturn(true);
+        when(jobRepository.deleteJob(jobId)).thenReturn(false);
+        when(coverLetters.lockAndFindAllByJobId(jobId)).thenReturn(List.of());
+        JobService lockedService = new JobService(jobRepository, fetcher, coverLetters, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertThrows(JobService.JobNotFoundException.class, () -> lockedService.deleteJob(jobId));
     }
 
     @Test
