@@ -69,6 +69,44 @@ public class PostgresCoverLetterRepository implements CoverLetterRepository {
 
     @Override
     @Transactional
+    public List<CoverLetterVariant> lockAndFindAllByProfileId(UUID profileId) {
+        Objects.requireNonNull(profileId, "profileId must not be null");
+        return jdbc.sql("""
+                        SELECT variant.id, variant.cover_letter_id, variant.format, variant.language,
+                               variant.document_id, variant.file_path, variant.subject, variant.salutation,
+                               variant.closing, variant.signature, variant.created_at, variant.updated_at
+                        FROM cover_letter.cover_letter_variants variant
+                        JOIN cover_letter.cover_letters parent ON parent.id = variant.cover_letter_id
+                        WHERE parent.profile_id = :profileId
+                        ORDER BY variant.format, variant.language
+                        FOR UPDATE OF parent, variant
+                        """)
+                .param("profileId", profileId)
+                .query(this::mapVariant)
+                .list();
+    }
+
+    @Override
+    @Transactional
+    public List<CoverLetterVariant> lockAndFindAllByJobId(UUID jobId) {
+        Objects.requireNonNull(jobId, "jobId must not be null");
+        return jdbc.sql("""
+                        SELECT variant.id, variant.cover_letter_id, variant.format, variant.language,
+                               variant.document_id, variant.file_path, variant.subject, variant.salutation,
+                               variant.closing, variant.signature, variant.created_at, variant.updated_at
+                        FROM cover_letter.cover_letter_variants variant
+                        JOIN cover_letter.cover_letters parent ON parent.id = variant.cover_letter_id
+                        WHERE parent.job_id = :jobId
+                        ORDER BY variant.format, variant.language
+                        FOR UPDATE OF parent, variant
+                        """)
+                .param("jobId", jobId)
+                .query(this::mapVariant)
+                .list();
+    }
+
+    @Override
+    @Transactional
     public ReplaceResult replace(CoverLetterAggregateWrite write) {
         CoverLetterAggregateWrite safe = Objects.requireNonNull(write, "write must not be null");
         CoverLetter coverLetter = safe.coverLetter();

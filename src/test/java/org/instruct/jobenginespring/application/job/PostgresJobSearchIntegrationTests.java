@@ -3,6 +3,7 @@ package org.instruct.jobenginespring.application.job;
 import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.adapter.out.postgres.job.PostgresJobRepository;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
+import org.instruct.jobenginespring.application.document.GermanCoverLetterPersistenceService;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.search.SearchTextNormalizer;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
@@ -37,6 +38,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 @Testcontainers
 class PostgresJobSearchIntegrationTests {
@@ -78,7 +80,12 @@ class PostgresJobSearchIntegrationTests {
         jdbc.update("TRUNCATE TABLE job_schema.jobs CASCADE");
         dataSource.reset();
         repository = new PostgresJobRepository(new NamedParameterJdbcTemplate(jdbc));
-        service = new JobService(repository, url -> new JobLinkContentFetcher.JobLinkFetchResult(url, "unused", "unused", 200), Clock.fixed(NOW, ZoneOffset.UTC));
+        service = new JobService(
+                repository,
+                url -> new JobLinkContentFetcher.JobLinkFetchResult(url, "unused", "unused", 200),
+                mock(GermanCoverLetterPersistenceService.class),
+                Clock.fixed(NOW, ZoneOffset.UTC)
+        );
     }
 
     @Test

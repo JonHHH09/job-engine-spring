@@ -168,6 +168,32 @@ class PostgresCoverLetterRepositoryIntegrationTests {
         verify(cleanup).enqueueAfterCommit(DOCUMENT_ID, "linked.pdf");
     }
 
+    @Test
+    void sourceDeletionRequiresCapturingCoverLetterAssetsBeforeForeignKeyCascade() {
+        CoverLetterAggregateWrite write = write(DOCUMENT_ID, "source-deleted.pdf", "Absatz");
+        coverLetters.replace(write);
+
+        assertEquals(List.of(write.variant().variant()), coverLetters.lockAndFindAllByProfileId(PROFILE_ID));
+        assertEquals(List.of(write.variant().variant()), coverLetters.lockAndFindAllByJobId(JOB_ID));
+
+        jdbc.update("DELETE FROM profile.profiles WHERE id = ?", PROFILE_ID);
+
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM cover_letter.cover_letter_variants", Integer.class));
+        assertTrue(documents.deleteFileIfUnreferenced(DOCUMENT_ID));
+    }
+
+    @Test
+    void sourceDeletionLocksExistOnlyForTheCurrentProfileAndJob() {
+        NamedParameterJdbcTemplate named = new NamedParameterJdbcTemplate(jdbc);
+        PostgresProfileRepository profiles = new PostgresProfileRepository(named);
+        PostgresJobRepository jobs = new PostgresJobRepository(named);
+
+        assertTrue(profiles.lockProfileForDeletion(PROFILE_ID));
+        assertFalse(profiles.lockProfileForDeletion(UUID.randomUUID()));
+        assertTrue(jobs.lockJobForDeletion(JOB_ID));
+        assertFalse(jobs.lockJobForDeletion(UUID.randomUUID()));
+    }
+
     private CoverLetterAggregateWrite write(UUID documentId, String filePath, String paragraphText) {
         UUID coverLetterId = UUID.randomUUID();
         CoverLetter parent = new CoverLetter(

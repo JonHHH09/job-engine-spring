@@ -314,6 +314,16 @@ public class PostgresJobRepository implements JobRepository {
     }
 
     @Override
+    @Transactional
+    public boolean lockJobForDeletion(UUID jobId) {
+        return jdbc.sql("SELECT id FROM job_schema.jobs WHERE id = :jobId FOR UPDATE")
+                .param("jobId", jobId)
+                .query(UUID.class)
+                .optional()
+                .isPresent();
+    }
+
+    @Override
     public boolean deleteJob(UUID jobId) {
         return jdbc.sql("DELETE FROM job_schema.jobs WHERE id = :jobId")
                 .param("jobId", jobId)

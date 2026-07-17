@@ -6,6 +6,7 @@ import org.instruct.jobenginespring.adapter.out.postgres.profile.PostgresProfile
 import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.DocumentStorageService.StoredPdfTextExtractionResult;
 import org.instruct.jobenginespring.application.document.GeneratedResumeAssetService;
+import org.instruct.jobenginespring.application.document.GermanCoverLetterPersistenceService;
 import org.instruct.jobenginespring.application.document.PdfTextExtractionService.PdfTextExtractionResult;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.IngestProfileFromStoredPdfRequest;
 import org.instruct.jobenginespring.application.profile.ProfilePdfIngestionService.IngestionStatus;
@@ -92,7 +93,9 @@ class ProfilePdfIngestionConcurrencyIntegrationTests {
         var namedJdbc = new NamedParameterJdbcTemplate(dataSource);
         profiles = new PostgresProfileRepository(namedJdbc);
         sources = new PostgresProfilePdfSourceRepository(JdbcClient.create(namedJdbc));
-        profileService = new ProfileService(profiles, mock(GeneratedResumeAssetService.class));
+        profileService = new ProfileService(
+                profiles, mock(GeneratedResumeAssetService.class), mock(GermanCoverLetterPersistenceService.class)
+        );
     }
 
     @Test
@@ -499,6 +502,7 @@ class ProfilePdfIngestionConcurrencyIntegrationTests {
         context.registerBean(ProfileRepository.class, () -> profiles);
         context.registerBean(ProfilePdfSourceRepository.class, () -> sources);
         context.registerBean(GeneratedResumeAssetService.class, () -> assetService);
+        context.registerBean(GermanCoverLetterPersistenceService.class, () -> mock(GermanCoverLetterPersistenceService.class));
         context.registerBean(PlatformTransactionManager.class, () -> new DataSourceTransactionManager(dataSource));
         context.register(ProfileService.class, ProfileIdentityMatcher.class, ProfilePdfIngestionPersistenceService.class);
         context.refresh();
