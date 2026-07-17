@@ -4,6 +4,7 @@ import org.instruct.jobenginespring.application.job.port.JobAnalysisRunRepositor
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobPostingAnalysisPort;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
+import org.instruct.jobenginespring.application.document.GermanCoverLetterPersistenceService;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
 import org.junit.jupiter.api.Test;
 import org.springframework.aop.framework.ProxyFactory;
@@ -34,7 +35,7 @@ class JobExternalWorkTransactionBoundaryTests {
             assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
             return new JobLinkContentFetcher.JobLinkFetchResult(url, "Developer", "Build Java services", 200);
         };
-        JobService service = transactionalProxy(new JobService(repository, fetcher), JobService.class);
+        JobService service = transactionalProxy(new JobService(repository, fetcher, mock(GermanCoverLetterPersistenceService.class)), JobService.class);
 
         service.addJobFromLink(new JobService.AddJobFromLinkRequest(
                 "https://example.test/jobs/1", null, null, null, null, null, null, null, null, null, null

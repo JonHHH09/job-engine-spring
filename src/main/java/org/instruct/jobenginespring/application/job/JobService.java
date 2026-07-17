@@ -4,6 +4,7 @@ import org.apache.commons.codec.digest.DigestUtils;
 import lombok.NonNull;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
+import org.instruct.jobenginespring.application.document.GermanCoverLetterPersistenceService;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher.JobLinkFetchResult;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
@@ -48,16 +49,29 @@ public class JobService {
     private final JobRepository jobRepository;
     @NonNull
     private final JobLinkContentFetcher linkContentFetcher;
+    private final GermanCoverLetterPersistenceService germanCoverLetterPersistenceService;
     private Clock clock = Clock.systemUTC();
 
     @Autowired
-    public JobService(JobRepository jobRepository, JobLinkContentFetcher linkContentFetcher) {
+    public JobService(
+            JobRepository jobRepository,
+            JobLinkContentFetcher linkContentFetcher,
+            GermanCoverLetterPersistenceService germanCoverLetterPersistenceService
+    ) {
         this.jobRepository = Objects.requireNonNull(jobRepository, "jobRepository must not be null");
         this.linkContentFetcher = Objects.requireNonNull(linkContentFetcher, "linkContentFetcher must not be null");
+        this.germanCoverLetterPersistenceService = Objects.requireNonNull(
+                germanCoverLetterPersistenceService, "germanCoverLetterPersistenceService must not be null"
+        );
     }
 
-    JobService(JobRepository jobRepository, JobLinkContentFetcher linkContentFetcher, Clock clock) {
-        this(jobRepository, linkContentFetcher);
+    JobService(
+            JobRepository jobRepository,
+            JobLinkContentFetcher linkContentFetcher,
+            GermanCoverLetterPersistenceService germanCoverLetterPersistenceService,
+            Clock clock
+    ) {
+        this(jobRepository, linkContentFetcher, germanCoverLetterPersistenceService);
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
@@ -143,9 +157,12 @@ public class JobService {
     @Transactional
     public DeleteJobResult deleteJob(UUID jobId) {
         Objects.requireNonNull(jobId, "jobId must not be null");
+        List<org.instruct.jobenginespring.domain.coverletter.CoverLetterVariant> coverLetterVariants =
+                germanCoverLetterPersistenceService.lockAndFindAllByJobId(jobId);
         if (!jobRepository.deleteJob(jobId)) {
             throw new JobNotFoundException(jobId);
         }
+        germanCoverLetterPersistenceService.cleanupDeletedVariants(coverLetterVariants);
         return new DeleteJobResult(jobId, true);
     }
 

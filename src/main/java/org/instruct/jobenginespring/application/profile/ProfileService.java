@@ -2,6 +2,7 @@ package org.instruct.jobenginespring.application.profile;
 
 import lombok.NonNull;
 import org.instruct.jobenginespring.application.document.GeneratedResumeAssetService;
+import org.instruct.jobenginespring.application.document.GermanCoverLetterPersistenceService;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
@@ -37,20 +38,29 @@ public class ProfileService {
     @NonNull
     private final ProfileRepository profileRepository;
     private final GeneratedResumeAssetService generatedResumeAssetService;
+    private final GermanCoverLetterPersistenceService germanCoverLetterPersistenceService;
     private Clock clock = Clock.systemUTC();
 
     @Autowired
-    public ProfileService(ProfileRepository profileRepository, GeneratedResumeAssetService generatedResumeAssetService) {
+    public ProfileService(
+            ProfileRepository profileRepository,
+            GeneratedResumeAssetService generatedResumeAssetService,
+            GermanCoverLetterPersistenceService germanCoverLetterPersistenceService
+    ) {
         this.profileRepository = Objects.requireNonNull(profileRepository, "profileRepository must not be null");
         this.generatedResumeAssetService = Objects.requireNonNull(generatedResumeAssetService, "generatedResumeAssetService must not be null");
+        this.germanCoverLetterPersistenceService = Objects.requireNonNull(
+                germanCoverLetterPersistenceService, "germanCoverLetterPersistenceService must not be null"
+        );
     }
 
     ProfileService(
             ProfileRepository profileRepository,
             GeneratedResumeAssetService generatedResumeAssetService,
+            GermanCoverLetterPersistenceService germanCoverLetterPersistenceService,
             Clock clock
     ) {
-        this(profileRepository, generatedResumeAssetService);
+        this(profileRepository, generatedResumeAssetService, germanCoverLetterPersistenceService);
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
     }
 
@@ -149,7 +159,13 @@ public class ProfileService {
     @Transactional
     public boolean deleteProfile(UUID profileId) {
         Objects.requireNonNull(profileId, "profileId must not be null");
-        return generatedResumeAssetService.deleteProfile(profileId);
+        List<org.instruct.jobenginespring.domain.coverletter.CoverLetterVariant> coverLetterVariants =
+                germanCoverLetterPersistenceService.lockAndFindAllByProfileId(profileId);
+        boolean deleted = generatedResumeAssetService.deleteProfile(profileId);
+        if (deleted) {
+            germanCoverLetterPersistenceService.cleanupDeletedVariants(coverLetterVariants);
+        }
+        return deleted;
     }
 
     private ProfileAggregate toAggregate(

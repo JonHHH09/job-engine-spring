@@ -16,6 +16,10 @@ public interface CoverLetterRepository {
 
     List<CoverLetterVariant> findVariants(UUID coverLetterId);
 
+    List<CoverLetterVariant> lockAndFindAllByProfileId(UUID profileId);
+
+    List<CoverLetterVariant> lockAndFindAllByJobId(UUID jobId);
+
     ReplaceResult replace(CoverLetterAggregateWrite write);
 
     List<CoverLetterVariant> deleteByGermanyResumeIdentity(UUID profileId, UUID jobId);

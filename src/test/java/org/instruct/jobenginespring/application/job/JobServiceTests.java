@@ -2,6 +2,7 @@ package org.instruct.jobenginespring.application.job;
 
 import org.apache.commons.codec.digest.DigestUtils;
 import org.instruct.jobenginespring.application.error.ApplicationException;
+import org.instruct.jobenginespring.application.document.GermanCoverLetterPersistenceService;
 import org.instruct.jobenginespring.application.job.JobService.AddJobFromLinkRequest;
 import org.instruct.jobenginespring.application.job.JobService.AddJobFromTextRequest;
 import org.instruct.jobenginespring.application.job.JobService.AddJobResult;
@@ -38,6 +39,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 class JobServiceTests {
 
@@ -45,7 +49,10 @@ class JobServiceTests {
 
     private final FakeJobRepository repository = new FakeJobRepository();
     private final FakeJobLinkContentFetcher fetcher = new FakeJobLinkContentFetcher();
-    private final JobService service = new JobService(repository, fetcher, Clock.fixed(NOW, ZoneOffset.UTC));
+    private final GermanCoverLetterPersistenceService germanCoverLetterPersistenceService = mock(GermanCoverLetterPersistenceService.class);
+    private final JobService service = new JobService(
+            repository, fetcher, germanCoverLetterPersistenceService, Clock.fixed(NOW, ZoneOffset.UTC)
+    );
 
     @Test
     void addJobFromTextDerivesFieldsAndRequiredSkills() {
@@ -912,6 +919,8 @@ class JobServiceTests {
         ApplicationException missing = assertThrows(ApplicationException.class, () -> service.deleteJob(jobId));
         assertEquals("not_found", missing.errorCode().code());
         assertEquals(Map.of("resource", "job", "jobId", jobId.toString()), missing.details());
+        verify(germanCoverLetterPersistenceService, times(2)).lockAndFindAllByJobId(jobId);
+        verify(germanCoverLetterPersistenceService).cleanupDeletedVariants(List.of());
     }
 
     @Test

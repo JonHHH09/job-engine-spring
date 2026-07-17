@@ -168,6 +168,20 @@ class PostgresCoverLetterRepositoryIntegrationTests {
         verify(cleanup).enqueueAfterCommit(DOCUMENT_ID, "linked.pdf");
     }
 
+    @Test
+    void sourceDeletionRequiresCapturingCoverLetterAssetsBeforeForeignKeyCascade() {
+        CoverLetterAggregateWrite write = write(DOCUMENT_ID, "source-deleted.pdf", "Absatz");
+        coverLetters.replace(write);
+
+        assertEquals(List.of(write.variant().variant()), coverLetters.lockAndFindAllByProfileId(PROFILE_ID));
+        assertEquals(List.of(write.variant().variant()), coverLetters.lockAndFindAllByJobId(JOB_ID));
+
+        jdbc.update("DELETE FROM profile.profiles WHERE id = ?", PROFILE_ID);
+
+        assertEquals(0, jdbc.queryForObject("SELECT count(*) FROM cover_letter.cover_letter_variants", Integer.class));
+        assertTrue(documents.deleteFileIfUnreferenced(DOCUMENT_ID));
+    }
+
     private CoverLetterAggregateWrite write(UUID documentId, String filePath, String paragraphText) {
         UUID coverLetterId = UUID.randomUUID();
         CoverLetter parent = new CoverLetter(
