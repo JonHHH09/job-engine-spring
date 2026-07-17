@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring;
 
+import org.instruct.jobenginespring.application.coverletter.port.CoverLetterRepository;
 import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
 import org.instruct.jobenginespring.application.document.port.GeneratedResumeCleanupRepository;
@@ -44,6 +45,7 @@ import java.util.UUID;
         "job-engine.health.postgres.enabled=false",
         "job-engine.profile.postgres.enabled=false",
         "job-engine.document.postgres.enabled=false",
+        "job-engine.cover-letter.postgres.enabled=false",
         "job-engine.job.postgres.enabled=false",
         "job-engine.job-analysis.postgres.enabled=false",
         "job-engine.job.link-fetcher.enabled=false"
@@ -277,6 +279,11 @@ class JobEngineSpringApplicationTests {
         @Bean
         ResumeRepository resumeRepository() {
             return org.mockito.Mockito.mock(ResumeRepository.class);
+        }
+
+        @Bean
+        CoverLetterRepository coverLetterRepository() {
+            return org.mockito.Mockito.mock(CoverLetterRepository.class);
         }
     }
 

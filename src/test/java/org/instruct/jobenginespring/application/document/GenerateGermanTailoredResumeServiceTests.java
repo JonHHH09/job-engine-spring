@@ -1,5 +1,6 @@
 package org.instruct.jobenginespring.application.document;
 
+import org.instruct.jobenginespring.application.coverletter.port.CoverLetterRepository;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
 import org.instruct.jobenginespring.application.document.port.TransactionLifecycle;
 import org.instruct.jobenginespring.application.error.ApplicationException;
@@ -88,7 +89,7 @@ class GenerateGermanTailoredResumeServiceTests {
             return null;
         }).when(transactionLifecycle).afterRollback(org.mockito.ArgumentMatchers.any(Runnable.class));
         GermanResumePersistenceService persistenceService = new GermanResumePersistenceService(
-                resumeRepository, documentRepository, cleanupService, transactionLifecycle
+                resumeRepository, mock(CoverLetterRepository.class), documentRepository, cleanupService, transactionLifecycle
         );
         service = new GenerateGermanTailoredResumeService(
                 profileRepository, jobRepository, personalDetailsRepository, persistenceService,
