@@ -17,6 +17,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -63,6 +64,30 @@ class GermanCoverLetterPersistenceServiceTests {
         assertThrows(NullPointerException.class, () -> new GermanCoverLetterPersistenceService(repository, documents, cleanup, null));
         GermanCoverLetterPersistenceService service = new GermanCoverLetterPersistenceService(repository, documents, cleanup, transactions);
         assertThrows(NullPointerException.class, () -> service.replace(null, null));
+        assertThrows(NullPointerException.class, () -> service.cleanupDeletedVariants(null));
+    }
+
+    @Test
+    void capturesAndCleansAssetsAfterProfileOrJobSourceDeletion() {
+        CoverLetterRepository repository = mock(CoverLetterRepository.class);
+        DocumentRepository documents = mock(DocumentRepository.class);
+        GeneratedResumeCleanupService cleanup = mock(GeneratedResumeCleanupService.class);
+        GermanCoverLetterPersistenceService service = new GermanCoverLetterPersistenceService(
+                repository, documents, cleanup, mock(TransactionLifecycle.class)
+        );
+        Instant now = Instant.parse("2026-07-16T12:00:00Z");
+        CoverLetter parent = parent(now);
+        CoverLetterVariant variant = variant(parent.id(), now, "deleted.pdf");
+
+        when(repository.lockAndFindAllByProfileId(parent.profileId())).thenReturn(List.of(variant));
+        when(repository.lockAndFindAllByJobId(parent.jobId())).thenReturn(List.of(variant));
+
+        assertEquals(List.of(variant), service.lockAndFindAllByProfileId(parent.profileId()));
+        assertEquals(List.of(variant), service.lockAndFindAllByJobId(parent.jobId()));
+        service.cleanupDeletedVariants(List.of(variant));
+
+        verify(documents).deleteFileIfUnreferenced(variant.documentId());
+        verify(cleanup).enqueueAfterCommit(variant.documentId(), "deleted.pdf");
     }
 
     private static CoverLetter parent(Instant now) {

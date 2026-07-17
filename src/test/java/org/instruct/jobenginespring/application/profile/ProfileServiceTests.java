@@ -12,6 +12,7 @@ import org.instruct.jobenginespring.application.profile.ProfileService.ProjectTe
 import org.instruct.jobenginespring.application.profile.ProfileService.ProjectWriteRequest;
 import org.instruct.jobenginespring.application.profile.ProfileService.SkillWriteRequest;
 import org.instruct.jobenginespring.application.document.GeneratedResumeAssetService;
+import org.instruct.jobenginespring.application.document.GermanCoverLetterPersistenceService;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.instruct.jobenginespring.application.profile.port.ProfileRepository;
 import org.instruct.jobenginespring.domain.profile.Education;
@@ -44,6 +45,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Answers.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ProfileServiceTests {
@@ -52,9 +55,11 @@ class ProfileServiceTests {
 
     private final FakeProfileRepository repository = new FakeProfileRepository();
     private final GeneratedResumeAssetService generatedResumeAssetService = mock(GeneratedResumeAssetService.class);
+    private final GermanCoverLetterPersistenceService germanCoverLetterPersistenceService = mock(GermanCoverLetterPersistenceService.class);
     private final ProfileService service = new ProfileService(
             repository,
             generatedResumeAssetService,
+            germanCoverLetterPersistenceService,
             Clock.fixed(NOW, ZoneOffset.UTC)
     );
 
@@ -487,6 +492,42 @@ class ProfileServiceTests {
         assertTrue(service.deleteProfile(created.profile().id()));
         assertFalse(service.getProfile(created.profile().id()).isPresent());
         assertFalse(service.deleteProfile(created.profile().id()));
+        verify(germanCoverLetterPersistenceService).lockAndFindAllByProfileId(created.profile().id());
+        verify(germanCoverLetterPersistenceService).cleanupDeletedVariants(List.of());
+    }
+
+    @Test
+    void deleteProfileLocksSourceBeforeCapturingAndCleaningCoverLetterAssets() {
+        ProfileRepository profileRepository = mock(ProfileRepository.class);
+        GeneratedResumeAssetService assetService = mock(GeneratedResumeAssetService.class);
+        GermanCoverLetterPersistenceService coverLetters = mock(GermanCoverLetterPersistenceService.class);
+        UUID profileId = UUID.randomUUID();
+        when(profileRepository.lockProfileForDeletion(profileId)).thenReturn(true);
+        when(assetService.deleteProfile(profileId)).thenReturn(true);
+        when(coverLetters.lockAndFindAllByProfileId(profileId)).thenReturn(List.of());
+        ProfileService lockedService = new ProfileService(profileRepository, assetService, coverLetters, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertTrue(lockedService.deleteProfile(profileId));
+
+        var sequence = inOrder(profileRepository, coverLetters, assetService);
+        sequence.verify(profileRepository).lockProfileForDeletion(profileId);
+        sequence.verify(coverLetters).lockAndFindAllByProfileId(profileId);
+        sequence.verify(assetService).deleteProfile(profileId);
+        sequence.verify(coverLetters).cleanupDeletedVariants(List.of());
+    }
+
+    @Test
+    void deleteProfileDoesNotCleanCoverLetterAssetsWhenSourceDeletionFailsAfterLocking() {
+        ProfileRepository profileRepository = mock(ProfileRepository.class);
+        GeneratedResumeAssetService assetService = mock(GeneratedResumeAssetService.class);
+        GermanCoverLetterPersistenceService coverLetters = mock(GermanCoverLetterPersistenceService.class);
+        UUID profileId = UUID.randomUUID();
+        when(profileRepository.lockProfileForDeletion(profileId)).thenReturn(true);
+        when(assetService.deleteProfile(profileId)).thenReturn(false);
+        when(coverLetters.lockAndFindAllByProfileId(profileId)).thenReturn(List.of());
+        ProfileService lockedService = new ProfileService(profileRepository, assetService, coverLetters, Clock.fixed(NOW, ZoneOffset.UTC));
+
+        assertFalse(lockedService.deleteProfile(profileId));
     }
 
     @Test

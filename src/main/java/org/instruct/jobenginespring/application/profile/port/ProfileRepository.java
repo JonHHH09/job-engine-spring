@@ -82,6 +82,11 @@ public interface ProfileRepository {
 
     boolean deleteProfile(UUID profileId);
 
+    /** Locks an existing profile for source deletion until the enclosing transaction completes. */
+    default boolean lockProfileForDeletion(UUID profileId) {
+        return findProfileById(profileId).isPresent();
+    }
+
     default List<ProfileIdentityCandidate> findIdentityCandidates(ProfileIdentitySearch search) {
         return List.of();
     }

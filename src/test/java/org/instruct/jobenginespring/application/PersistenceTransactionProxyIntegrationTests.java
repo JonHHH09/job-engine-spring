@@ -6,6 +6,7 @@ import org.instruct.jobenginespring.adapter.out.postgres.document.PostgresDocume
 import org.instruct.jobenginespring.adapter.out.postgres.job.PostgresJobRepository;
 import org.instruct.jobenginespring.application.coverletter.port.CoverLetterRepository;
 import org.instruct.jobenginespring.application.document.GermanResumePersistenceService;
+import org.instruct.jobenginespring.application.document.GermanCoverLetterPersistenceService;
 import org.instruct.jobenginespring.application.document.GeneratedResumeCleanupExecutor;
 import org.instruct.jobenginespring.application.document.GeneratedResumeCleanupFileDeletion;
 import org.instruct.jobenginespring.application.document.GeneratedResumeCleanupFinalizer;
@@ -145,6 +146,7 @@ class PersistenceTransactionProxyIntegrationTests {
         try (var context = context()) {
             context.registerBean(JobRepository.class, () -> jobRepository);
             context.registerBean(DocumentRepository.class, () -> documentRepository);
+            context.registerBean(GermanCoverLetterPersistenceService.class, () -> mock(GermanCoverLetterPersistenceService.class));
             context.registerBean(JobLinkContentFetcher.class, () -> url -> {
                 assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
                 assertFalse(TransactionSynchronizationManager.hasResource(dataSource));
