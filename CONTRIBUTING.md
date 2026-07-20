@@ -16,16 +16,11 @@ Required for the containerized development path:
 
 - Git
 - Docker Engine or Docker Desktop with Docker Compose v2
+- Python 3 for the bundled MCP smoke client
 
 Java 25 is also required to run Maven directly on the host.
 
-```bash
-git clone https://github.com/JonHHH09/job-engine-spring.git
-cd job-engine-spring
-cp .env.example .env
-docker compose up -d --build --wait postgres mcp
-python3 scripts/smoke-mcp-http.py
-```
+Follow the [README quickstart](README.md#quickstart-choose-a-path) and choose **Build from source (for development)**. It is the canonical startup procedure; do not duplicate it here.
 
 The supported network boundary is `http://127.0.0.1:8080/mcp`. PostgreSQL must remain unpublished. Do not change the host bind to a non-loopback address without an explicit authenticated-network design.
 
