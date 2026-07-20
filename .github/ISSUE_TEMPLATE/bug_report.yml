@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Thank you for reporting a problem. Search existing issues first.
-        Do not include real resumes, profiles, applications, backups, credentials, private keys, tokens, or production logs. Report security vulnerabilities privately through SECURITY.md.
+        Do not include real resumes, profiles, applications, backups, credentials, private keys, tokens, or production logs. Report security vulnerabilities privately through [SECURITY.md](../../SECURITY.md).
   - type: checkboxes
     id: preflight
     attributes:
