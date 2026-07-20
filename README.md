@@ -4,7 +4,7 @@
 
 The project is an MCP backend, not a hosted service, web UI, public REST API, or job-board scraper. Normal operation uses Streamable HTTP published only on host loopback. PostgreSQL is private to Docker Compose, and isolated STDIO exists only for CI, package verification, and diagnostics.
 
-## Five-minute quickstart
+## Quickstart: choose a path
 
 ### Prerequisites
 
@@ -13,13 +13,39 @@ The project is an MCP backend, not a hosted service, web UI, public REST API, or
 - Python 3 for the bundled MCP smoke client
 - Java 25 only when running Maven directly on the host
 
-Clone and start the source-built service:
+### Get the deployment files
+
+Both paths require this checkout for Compose, deployment scripts, the environment template, and the smoke client. The published-release path does **not** build source and does **not** require host Java or Maven.
 
 ```bash
 git clone https://github.com/JonHHH09/job-engine-spring.git
 cd job-engine-spring
 cp .env.example .env
+```
+
+### Run a published release (recommended for users)
+
+Deploy a chosen published image with the guarded helper. For the current verified public release, use [`v0.1.22`](https://github.com/JonHHH09/job-engine-spring/releases/tag/v0.1.22):
+
+```bash
+./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v0.1.22
+```
+
+For an immutable deployment, pass the full published image digest instead of a tag. The helper accepts only `ghcr.io/jonhhh09/job-engine-spring:v<semver>` tags or a full digest, pulls the image, and recreates the persistent service without building.
+
+### Build from source (for development)
+
+Use this path when changing application code or testing local source changes:
+
+```bash
 docker compose up -d --build --wait postgres mcp
+```
+
+### Verify and connect
+
+After either deployment path, verify the persistent service:
+
+```bash
 python3 scripts/smoke-mcp-http.py
 ```
 
@@ -30,8 +56,6 @@ http://127.0.0.1:8080/mcp
 ```
 
 Do not publish the MCP port on a non-loopback host address, and do not publish PostgreSQL. The values in `.env.example` are synthetic local-development defaults; keep the copied `.env` file private and replace its password before using the environment for anything beyond isolated local development.
-
-### Connect an MCP client
 
 Configure a Streamable HTTP MCP server named `job-engine-spring` with the URL above. For Hermes Agent:
 
@@ -62,7 +86,7 @@ experience required. Full-time.
 
 Optionally provide structured fields such as title, company, location, skills, seniority, and employment type. Then call `list_jobs` or `search_jobs` to read the normalized result. Do not use real resumes, private applications, credentials, or production data while evaluating the project.
 
-### Persistence and lifecycle
+### Persistence, source updates, and release upgrades
 
 PostgreSQL data persists in the Compose-managed `postgres-data` volume.
 
@@ -72,7 +96,7 @@ Stop containers while preserving data:
 docker compose down
 ```
 
-Update a source checkout without deleting the database volume:
+Update a source-built checkout without deleting the database volume:
 
 ```bash
 git pull --ff-only
@@ -80,11 +104,22 @@ docker compose up -d --build --force-recreate --wait postgres mcp
 python3 scripts/smoke-mcp-http.py
 ```
 
-Create a transaction-consistent backup before significant upgrades:
+Before a significant source or release upgrade, create a transaction-consistent backup:
 
 ```bash
 ./scripts/postgres-backup.sh
 ```
+
+To upgrade a published release safely, choose a tag or immutable digest, then deploy, smoke-test, and reload the MCP client:
+
+```bash
+./scripts/postgres-backup.sh
+./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v0.1.22
+python3 scripts/smoke-mcp-http.py
+# Reload your MCP client connections (for Hermes Agent: /reload-mcp).
+```
+
+Pulling an image alone never changes a running container. Image rollback is **not** database rollback: never use an older image to reverse Flyway migrations. Use the explicit, disposable-target recovery procedure in [PostgreSQL backup and recovery](#postgresql-backup-and-recovery) when database recovery is required.
 
 Destructively uninstall the local containers **and delete the PostgreSQL volume**:
 
@@ -204,42 +239,24 @@ Rebuilding a jar or pulling an image updates an artifact on disk only. Recreate 
 
 `scripts/restart-local-mcp-server.sh` is kept as a local maintenance helper because it stops stale matching local jar subprocesses, rebuilds the jar without recursively running the MCP smoke test, and optionally runs the server in foreground STDIO mode. It remains local-only and does not expose an HTTP daemon.
 
-## Local containerized MCP deployment
+## Local containerized MCP development details
 
 `compose.yaml` starts private PostgreSQL plus the persistent MCP service. PostgreSQL has no host port. MCP publishes container port 8080 only as `127.0.0.1:${JOB_ENGINE_MCP_PORT:-8080}` and uses `restart: unless-stopped`.
 
-Build the local image when application code changes:
+The source-development quickstart builds and starts this service. When iterating after it is already running, rebuild the local image with:
 
 ```bash
 docker compose build mcp
 ```
 
-Run and verify the persistent MCP service:
+Then recreate the persistent source-built service and rerun the shared smoke check:
 
 ```bash
 docker compose up -d --wait postgres mcp
 python3 scripts/smoke-mcp-http.py
 ```
 
-For Hermes, configure an HTTP MCP server URL instead of a launch command:
-
-```yaml
-mcp_servers:
-  job-engine-spring:
-    url: http://127.0.0.1:8080/mcp
-    enabled: true
-    timeout: 120
-    connect_timeout: 60
-```
-
-For a published release, use the guarded deployment helper with a version tag or immutable digest. It refuses local images and `latest`, pulls the package, and explicitly recreates the persistent service without building:
-
-```bash
-./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:vX.Y.Z
-python3 scripts/smoke-mcp-http.py
-```
-
-After changing the deployed image, run `/reload-mcp`. Pulling alone never changes a running container.
+After changing a deployed source image, reload the MCP client (for Hermes Agent: `/reload-mcp`). If tool names, argument schemas, prompts, or resources changed, start a fresh Hermes session with `/reset` after reloading so the tool schema in the agent context is current.
 
 ### Isolated STDIO verification
 
