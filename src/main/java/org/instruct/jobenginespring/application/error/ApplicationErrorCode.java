@@ -6,6 +6,9 @@ public enum ApplicationErrorCode {
     AUTHORIZATION_ERROR("authorization_error", "Request is not authorized"),
     NOT_FOUND("not_found", "Requested resource was not found"),
     CONFLICT("conflict", "Resource revision conflict"),
+    UPSTREAM_RATE_LIMITED("upstream_rate_limited", "Upstream service rate limit exceeded"),
+    UPSTREAM_INVALID_RESPONSE("upstream_invalid_response", "Upstream service returned an invalid response"),
+    UPSTREAM_UNAVAILABLE("upstream_unavailable", "Upstream service is temporarily unavailable"),
     INTERNAL_ERROR("internal_error", "Unexpected application error");
 
     private final String code;

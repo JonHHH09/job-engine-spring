@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Feature and architecture guide for the job-engine-spring local MCP server.">
+  <title>Job Engine — Application Guide</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17201d;
+      --muted: #5d6a65;
+      --paper: #f5f3ed;
+      --surface: #fffef9;
+      --line: #d7d9d0;
+      --forest: #164c3b;
+      --forest-2: #0e3529;
+      --lime: #c8f45f;
+      --teal: #2b8066;
+      --amber: #d68731;
+      --code: #11251e;
+      --shadow: 0 18px 50px rgba(22, 76, 59, .10);
+      --radius: 20px;
+      --sidebar: 280px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 28px; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 92% 4%, rgba(200, 244, 95, .24), transparent 22rem),
+        var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.65;
+    }
+    a { color: inherit; }
+    code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    code { font-size: .9em; }
+    .shell { display: grid; grid-template-columns: var(--sidebar) minmax(0, 1fr); min-height: 100vh; }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 30px 24px;
+      background: var(--forest-2);
+      color: #eef7f1;
+      overflow-y: auto;
+    }
+    .brand { display: flex; gap: 12px; align-items: center; margin-bottom: 34px; }
+    .brand-mark {
+      display: grid; place-items: center; width: 42px; height: 42px;
+      border-radius: 12px; background: var(--lime); color: var(--forest-2);
+      font-weight: 900; letter-spacing: -.06em;
+    }
+    .brand strong { display: block; font-size: .98rem; }
+    .brand span { display: block; color: #a9c4b9; font-size: .76rem; }
+    .sidebar nav { display: grid; gap: 4px; }
+    .sidebar nav a {
+      padding: 8px 11px; border-left: 2px solid transparent; border-radius: 0 8px 8px 0;
+      color: #b9cec5; text-decoration: none; font-size: .86rem; transition: .18s ease;
+    }
+    .sidebar nav a:hover, .sidebar nav a.active { color: white; border-color: var(--lime); background: rgba(255,255,255,.06); }
+    .sidebar-note { margin-top: 32px; padding-top: 20px; border-top: 1px solid rgba(255,255,255,.13); color: #94b0a5; font-size: .75rem; }
+
+    main { width: min(1140px, 100%); padding: 48px clamp(28px, 6vw, 88px) 80px; }
+    section { margin: 0 0 88px; }
+    .hero { min-height: 70vh; display: grid; align-content: center; padding: 40px 0 72px; }
+    .hero h1 { max-width: 850px; margin: 0; font-size: clamp(3rem, 8vw, 6.8rem); line-height: .92; letter-spacing: -.075em; }
+    .hero h1 span { color: var(--teal); }
+    .hero-copy { max-width: 730px; margin: 32px 0 0; font-size: clamp(1.05rem, 2vw, 1.3rem); color: var(--muted); }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
+    .hero-meta span { padding: 7px 11px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.6); font: 700 .72rem/1.2 "SFMono-Regular", Consolas, monospace; }
+
+    .section-number { display: block; margin-bottom: 10px; color: var(--teal); font: 800 .75rem/1 monospace; letter-spacing: .12em; }
+    h2 { max-width: 780px; margin: 0 0 18px; font-size: clamp(2rem, 4vw, 3.25rem); line-height: 1.05; letter-spacing: -.045em; }
+    h3 { margin: 0 0 9px; font-size: 1.06rem; line-height: 1.3; }
+    .lead { max-width: 780px; margin: 0 0 34px; color: var(--muted); font-size: 1.08rem; }
+
+    .callout { margin: 30px 0; padding: 22px 24px; border-left: 4px solid var(--lime); background: var(--forest); color: #f4fff8; border-radius: 0 14px 14px 0; box-shadow: var(--shadow); }
+    .callout strong { color: var(--lime); }
+
+    .feature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .feature {
+      min-height: 210px; padding: 24px; background: var(--surface); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: 0 8px 28px rgba(23, 32, 29, .035);
+    }
+    .feature .index { display: block; margin-bottom: 36px; color: var(--teal); font: 800 .72rem monospace; }
+    .feature p { margin: 0; color: var(--muted); font-size: .92rem; }
+
+    .flow { display: grid; gap: 0; counter-reset: flow; }
+    .flow-step { position: relative; display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 18px; padding-bottom: 30px; }
+    .flow-step::before {
+      counter-increment: flow; content: counter(flow); z-index: 1; display: grid; place-items: center;
+      width: 46px; height: 46px; border-radius: 50%; background: var(--forest); color: var(--lime); font: 800 .85rem monospace;
+    }
+    .flow-step:not(:last-child)::after { content: ""; position: absolute; left: 22px; top: 46px; bottom: 0; width: 2px; background: var(--line); }
+    .flow-step p { margin: 4px 0 0; color: var(--muted); }
+
+    .architecture { padding: 26px; border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); }
+    .layer { display: grid; grid-template-columns: 150px minmax(0,1fr); gap: 20px; padding: 20px; border-radius: 14px; }
+    .layer + .layer { margin-top: 8px; }
+    .layer:nth-child(1) { background: #dff3e9; }
+    .layer:nth-child(2) { background: #edf0e6; }
+    .layer:nth-child(3) { background: #f6e8d7; }
+    .layer:nth-child(4) { background: #e4e9ef; }
+    .layer strong { font: 800 .78rem monospace; text-transform: uppercase; letter-spacing: .06em; }
+    .layer p { margin: 0; color: #44514c; font-size: .9rem; }
+
+    .tools { display: grid; gap: 12px; }
+    details { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
+    summary { cursor: pointer; padding: 18px 20px; font-weight: 800; list-style: none; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "+"; float: right; color: var(--teal); font-size: 1.3rem; line-height: 1; }
+    details[open] summary::after { content: "−"; }
+    details > div { padding: 0 20px 20px; }
+    .tool-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px 18px; margin: 0; padding: 0; list-style: none; }
+    .tool-list li { padding: 9px 0; border-top: 1px solid #e8e9e3; color: var(--muted); font-size: .86rem; }
+    .tool-list code { display: block; margin-bottom: 2px; color: var(--forest); font-weight: 800; }
+
+    .repo-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(260px, .85fr); gap: 20px; }
+    .repo-panel { padding: 24px; border-radius: var(--radius); background: var(--code); color: #d8e8e0; }
+    .repo-panel p { color: #a8c0b5; }
+    .repo-panel code { color: var(--lime); }
+    .repo-facts { display: grid; gap: 12px; }
+    .fact { padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+    .fact p { margin: 4px 0 0; color: var(--muted); font-size: .86rem; }
+
+    pre { overflow-x: auto; margin: 20px 0 0; padding: 20px; border-radius: 14px; background: var(--code); color: #d8e8e0; font-size: .82rem; line-height: 1.6; }
+    pre .accent { color: var(--lime); }
+    .sequence { padding: 25px; border-radius: var(--radius); background: var(--forest-2); color: white; overflow-x: auto; }
+    .sequence-row { display: grid; grid-template-columns: 150px 40px minmax(220px,1fr); align-items: start; gap: 10px; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,.1); }
+    .sequence-row:last-child { border: 0; }
+    .sequence-row b { color: var(--lime); font: 700 .78rem monospace; }
+    .sequence-row span { color: #aac2b8; font-size: .86rem; }
+
+    .security-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; padding: 0; list-style: none; }
+    .security-list li { padding: 18px 18px 18px 48px; position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; font-size: .9rem; }
+    .security-list li::before { content: "✓"; position: absolute; left: 18px; top: 17px; color: var(--teal); font-weight: 900; }
+    footer { padding-top: 26px; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
+
+    .mobile-nav { display: none; }
+    @media (max-width: 860px) {
+      .shell { display: block; }
+      .sidebar { display: none; }
+      .mobile-nav { display: flex; position: sticky; top: 0; z-index: 10; justify-content: space-between; align-items: center; padding: 12px 18px; background: rgba(14,53,41,.95); color: white; backdrop-filter: blur(10px); }
+      .mobile-nav a { color: var(--lime); text-decoration: none; font-weight: 800; }
+      main { padding: 24px 20px 60px; }
+      .hero { min-height: 72vh; }
+      .feature-grid, .repo-grid, .security-list { grid-template-columns: 1fr; }
+      .layer { grid-template-columns: 1fr; gap: 6px; }
+      .tool-list { grid-template-columns: 1fr; }
+    }
+    @media print {
+      .shell { display: block; }
+      .sidebar, .mobile-nav { display: none; }
+      main { max-width: none; padding: 0; }
+      section { break-inside: avoid; margin-bottom: 48px; }
+      details > div { display: block; }
+      body { background: white; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="mobile-nav"><strong>Job Engine Guide</strong><a href="#contents">Contents</a></div>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Documentation navigation">
+      <div class="brand"><div class="brand-mark">JE</div><div><strong>Job Engine</strong><span>Application guide</span></div></div>
+      <nav id="contents">
+        <a href="#overview">Overview</a>
+        <a href="#features">Features</a>
+        <a href="#workflow">How it works</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#tools">MCP tool surface</a>
+        <a href="#job-repository">Job repository</a>
+        <a href="#matching">Match analysis</a>
+        <a href="#documents">Documents & resumes</a>
+        <a href="#security">Safety model</a>
+        <a href="#running">Running locally</a>
+      </nav>
+      <p class="sidebar-note">Based on the Java 25 / Spring Boot 4.1 source tree and the PostgreSQL adapter implementation.</p>
+    </aside>
+
+    <main>
+      <header class="hero" id="overview">
+        <h1>A local engine for <span>job search work.</span></h1>
+        <p class="hero-copy">Job Engine is a Model Context Protocol server that turns candidate profiles and job postings into normalized, searchable records; creates explainable match reports; and generates tailored application documents.</p>
+        <div class="hero-meta" aria-label="Technology summary">
+          <span>JAVA 25</span><span>SPRING BOOT 4.1</span><span>SPRING AI MCP</span><span>POSTGRESQL</span><span>FLYWAY</span>
+        </div>
+        <div class="callout"><strong>Important:</strong> this application is a local backend. It is not a public website, REST API, hosted service, or job-board scraper. Clients such as Hermes connect to its loopback-only MCP endpoint.</div>
+      </header>
+
+      <section id="features">
+        <span class="section-number">01 / CAPABILITIES</span>
+        <h2>What the application does</h2>
+        <p class="lead">The feature set follows a job-application lifecycle, from capturing source information through evaluation and document generation.</p>
+        <div class="feature-grid">
+          <article class="feature"><span class="index">PROFILE / 01</span><h3>Normalized candidate profiles</h3><p>Create, search, read, replace, and delete profiles with contacts, links, skills, languages, education, experience, projects, and project technologies. Revision checks prevent accidental lost updates.</p></article>
+          <article class="feature"><span class="index">INGEST / 02</span><h3>PDF storage and ingestion</h3><p>Store document bytes in PostgreSQL, extract bounded PDF text, and deterministically map a stored resume into the normalized profile schema while preserving its source link.</p></article>
+          <article class="feature"><span class="index">JOBS / 03</span><h3>Job capture and search</h3><p>Insert jobs from pasted text or a tightly restricted URL flow, deduplicate by source identity and canonical fingerprint, search weighted fields, and maintain normalized skills and provenance.</p></article>
+          <article class="feature"><span class="index">MATCH / 04</span><h3>Explainable deterministic matching</h3><p>Score profile–job pairs across technical fit, experience and seniority, domain, delivery, and hard requirements. Evidence, confidence, staleness, reviews, and disagreements remain inspectable.</p></article>
+          <article class="feature"><span class="index">OUTPUT / 05</span><h3>Resume generation</h3><p>Generate and persist master, Canadian English, Canadian French, and tailored bilingual German resume PDFs from normalized profile data.</p></article>
+          <article class="feature"><span class="index">LETTER / 06</span><h3>German cover letters</h3><p>Create a deterministic German cover letter from a current Germany-format resume, profile, and job; persist structured content and a PDF while returning metadata only over MCP.</p></article>
+          <article class="feature"><span class="index">SEARCH / 07</span><h3>Bounded, deterministic search</h3><p>Profiles and jobs use normalized indexed terms, weighted fields, strict query and candidate limits, stable ordering, and explicit truncation signals.</p></article>
+          <article class="feature"><span class="index">OPS / 08</span><h3>Health and cleanup</h3><p>Report database readiness and sanitized generated-file cleanup health. Scheduled cleanup removes generated files safely and retains bounded audit history.</p></article>
+        </div>
+      </section>
+
+      <section id="workflow">
+        <span class="section-number">02 / RUNTIME FLOW</span>
+        <h2>How a request moves through the system</h2>
+        <p class="lead">Every MCP operation follows the same basic route. Protocol details stay at the edge; business rules stay in application and domain code.</p>
+        <div class="flow">
+          <div class="flow-step"><div><h3>Client calls an MCP tool</h3><p>A local MCP client sends a structured tool request to <code>http://127.0.0.1:8080/mcp</code> using Streamable HTTP.</p></div></div>
+          <div class="flow-step"><div><h3>Inbound adapter translates the request</h3><p>A class under <code>adapter/in/mcp</code> validates the object shape, converts it to an application request, and maps failures to safe structured errors.</p></div></div>
+          <div class="flow-step"><div><h3>Application service orchestrates the use case</h3><p>The service applies canonicalization, validation, idempotency, transaction boundaries, pagination rules, and calls domain logic through ports.</p></div></div>
+          <div class="flow-step"><div><h3>Domain code makes deterministic decisions</h3><p>Pure Java aggregates and policies compute fingerprints, scores, evidence, variants, and invariants without depending on Spring, MCP, or JDBC.</p></div></div>
+          <div class="flow-step"><div><h3>Outbound adapter handles infrastructure</h3><p>PostgreSQL repositories persist aggregates with JDBC; other adapters fetch approved HTTP content, extract PDFs, write generated files, or provide optional analysis.</p></div></div>
+          <div class="flow-step"><div><h3>Structured result returns to the client</h3><p>The adapter returns normalized application data. Sensitive raw text, binaries, credentials, private URLs, prompts, and reasoning traces are deliberately omitted where required.</p></div></div>
+        </div>
+      </section>
+
+      <section id="architecture">
+        <span class="section-number">03 / DESIGN</span>
+        <h2>Hexagonal architecture</h2>
+        <p class="lead">Dependencies point inward. The domain does not know how data arrived or where it will be stored.</p>
+        <div class="architecture" role="img" aria-label="Architecture layers from MCP client through adapters and application domain to infrastructure">
+          <div class="layer"><strong>Inbound edge</strong><p>Spring AI MCP tool adapters expose the supported operations and safe error shape.</p></div>
+          <div class="layer"><strong>Application</strong><p>Use-case services, ports, transactions, pagination, search normalization, validation, and orchestration.</p></div>
+          <div class="layer"><strong>Domain core</strong><p>Framework-free records and rules for profiles, jobs, matching, resumes, documents, and cover letters.</p></div>
+          <div class="layer"><strong>Outbound edge</strong><p>PostgreSQL/JDBC, filesystem, PDF extraction, restricted HTTP fetching, transaction lifecycle, and optional Hermes analysis.</p></div>
+        </div>
+        <pre><span class="accent">MCP client</span> → adapter/in/mcp → application service → application port
+                                                    ↓
+PostgreSQL / files / HTTP ← adapter/out/* ← <span class="accent">domain decisions</span></pre>
+      </section>
+
+      <section id="tools">
+        <span class="section-number">04 / INTERFACE</span>
+        <h2>The MCP tool surface</h2>
+        <p class="lead">The server exposes 41 tools grouped around domain workflows. Expand each area for the supported operations.</p>
+        <div class="tools">
+          <details open><summary>Profiles and profile search</summary><div><ul class="tool-list">
+            <li><code>list_profiles</code>Cursor-page profile identities.</li><li><code>search_profiles</code>Weighted normalized profile search.</li>
+            <li><code>get_profile</code>Load the full normalized aggregate.</li><li><code>create_profile</code>Create a profile graph.</li>
+            <li><code>update_profile</code>Replace using expected revision.</li><li><code>update_profile_project</code>Partially update one project.</li>
+            <li><code>delete_profile</code>Delete profile and owned children.</li><li><code>ingest_profile_from_stored_pdf</code>Build profile from stored extraction.</li>
+            <li><code>get_profile_pdf_source</code>Read the one-to-one PDF source link.</li>
+          </ul></div></details>
+          <details><summary>Jobs</summary><div><ul class="tool-list">
+            <li><code>list_jobs</code>Cursor-page stored postings.</li><li><code>search_jobs</code>Search eight weighted field groups.</li>
+            <li><code>get_job</code>Load job, skills, and provenance.</li><li><code>update_job</code>Partial update with expected revision.</li>
+            <li><code>delete_job</code>Hard-delete a job.</li><li><code>add_job_from_text</code>Idempotent pasted-text insertion.</li>
+            <li><code>add_job_from_link</code>Restricted URL fetch and insertion.</li><li><code>analyze_job_link</code>Store an optional structured analysis run.</li>
+            <li><code>add_job_from_analysis</code>Create or reuse from an analysis run.</li>
+          </ul></div></details>
+          <details><summary>Arbeitnow job discovery and import</summary><div><ul class="tool-list">
+            <li><code>scan_arbeitnow_jobs</code>Bounded, sanitized, read-only discovery from the fixed Arbeitnow source; it never writes to the database.</li>
+            <li><code>import_arbeitnow_job</code>Accept a server-issued short-lived signed <code>candidateToken</code>, verify it before persistence, then reuse stored-job CRUD and idempotency without provider refetching or external analysis.</li>
+          </ul></div></details>
+          <details><summary>Deterministic matching and review</summary><div><ul class="tool-list">
+            <li><code>analyze_job_match</code>Create/reuse one immutable report.</li><li><code>analyze_all_job_matches</code>Analyze one bounded job page.</li>
+            <li><code>get_match_report</code>Load report with staleness.</li><li><code>list_match_reports</code>Filter and page reports.</li>
+            <li><code>submit_match_review</code>Store separate advisory review.</li><li><code>get_match_review</code>Read one review.</li>
+            <li><code>list_match_reviews</code>Page reviews.</li><li><code>list_match_disagreements</code>Page policy divergences.</li>
+            <li><code>acknowledge_match_disagreement</code>Acknowledge locally.</li><li><code>link_match_disagreement</code>Record an existing issue ID.</li>
+          </ul></div></details>
+          <details><summary>Documents, resumes, and cover letters</summary><div><ul class="tool-list">
+            <li><code>extract_pdf_text</code>Read an allowed local PDF.</li><li><code>store_document_file</code>Persist an allowed local file.</li>
+            <li><code>get_document_metadata</code>Read metadata without bytes.</li><li><code>extract_stored_pdf_text</code>Extract a stored PDF.</li>
+            <li><code>generate_pdf_file</code>Generate a basic PDF.</li><li><code>generate_pdf_resume</code>Create the master resume.</li>
+            <li><code>generate_canadian_pdf_resume</code>Create Canadian English variant.</li><li><code>generate_canadian_french_pdf_resume</code>Create offline French variant.</li>
+            <li><code>generate_german_tailored_resume</code>Create tailored EN/DE Lebenslauf.</li><li><code>generate_german_cover_letter</code>Create German application letter.</li>
+          </ul></div></details>
+          <details><summary>Operations</summary><div><ul class="tool-list"><li><code>health</code>Database readiness and sanitized cleanup backlog status.</li></ul></div></details>
+        </div>
+      </section>
+
+      <section id="job-repository">
+        <span class="section-number">05 / SOURCE SPOTLIGHT</span>
+        <h2>Inside PostgresJobRepository</h2>
+        <p class="lead"><code>PostgresJobRepository</code> implements the application’s <code>JobRepository</code> port. It is the persistence boundary for job aggregates—not the place where MCP or high-level use-case decisions live.</p>
+        <div class="repo-grid">
+          <article class="repo-panel"><h3>Aggregate storage</h3><p>A job aggregate combines a <code>JobPosting</code>, ordered <code>JobSkill</code> rows, and exactly one ingestion provenance form: link or pasted text. Reads hydrate these pieces in bounded batch queries; writes update them transactionally.</p><p><code>jobs</code><br>↳ <code>job_skills</code><br>↳ <code>job_link_ingestions</code> or <code>job_text_ingestions</code><br>↳ <code>search_terms</code></p></article>
+          <div class="repo-facts">
+            <article class="fact"><h3>Snapshot keyset pagination</h3><p>Pages are fixed to a snapshot timestamp and continue by <code>created_at + id</code>, avoiding offset drift as new jobs arrive.</p></article>
+            <article class="fact"><h3>Optimistic concurrency</h3><p>Updates include <code>WHERE revision = :expectedRevision</code>. A stale writer changes zero rows instead of silently overwriting newer data.</p></article>
+            <article class="fact"><h3>Idempotent insertion</h3><p>Unique normalized URLs, input-text hashes, and canonical fingerprints converge duplicate requests onto the existing aggregate.</p></article>
+            <article class="fact"><h3>Transactional index maintenance</h3><p>Skills and weighted search terms are replaced or rebuilt in the same transaction as the job mutation.</p></article>
+          </div>
+        </div>
+
+        <h3 style="margin-top:34px">How job search works</h3>
+        <div class="sequence">
+          <div class="sequence-row"><b>1 · NORMALIZE</b><strong>Query terms</strong><span>The application constrains query length and token count, then normalizes tokens and prefixes.</span></div>
+          <div class="sequence-row"><b>2 · LOOK UP</b><strong>Indexed postings</strong><span>SQL searches <code>job_schema.search_terms</code> by exact/prefix ranges with strict per-token bounds.</span></div>
+          <div class="sequence-row"><b>3 · SCORE</b><strong>Weighted hits</strong><span>Title = 8, skill = 7, company = 5, experience = 4, location/description = 3, employment/seniority = 2.</span></div>
+          <div class="sequence-row"><b>4 · BOUND</b><strong>Candidate cap</strong><span>The repository returns at most 500 candidates and signals when postings or candidate results were truncated.</span></div>
+          <div class="sequence-row"><b>5 · HYDRATE</b><strong>Full aggregates</strong><span>Candidate jobs receive ordered skills and sanitized ingestion provenance before application-level final ranking.</span></div>
+        </div>
+        <div class="callout"><strong>Privacy detail:</strong> pasted job text is represented by a hash for source identity; it is not stored raw in the method-specific text-ingestion table. Link provenance is redacted by the application’s ingestion policy before it becomes MCP-visible.</div>
+      </section>
+
+      <section id="matching">
+        <span class="section-number">06 / EXPLAINABILITY</span>
+        <h2>Deterministic match analysis</h2>
+        <p class="lead">Matching produces an immutable baseline that can be reproduced and audited. Optional advisory reviews never replace it.</p>
+        <div class="feature-grid">
+          <article class="feature"><span class="index">40 POINTS</span><h3>Technical fit</h3><p>Compares normalized job skills against profile skills and technologies, retaining evidence for the component score.</p></article>
+          <article class="feature"><span class="index">25 POINTS</span><h3>Experience & seniority</h3><p>Uses structured experience and seniority data. Missing evidence stays unknown rather than becoming a guessed mismatch.</p></article>
+          <article class="feature"><span class="index">15 + 10</span><h3>Domain & delivery</h3><p>Separately represents domain relevance and delivery evidence so the report shows where confidence comes from.</p></article>
+          <article class="feature"><span class="index">10 POINTS</span><h3>Hard requirements</h3><p>Tracks blocker evidence explicitly. A skill’s <code>required</code> flag by itself is not sufficient blocker provenance.</p></article>
+        </div>
+        <p class="lead" style="margin-top:28px">Known evidence is normalized into an outcome while unknown evidence lowers confidence. Reports also record source revisions, so reads can show when a profile or job has changed since analysis. Divergence policy can create deduplicated disagreement records when an advisory review differs materially.</p>
+      </section>
+
+      <section id="documents">
+        <span class="section-number">07 / DOCUMENT PIPELINE</span>
+        <h2>From profile data to application PDFs</h2>
+        <p class="lead">Document workflows separate normalized content, rendering, database storage, runtime files, and cleanup.</p>
+        <div class="flow">
+          <div class="flow-step"><div><h3>Load current source aggregates</h3><p>Resume generation reads the normalized profile; tailored workflows also read the job and current revisioned source records.</p></div></div>
+          <div class="flow-step"><div><h3>Build and review structured content</h3><p>Pure application builders select, order, cap, and translate content deterministically. German and French variants use offline Java translation.</p></div></div>
+          <div class="flow-step"><div><h3>Render ATS-safe PDFs</h3><p>Renderers create compact one-column documents with bounded text and predictable A4-oriented output.</p></div></div>
+          <div class="flow-step"><div><h3>Persist metadata and bytes</h3><p>Generated PDFs are stored as documents and linked to the relevant profile, resume, job, language, format, and variant.</p></div></div>
+          <div class="flow-step"><div><h3>Manage runtime assets</h3><p>Generated filesystem paths are returned as metadata where appropriate. Replacement/deletion schedules safe post-transaction file cleanup with retained audit rows.</p></div></div>
+        </div>
+      </section>
+
+      <section id="security">
+        <span class="section-number">08 / SAFETY</span>
+        <h2>Local-first security boundaries</h2>
+        <ul class="security-list">
+          <li>MCP is published only on host loopback; PostgreSQL is not published.</li>
+          <li>A startup guard rejects unsafe MCP transport and bind combinations.</li>
+          <li>Local file imports are restricted to a configured import root.</li>
+          <li>Document metadata endpoints do not return stored binary content.</li>
+          <li>URL fetching rejects redirects, userinfo, local/private/metadata targets, and hostnames.</li>
+          <li>Structured errors avoid leaking credentials, paths, or provider internals.</li>
+          <li>Pagination cursors are integrity-protected and opaque to callers.</li>
+          <li>Flyway owns ordered, versioned schema changes.</li>
+        </ul>
+      </section>
+
+      <section id="running">
+        <span class="section-number">09 / OPERATIONS</span>
+        <h2>Run and verify locally</h2>
+        <p class="lead">Docker Compose is the normal development path. The persistent server uses Streamable HTTP; STDIO is reserved for CI and isolated diagnostics.</p>
+        <pre><span class="accent"># Build and start PostgreSQL + MCP</span>
+docker compose up -d --build --wait postgres mcp
+
+<span class="accent"># Verify initialization, tool discovery, and health</span>
+python3 scripts/smoke-mcp-http.py
+
+<span class="accent"># Supported local endpoint</span>
+http://127.0.0.1:8080/mcp</pre>
+        <p>For host-side development, <code>./mvnw test</code> runs unit tests and <code>./mvnw verify -Pintegration-tests</code> runs Docker-backed integration tests through Failsafe. Java 25 is required when Maven runs on the host.</p>
+      </section>
+
+      <footer>
+        <p>Application guide for <strong>job-engine-spring</strong>. Generated from the repository structure, MCP adapters, application services, domain model, configuration, migrations, and <code>PostgresJobRepository.java</code>.</p>
+      </footer>
+    </main>
+  </div>
+  <script>
+    const links = [...document.querySelectorAll('.sidebar nav a')];
+    const sections = links.map(link => document.querySelector(link.getAttribute('href'))).filter(Boolean);
+    const observer = new IntersectionObserver(entries => {
+      const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (!visible) return;
+      links.forEach(link => link.classList.toggle('active', link.getAttribute('href') === '#' + visible.target.id));
+    }, { rootMargin: '-15% 0px -70% 0px', threshold: [0, .15, .5] });
+    sections.forEach(section => observer.observe(section));
+  </script>
+</body>
+</html>

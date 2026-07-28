@@ -54,3 +54,5 @@ build/
 /backups/postgres/
 /.worktrees/
 /docs/
+/.junie/
+/.codex/

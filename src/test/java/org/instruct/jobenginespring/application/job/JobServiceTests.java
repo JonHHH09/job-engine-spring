@@ -442,6 +442,40 @@ class JobServiceTests {
     }
 
     @Test
+    void importsTrustedArbeitnowCandidateWithoutFetchingAndReusesItsCanonicalUrl() {
+        JobService.TrustedArbeitnowImportRequest request = new JobService.TrustedArbeitnowImportRequest(
+                "https://arbeitnow.com/view/platform-engineer", " Acme ", " Platform Engineer ", " Berlin ",
+                " Build platforms ", List.of("Java", "java", "Spring"), " Full-time ", true, NOW);
+
+        AddJobResult created = service.importTrustedArbeitnowJob(request);
+        AddJobResult reused = service.importTrustedArbeitnowJob(request);
+
+        assertEquals("created_job", created.status());
+        assertEquals("reused_existing_job", reused.status());
+        assertEquals(0, fetcher.calls);
+        assertEquals("arbeitnow", created.job().job().sourceLabel());
+        assertEquals("Platform Engineer", created.job().job().title());
+        assertEquals("Acme", created.job().job().company());
+        assertEquals("Berlin", created.job().job().location());
+        assertEquals("Full-time", created.job().job().employmentType());
+        assertEquals(List.of("java", "spring"), created.job().skills().stream().map(JobSkill::normalizedSkill).toList());
+        assertEquals("https://arbeitnow.com/view/platform-engineer", created.job().linkIngestion().normalizedUrl());
+        assertEquals("Arbeitnow scan candidate (remote=true)", created.job().linkIngestion().sourceTitle());
+    }
+
+    @Test
+    void rejectsIncompleteTrustedArbeitnowCandidateBeforeRepositoryLookup() {
+        for (JobService.TrustedArbeitnowImportRequest request : List.of(
+                new JobService.TrustedArbeitnowImportRequest(null, "Acme", "Title", "Berlin", "Description", List.of(), null, false, null),
+                new JobService.TrustedArbeitnowImportRequest("https://arbeitnow.com/view/slug", "Acme", null, "Berlin", "Description", List.of(), null, false, null),
+                new JobService.TrustedArbeitnowImportRequest("https://arbeitnow.com/view/slug", "Acme", "Title", "Berlin", null, List.of(), null, false, null))) {
+            ApplicationException exception = assertThrows(ApplicationException.class, () -> service.importTrustedArbeitnowJob(request));
+            assertEquals("validation_error", exception.errorCode().code());
+        }
+        assertThrows(ApplicationException.class, () -> service.importTrustedArbeitnowJob(null));
+    }
+
+    @Test
     void searchJobsReturnsDeterministicEvidence() {
         service.addJobFromText(new AddJobFromTextRequest(
                 "Java Backend Developer\nSkills: Java, Spring Boot",
@@ -515,6 +549,20 @@ class JobServiceTests {
 
         assertEquals(1, repository.listJobAggregatesCalls);
         assertEquals(0, repository.findJobAggregateCalls);
+    }
+
+    @Test
+    void searchJobsPreservesRepositoryKnownCountWhenAdditionalMatchesRemain() {
+        AddJobResult created = service.addJobFromText(new AddJobFromTextRequest(
+                "Java Platform", null, "Java Platform", null, null, "Java services", null, null, null, null, null));
+        repository.searchCandidatesOverride = new org.instruct.jobenginespring.application.pagination.SearchCandidates<>(
+                7, true, List.of(created.job()));
+
+        JobService.JobSearchResult result = service.searchJobs(new JobSearchRequest("java", 1));
+
+        assertEquals(7, result.matchedCount());
+        assertEquals(null, result.totalMatches());
+        assertTrue(result.hasMore());
     }
 
     @Test
@@ -1217,6 +1265,17 @@ class JobServiceTests {
         assertEquals(Map.of("field", field, "reason", reason), exception.details());
     }
 
+    @Test
+    void trustedArbeitnowImportRequestDefensivelyNormalizesNullAndNonNullTags() {
+        JobService.TrustedArbeitnowImportRequest empty = new JobService.TrustedArbeitnowImportRequest(
+                "https://arbeitnow.com/view/role", "Acme", "Engineer", "Berlin", "Description", null, "full-time", true, NOW);
+        JobService.TrustedArbeitnowImportRequest tagged = new JobService.TrustedArbeitnowImportRequest(
+                "https://arbeitnow.com/view/role", "Acme", "Engineer", "Berlin", "Description", List.of("Java"), "full-time", true, NOW);
+
+        assertEquals(List.of(), empty.tags());
+        assertEquals(List.of("Java"), tagged.tags());
+    }
+
     private static final class FakeJobLinkContentFetcher implements JobLinkContentFetcher {
         private JobLinkFetchResult result = new JobLinkFetchResult("https://www.indeed.com", "Fetched Job", "Fetched description", 200);
         private int calls;
@@ -1255,6 +1314,7 @@ class JobServiceTests {
         private boolean rejectNextUpdate;
         private int listJobAggregatesCalls;
         private int findJobAggregateCalls;
+        private org.instruct.jobenginespring.application.pagination.SearchCandidates<JobAggregate> searchCandidatesOverride;
 
         @Override
         public Page<JobPosting> listJobs(PageRequest request) {
@@ -1277,6 +1337,9 @@ class JobServiceTests {
         public org.instruct.jobenginespring.application.pagination.SearchCandidates<JobAggregate> searchJobCandidates(
                 List<String> queryTokens, int limit) {
             listJobAggregatesCalls++;
+            if (searchCandidatesOverride != null) {
+                return searchCandidatesOverride;
+            }
             return new org.instruct.jobenginespring.application.pagination.SearchCandidates<>(
                     -1, List.copyOf(aggregates.values()));
         }
