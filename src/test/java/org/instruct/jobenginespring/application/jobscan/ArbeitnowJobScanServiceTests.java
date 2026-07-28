@@ -90,6 +90,118 @@ class ArbeitnowJobScanServiceTests {
     }
 
     @Test
+    void rejectsCursorsAcrossCommaAmbiguousTagFilterListsWhileRetainingCanonicalOrderAndCaseSemantics() {
+        ArbeitnowJobScanService service = new ArbeitnowJobScanService((_, _) -> page(List.of(
+                job("comma-one", "Acme", "Java", "Description", List.of("java,spring"), List.of("full-time"), "Berlin", 1L),
+                job("java", "Acme", "Java", "Description", List.of("java"), List.of("full-time"), "Berlin", 2L),
+                job("comma-two", "Acme", "Java", "Description", List.of("java,spring"), List.of("full-time"), "Berlin", 3L),
+                job("spring", "Acme", "Java", "Description", List.of("spring"), List.of("full-time"), "Berlin", 4L)
+        ), false));
+        ArbeitnowJobScanService.ScanRequest oneCommaDelimitedValue = new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, List.of("java,spring"), null, 1, 1, null);
+        ArbeitnowJobScanService.ScanRequest twoValues = new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, List.of("java", "spring"), null, 1, 1, null);
+
+        String oneValueCursor = service.scan(oneCommaDelimitedValue).nextCursor();
+        String twoValuesCursor = service.scan(twoValues).nextCursor();
+
+        assertThrows(IllegalArgumentException.class, () -> service.scan(withCursor(twoValues, oneValueCursor)));
+        assertThrows(IllegalArgumentException.class, () -> service.scan(withCursor(oneCommaDelimitedValue, twoValuesCursor)));
+        assertThrows(IllegalArgumentException.class, () -> service.scan(withCursor(twoValues, "not-base64")));
+
+        ArbeitnowJobScanService.ScanRequest canonicalOrderAndCase = new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, List.of("Java", "Spring"), null, 1, 1, null);
+        ArbeitnowJobScanService.ScanRequest equivalentOrderAndCase = new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, List.of("spring", "java"), null, 1, 1, null);
+        String canonicalCursor = service.scan(canonicalOrderAndCase).nextCursor();
+
+        assertEquals("spring", service.scan(withCursor(equivalentOrderAndCase, canonicalCursor)).jobs().getFirst().slug());
+    }
+
+    @Test
+    void rejectsCursorsAcrossDelimiterBearingQueryAndLocationFilters() {
+        AtomicInteger calls = new AtomicInteger();
+        ArbeitnowJobScanService service = new ArbeitnowJobScanService((_, _) -> calls.getAndIncrement() == 0
+                ? page(List.of(
+                job("first", "Acme", "java|berlin", "Description", List.of("Java"), List.of("full-time"), "x", 1L),
+                job("second", "Acme", "java|berlin", "Description", List.of("Java"), List.of("full-time"), "x", 2L)
+        ), false)
+                : page(List.of(
+                job("other-first", "Acme", "java", "Description", List.of("Java"), List.of("full-time"), "berlin|x", 3L),
+                job("other-second", "Acme", "java", "Description", List.of("Java"), List.of("full-time"), "berlin|x", 4L)
+        ), false));
+        ArbeitnowJobScanService.ScanRequest firstFilter = new ArbeitnowJobScanService.ScanRequest(
+                "java|berlin", "x", null, null, null, null, 1, 1, null);
+        ArbeitnowJobScanService.ScanRequest secondFilter = new ArbeitnowJobScanService.ScanRequest(
+                "java", "berlin|x", null, null, null, null, 1, 1, null);
+
+        String cursor = service.scan(firstFilter).nextCursor();
+
+        assertThrows(IllegalArgumentException.class, () -> service.scan(withCursor(secondFilter, cursor)));
+    }
+
+    @Test
+    void rejectsMalformedSurrogateFilterValuesBeforeTheyCanShareACursorFingerprintWithQuestionMarks() {
+        ArbeitnowJobScanService service = new ArbeitnowJobScanService((_, _) -> page(List.of(
+                job("surrogate-one", "Acme", "Java", "Description", List.of("\uD800"), List.of("full-time"), "Berlin", 1L),
+                job("surrogate-two", "Acme", "Java", "Description", List.of("\uD800"), List.of("full-time"), "Berlin", 2L),
+                job("question-one", "Acme", "Java", "Description", List.of("?"), List.of("full-time"), "Berlin", 3L),
+                job("question-two", "Acme", "Java", "Description", List.of("?"), List.of("full-time"), "Berlin", 4L)
+        ), false));
+        ArbeitnowJobScanService.ScanRequest malformedSurrogate = new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, List.of("\uD800"), null, 1, 1, null);
+        ArbeitnowJobScanService.ScanRequest questionMark = new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, List.of("?"), null, 1, 1, null);
+
+        assertThrows(IllegalArgumentException.class, () -> service.scan(malformedSurrogate));
+        assertNotNull(service.scan(questionMark).nextCursor());
+    }
+
+    @Test
+    void rejectsUnpairedSurrogatesAtEveryFingerprintFilterBoundary() {
+        ArbeitnowJobScanService service = new ArbeitnowJobScanService((_, _) -> page(List.of(), false));
+
+        assertThrows(IllegalArgumentException.class, () -> service.scan(new ArbeitnowJobScanService.ScanRequest(
+                "\uD800", null, null, null, null, null, 1, 1, null)));
+        assertThrows(IllegalArgumentException.class, () -> service.scan(new ArbeitnowJobScanService.ScanRequest(
+                null, "\uDC00", null, null, null, null, 1, 1, null)));
+        assertThrows(IllegalArgumentException.class, () -> service.scan(new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, List.of("\uD800"), null, 1, 1, null)));
+        assertThrows(IllegalArgumentException.class, () -> service.scan(new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, null, List.of("\uDC00"), 1, 1, null)));
+    }
+
+    @Test
+    void acceptsValidUnicodeAndRetainsCursorCompatibilityForDelimiterBearingFilterValues() {
+        ArbeitnowJobScanService service = new ArbeitnowJobScanService((_, _) -> page(List.of(
+                job("unicode-one", "Acme", "Java", "Description", List.of("développeur, cloud 🚀"), List.of("full-time"), "Berlin", 1L),
+                job("unicode-two", "Acme", "Java", "Description", List.of("développeur, cloud 🚀"), List.of("full-time"), "Berlin", 2L)
+        ), false));
+        ArbeitnowJobScanService.ScanRequest request = new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, List.of("Développeur, Cloud 🚀"), null, 1, 1, null);
+
+        String cursor = service.scan(request).nextCursor();
+
+        assertEquals("unicode-two", service.scan(withCursor(request, cursor)).jobs().getFirst().slug());
+    }
+
+    @Test
+    void treatsAbsentAndEmptyTagFiltersAsCursorEquivalent() {
+        ArbeitnowJobScanService service = new ArbeitnowJobScanService((_, _) -> page(List.of(
+                job("one", "Acme", "Java", "Description", List.of("Java"), List.of("full-time"), "Berlin", 1L),
+                job("two", "Acme", "Java", "Description", List.of("Java"), List.of("full-time"), "Berlin", 2L)
+        ), false));
+        ArbeitnowJobScanService.ScanRequest absentTags = new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, null, null, 1, 1, null);
+        ArbeitnowJobScanService.ScanRequest emptyTags = new ArbeitnowJobScanService.ScanRequest(
+                null, null, null, null, List.of(), null, 1, 1, null);
+
+        String cursor = service.scan(absentTags).nextCursor();
+
+        assertEquals("two", service.scan(withCursor(emptyTags, cursor)).jobs().getFirst().slug());
+    }
+
+    @Test
     void scansAcrossPagesAndCapsRequestsAtMaxPages() {
         AtomicInteger calls = new AtomicInteger();
         ArbeitnowJobScanService service = new ArbeitnowJobScanService((page, _) -> {

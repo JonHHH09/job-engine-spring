@@ -85,7 +85,7 @@ public class ArbeitnowJobScanService {
         int scanned = 0;
         int inspected = 0;
         List<ScannedJob> jobs = new ArrayList<>();
-        boolean anotherPageMayRemain = false;
+        boolean anotherPageMayRemain;
 
         while (true) {
             ArbeitnowJobBoardPort.Page page = board.fetch(pageNumber, request.visaSponsorship());
@@ -249,8 +249,9 @@ public class ArbeitnowJobScanService {
     private static void validate(ScanRequest request) {
         if (request.limit() != null && (request.limit() < 1 || request.limit() > MAX_LIMIT)
                 || request.maxPages() != null && (request.maxPages() < 1 || request.maxPages() > MAX_PAGES)
-                || request.query() != null && (request.query().length() > MAX_QUERY_LENGTH || queryTerms(request.query()).size() > MAX_QUERY_TERMS)
-                || request.location() != null && request.location().length() > MAX_LOCATION_LENGTH
+                || request.query() != null && (request.query().length() > MAX_QUERY_LENGTH || queryTerms(request.query()).size() > MAX_QUERY_TERMS
+                || hasUnpairedSurrogate(request.query()))
+                || request.location() != null && (request.location().length() > MAX_LOCATION_LENGTH || hasUnpairedSurrogate(request.location()))
                 || hasInvalidList(request.tags())
                 || hasInvalidList(request.jobTypes())) {
             throw invalid("request");
@@ -259,7 +260,22 @@ public class ArbeitnowJobScanService {
 
     private static boolean hasInvalidList(List<String> values) {
         return values != null && (values.size() > MAX_FILTER_VALUES
-                || values.stream().anyMatch(value -> value == null || value.isBlank() || value.length() > MAX_FILTER_VALUE_LENGTH));
+                || values.stream().anyMatch(value -> value == null || value.isBlank() || value.length() > MAX_FILTER_VALUE_LENGTH
+                || hasUnpairedSurrogate(value)));
+    }
+
+    private static boolean hasUnpairedSurrogate(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            char current = value.charAt(index);
+            if (Character.isHighSurrogate(current)) {
+                if (++index == value.length() || !Character.isLowSurrogate(value.charAt(index))) {
+                    return true;
+                }
+            } else if (Character.isLowSurrogate(current)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static List<String> queryTerms(String query) {
@@ -278,21 +294,25 @@ public class ArbeitnowJobScanService {
     }
 
     private String fingerprint(ScanRequest request) {
-        return java.util.HexFormat.of().formatHex(hmac(String.join("|",
-                String.join(" ", queryTerms(request.query())),
-                request.location() == null ? "" : lower(request.location().strip()),
-                String.valueOf(request.remoteOnly()),
-                String.valueOf(request.visaSponsorship()),
-                fingerprintList(request.tags()),
-                fingerprintList(request.jobTypes()))));
+        return java.util.HexFormat.of().formatHex(hmac(String.join("",
+                fingerprintField(String.join(" ", queryTerms(request.query()))),
+                fingerprintField(request.location() == null ? "" : lower(request.location().strip())),
+                fingerprintField(String.valueOf(request.remoteOnly())),
+                fingerprintField(String.valueOf(request.visaSponsorship())),
+                fingerprintField(fingerprintList(request.tags())),
+                fingerprintField(fingerprintList(request.jobTypes())))));
     }
 
     private static String fingerprintList(List<String> values) {
-        return (values == null ? List.<String>of() : values).stream()
+        return String.join("", (values == null ? List.<String>of() : values).stream()
                 .map(value -> lower(value.strip()))
                 .sorted(Comparator.naturalOrder())
-                .reduce((left, right) -> left + "," + right)
-                .orElse("");
+                .map(ArbeitnowJobScanService::fingerprintField)
+                .toList());
+    }
+
+    private static String fingerprintField(String value) {
+        return value.length() + ":" + value;
     }
 
     private String encode(Cursor cursor) {
