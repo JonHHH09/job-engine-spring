@@ -172,6 +172,19 @@ class ArbeitnowJobScanServiceTests {
     }
 
     @Test
+    void rejectsHighSurrogateFollowedByNonLowSurrogateDuringRequestValidation() {
+        AtomicInteger calls = new AtomicInteger();
+        ArbeitnowJobScanService service = new ArbeitnowJobScanService((_, _) -> {
+            calls.incrementAndGet();
+            return page(List.of(), false);
+        });
+
+        assertThrows(IllegalArgumentException.class, () -> service.scan(new ArbeitnowJobScanService.ScanRequest(
+                "\uD800x", null, null, null, null, null, 1, 1, null)));
+        assertEquals(0, calls.get());
+    }
+
+    @Test
     void acceptsValidUnicodeAndRetainsCursorCompatibilityForDelimiterBearingFilterValues() {
         ArbeitnowJobScanService service = new ArbeitnowJobScanService((_, _) -> page(List.of(
                 job("unicode-one", "Acme", "Java", "Description", List.of("développeur, cloud 🚀"), List.of("full-time"), "Berlin", 1L),
