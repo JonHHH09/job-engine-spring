@@ -1,5 +1,7 @@
 package org.instruct.jobenginespring.adapter.out.postgres.document;
 
+import org.instruct.jobenginespring.testsupport.PostgresTestContainers;
+
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -20,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class DocumentLegacyMigrationIntegrationTests {
 
     @Container
-    private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:18-alpine")
+    private static final PostgreSQLContainer POSTGRES = PostgresTestContainers.postgres("postgres:18-alpine")
             .withDatabaseName("job_engine")
             .withUsername("test")
             .withPassword("test");

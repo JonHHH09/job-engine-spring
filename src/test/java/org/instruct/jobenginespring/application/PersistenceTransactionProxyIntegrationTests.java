@@ -1,5 +1,7 @@
 package org.instruct.jobenginespring.application;
 
+import org.instruct.jobenginespring.testsupport.PostgresTestContainers;
+
 import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.adapter.out.postgres.document.PostgresGeneratedResumeCleanupRepository;
 import org.instruct.jobenginespring.adapter.out.postgres.document.PostgresDocumentRepository;
@@ -38,7 +40,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.EnableTransactionManagement;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -60,7 +62,7 @@ import static org.mockito.Mockito.spy;
 class PersistenceTransactionProxyIntegrationTests {
 
     @Container
-    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine")
+    private static final PostgreSQLContainer POSTGRES = PostgresTestContainers.postgres("postgres:18-alpine")
             .withDatabaseName("job_engine")
             .withUsername("test")
             .withPassword("test");

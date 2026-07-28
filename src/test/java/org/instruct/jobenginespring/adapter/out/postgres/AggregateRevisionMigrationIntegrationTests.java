@@ -1,10 +1,12 @@
 package org.instruct.jobenginespring.adapter.out.postgres;
 
+import org.instruct.jobenginespring.testsupport.PostgresTestContainers;
+
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -28,20 +30,20 @@ class AggregateRevisionMigrationIntegrationTests {
         }
     }
 
-    private static PostgreSQLContainer<?> postgres() {
-        return new PostgreSQLContainer<>("postgres:18-alpine")
+    private static PostgreSQLContainer postgres() {
+        return PostgresTestContainers.postgres("postgres:18-alpine")
                 .withDatabaseName("job_engine")
                 .withUsername("test")
                 .withPassword("test");
     }
 
-    private static JdbcTemplate jdbc(PostgreSQLContainer<?> postgres) {
+    private static JdbcTemplate jdbc(PostgreSQLContainer postgres) {
         return new JdbcTemplate(new DriverManagerDataSource(
                 postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword()
         ));
     }
 
-    private static void migrate(PostgreSQLContainer<?> postgres, String target) {
+    private static void migrate(PostgreSQLContainer postgres, String target) {
         var configuration = Flyway.configure()
                 .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
                 .locations("classpath:db/migration")

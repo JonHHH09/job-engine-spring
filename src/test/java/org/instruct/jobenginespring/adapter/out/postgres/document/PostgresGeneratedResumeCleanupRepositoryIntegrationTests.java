@@ -1,5 +1,7 @@
 package org.instruct.jobenginespring.adapter.out.postgres.document;
 
+import org.instruct.jobenginespring.testsupport.PostgresTestContainers;
+
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -7,7 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -26,7 +28,7 @@ class PostgresGeneratedResumeCleanupRepositoryIntegrationTests {
     private static final Instant NOW = Instant.parse("2026-07-10T12:00:00Z");
 
     @Container
-    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine")
+    private static final PostgreSQLContainer POSTGRES = PostgresTestContainers.postgres("postgres:18-alpine")
             .withDatabaseName("job_engine")
             .withUsername("test")
             .withPassword("test");
