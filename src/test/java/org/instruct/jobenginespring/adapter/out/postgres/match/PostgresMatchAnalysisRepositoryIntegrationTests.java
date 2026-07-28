@@ -1,5 +1,7 @@
 package org.instruct.jobenginespring.adapter.out.postgres.match;
 
+import org.instruct.jobenginespring.testsupport.PostgresTestContainers;
+
 import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.domain.match.*;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
@@ -10,7 +12,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.ObjectMapper;
@@ -31,7 +33,7 @@ class PostgresMatchAnalysisRepositoryIntegrationTests {
     private static final Instant NOW = Instant.parse("2026-07-12T12:00:00Z");
     private static final UUID PROFILE = UUID.fromString("10000000-0000-0000-0000-000000000001");
     private static final UUID JOB = UUID.fromString("20000000-0000-0000-0000-000000000002");
-    @Container static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine")
+    @Container static final PostgreSQLContainer POSTGRES = PostgresTestContainers.postgres("postgres:18-alpine")
             .withDatabaseName("job_engine").withUsername("test").withPassword("test");
     private static JdbcTemplate jdbc;
     private static CountingDataSource dataSource;
