@@ -13,6 +13,8 @@ import org.instruct.jobenginespring.application.document.PdfGenerationService.Ge
 import org.instruct.jobenginespring.application.document.PdfGenerationService.GeneratedPdfFileResult;
 import org.instruct.jobenginespring.application.error.ApplicationException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
@@ -67,6 +69,157 @@ class PdfGenerationServiceTests {
         assertEquals("Unsafe_Name_.txt.pdf", result.fileName());
         assertEquals(tempDir.resolve("Unsafe_Name_.txt.pdf"), Path.of(result.path()));
         assertTrue(Files.isRegularFile(Path.of(result.path())));
+    }
+
+    @Test
+    void discardsBackslashTraversalComponentsBeforeSanitizing() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest(
+                "..\\Unsafe Name?.txt",
+                "Title",
+                "Body"
+        ));
+
+        assertEquals("Unsafe_Name_.txt.pdf", result.fileName());
+        assertEquals(tempDir, Path.of(result.path()).getParent());
+        assertTrue(Files.isRegularFile(Path.of(result.path())));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "CON,CON_.pdf",
+            "PRN,PRN_.pdf",
+            "AUX,AUX_.pdf",
+            "NUL.pdf,NUL_.pdf",
+            "COM1,COM1_.pdf",
+            "COM9,COM9_.pdf",
+            "LPT1,LPT1_.pdf",
+            "LPT9,LPT9_.pdf",
+            "COM10,COM10.pdf"
+    })
+    void neutralizesWindowsReservedDeviceBasenames(String fileName, String expectedFileName) throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest(fileName, "Title", "Body"));
+
+        assertEquals(expectedFileName, result.fileName());
+        assertEquals(tempDir, Path.of(result.path()).getParent());
+    }
+
+    @Test
+    void discardsForwardSlashTraversalComponentsBeforeSanitizing() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest("../forward/Leaf.txt", "Title", "Body"));
+
+        assertEquals("Leaf.txt.pdf", result.fileName());
+        assertEquals(tempDir, Path.of(result.path()).getParent());
+    }
+
+    @Test
+    void discardsMixedAndAbsoluteLookingSeparatorsBeforeSanitizing() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest("/absolute\\mixed/Leaf.txt", "Title", "Body"));
+
+        assertEquals("Leaf.txt.pdf", result.fileName());
+        assertEquals(tempDir, Path.of(result.path()).getParent());
+    }
+
+    @Test
+    void defaultsBackslashOnlyFileName() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest("\\", "Title", "Body"));
+
+        assertEquals("generated.pdf", result.fileName());
+        assertEquals(tempDir, Path.of(result.path()).getParent());
+        assertTrue(Files.isRegularFile(Path.of(result.path())));
+    }
+
+    @Test
+    void defaultsBoundedLargeAlternatingSeparatorOnlyFileName() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest("\\/".repeat(8_192), "Title", "Body"));
+
+        assertEquals("generated.pdf", result.fileName());
+        assertEquals(tempDir, Path.of(result.path()).getParent());
+        assertTrue(Files.isRegularFile(Path.of(result.path())));
+    }
+
+    @Test
+    void discardsWindowsDriveComponentsBeforeSanitizing() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest("C:\\dir\\Leaf?.txt", "Title", "Body"));
+
+        assertEquals("Leaf_.txt.pdf", result.fileName());
+        assertEquals(tempDir, Path.of(result.path()).getParent());
+        assertTrue(Files.isRegularFile(Path.of(result.path())));
+    }
+
+    @Test
+    void discardsUncComponentsBeforeSanitizing() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest("\\\\server\\share\\Leaf?.txt", "Title", "Body"));
+
+        assertEquals("Leaf_.txt.pdf", result.fileName());
+        assertEquals(tempDir, Path.of(result.path()).getParent());
+        assertTrue(Files.isRegularFile(Path.of(result.path())));
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "C:\\dir\\Leaf?.txt\\,Leaf_.txt.pdf",
+            "\\\\server\\share\\Leaf?.txt/,Leaf_.txt.pdf"
+    })
+    void preservesFinalLeafWhenDirectoriesHaveTrailingSeparators(String fileName, String expectedFileName) throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest(fileName, "Title", "Body"));
+
+        assertEquals(expectedFileName, result.fileName());
+        assertEquals(tempDir, Path.of(result.path()).getParent());
+        assertTrue(Files.isRegularFile(Path.of(result.path())));
+    }
+
+    @Test
+    void replacesEveryWindowsInvalidLeafCharacter() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest("invalid<>:\"|?*.txt", "Title", "Body"));
+
+        assertEquals("invalid_______.txt.pdf", result.fileName());
+    }
+
+    @Test
+    void replacesNonAsciiFileNameCharacters() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest("Développeur.pdf", "Title", "Body"));
+
+        assertEquals("D_veloppeur.pdf", result.fileName());
+    }
+
+    @Test
+    void preservesCaseInsensitivePdfExtension() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest("report.PdF", "Title", "Body"));
+
+        assertEquals("report.PdF", result.fileName());
+    }
+
+    @Test
+    void appendsPdfExtensionToWrongExtension() throws IOException {
+        PdfGenerationService service = new PdfGenerationService(tempDir);
+
+        GeneratedPdfFileResult result = service.generatePdfFile(new GeneratePdfFileRequest("report.txt", "Title", "Body"));
+
+        assertEquals("report.txt.pdf", result.fileName());
     }
 
     @Test
