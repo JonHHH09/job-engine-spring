@@ -145,16 +145,14 @@ public class PdfGenerationService {
     private static String sanitizeFileName(String rawFileName) {
         String baseName = DEFAULT_FILE_NAME;
         if (rawFileName != null && !rawFileName.isBlank()) {
-            try {
-                Path fileNamePath = Path.of(rawFileName.strip()).getFileName();
-                if (fileNamePath != null) {
-                    baseName = fileNamePath.toString();
-                }
-            } catch (InvalidPathException exception) {
-                throw validation("fileName", "must be a valid file name");
-            }
+            baseName = logicalLeaf(rawFileName.strip());
         }
         String sanitized = baseName.replaceAll("[^A-Za-z0-9._-]", "_");
+        int firstDot = sanitized.indexOf(".");
+        String reservedBaseName = firstDot < 0 ? sanitized : sanitized.substring(0, firstDot);
+        if (reservedBaseName.matches("(?i)CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]")) {
+            sanitized = reservedBaseName + "_" + sanitized.substring(reservedBaseName.length());
+        }
         if (sanitized.equals(".") || sanitized.equals("..")) {
             sanitized = DEFAULT_FILE_NAME;
         }
@@ -162,6 +160,25 @@ public class PdfGenerationService {
             sanitized = sanitized + ".pdf";
         }
         return sanitized;
+    }
+
+    private static String logicalLeaf(String fileNameText) {
+        if (fileNameText.indexOf("\0") >= 0) {
+            throw validation("fileName", "must be a valid file name");
+        }
+        int end = fileNameText.length();
+        while (end > 0) {
+            char character = fileNameText.charAt(end - 1);
+            if (character != '/' && character != '\\') {
+                break;
+            }
+            end--;
+        }
+        if (end == 0) {
+            return DEFAULT_FILE_NAME;
+        }
+        int separator = Math.max(fileNameText.lastIndexOf('/', end - 1), fileNameText.lastIndexOf('\\', end - 1));
+        return fileNameText.substring(separator + 1, end);
     }
 
     private static int writePdf(
