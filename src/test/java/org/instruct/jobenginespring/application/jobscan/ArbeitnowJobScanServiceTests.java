@@ -11,6 +11,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -314,6 +315,26 @@ class ArbeitnowJobScanServiceTests {
         ), false));
 
         assertThrows(IllegalArgumentException.class, () -> service.scan(null));
+    }
+
+    @Test
+    void rejectsMarkupOnlyDescriptionBeforeCandidateTokenIssuance() {
+        AtomicInteger clockCalls = new AtomicInteger();
+        Clock tokenClock = new Clock() {
+            @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(ZoneId zone) { return this; }
+            @Override public Instant instant() { clockCalls.incrementAndGet(); return Instant.parse("2026-07-29T00:00:00Z"); }
+        };
+        ArbeitnowCandidateTokenCodec codec = new ArbeitnowCandidateTokenCodec(tokenClock, new byte[32]);
+        ArbeitnowJobScanService service = new ArbeitnowJobScanService((_, _) -> page(List.of(
+                job("markup-only", "Acme", "Java", "<script>private()</script><style>.hidden {}</style>",
+                        List.of("Java"), List.of("full-time"), "Berlin", 1L)
+        ), false), new byte[32], codec);
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> service.scan(null));
+
+        assertEquals("Invalid Arbeitnow upstream data", exception.getMessage());
+        assertEquals(0, clockCalls.get());
     }
 
     @Test
