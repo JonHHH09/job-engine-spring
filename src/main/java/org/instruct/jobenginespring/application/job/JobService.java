@@ -266,6 +266,35 @@ public class JobService {
         ));
     }
 
+    /** Persists an already-authenticated Arbeitnow scan candidate without fetching its URL. */
+    @Transactional
+    public AddJobResult importTrustedArbeitnowJob(TrustedArbeitnowImportRequest request) {
+        if (request == null || request.canonicalUrl() == null || request.title() == null || request.description() == null) {
+            throw validation("request", "must contain a trusted Arbeitnow candidate");
+        }
+        String canonicalUrl = normalizeUrl(request.canonicalUrl());
+        Optional<JobAggregate> existing = jobRepository.findByNormalizedSourceUrl(canonicalUrl);
+        if (existing.isPresent()) {
+            return new AddJobResult("reused_existing_job", existing.orElseThrow());
+        }
+        return saveIfNew(new DraftJob(
+                SOURCE_METHOD_LINK,
+                "arbeitnow",
+                clean(request.title()),
+                cleanToNull(request.company()),
+                cleanToNull(request.location()),
+                clean(request.description()),
+                null,
+                cleanToNull(request.employmentType()),
+                null,
+                request.postedAt(),
+                mergeSkills(request.tags(), List.of()),
+                new LinkSource(canonicalUrl, canonicalUrl, null,
+                        "Arbeitnow scan candidate (remote=" + request.remote() + ")"),
+                null
+        ));
+    }
+
     private AddJobResult saveIfNew(DraftJob draft) {
         String fingerprint = fingerprint(draft);
         Optional<JobAggregate> existingByFingerprint = jobRepository.findByCanonicalFingerprint(fingerprint);
@@ -682,6 +711,14 @@ public class JobService {
     }
 
     public record AddJobResult(String status, JobAggregate job) {
+    }
+
+    public record TrustedArbeitnowImportRequest(String canonicalUrl, String company, String title, String location,
+                                                String description, List<String> tags, String employmentType,
+                                                boolean remote, Instant postedAt) {
+        public TrustedArbeitnowImportRequest {
+            tags = tags == null ? List.of() : List.copyOf(tags);
+        }
     }
 
     public record JobSearchRequest(String query, Integer limit) {
