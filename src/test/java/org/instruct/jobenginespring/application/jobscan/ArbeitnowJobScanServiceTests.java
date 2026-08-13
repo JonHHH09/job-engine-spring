@@ -338,6 +338,26 @@ class ArbeitnowJobScanServiceTests {
     }
 
     @Test
+    void rejectsMarkupOnlyTitleAndDescriptionBeforeCandidateTokenIssuance() {
+        AtomicInteger clockCalls = new AtomicInteger();
+        Clock tokenClock = new Clock() {
+            @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(ZoneId zone) { return this; }
+            @Override public Instant instant() { clockCalls.incrementAndGet(); return Instant.parse("2026-07-29T00:00:00Z"); }
+        };
+        ArbeitnowCandidateTokenCodec codec = new ArbeitnowCandidateTokenCodec(tokenClock, new byte[32]);
+        ArbeitnowJobScanService service = new ArbeitnowJobScanService((_, _) -> page(List.of(
+                job("markup-only-title", "Acme", "<script>private()</script><style>.hidden {}</style>", "Description",
+                        List.of("Java"), List.of("full-time"), "Berlin", 1L)
+        ), false), new byte[32], codec);
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> service.scan(null));
+
+        assertEquals("Invalid Arbeitnow upstream data", exception.getMessage());
+        assertEquals(0, clockCalls.get());
+    }
+
+    @Test
     void normalizesEveryExposedTextFieldAndIssuesTokensForMaximalBoundedScanOutput() {
         ArbeitnowCandidateTokenCodec codec = new ArbeitnowCandidateTokenCodec(
                 java.time.Clock.fixed(java.time.Instant.parse("2026-07-27T10:00:00Z"), java.time.ZoneOffset.UTC), new byte[32]);
