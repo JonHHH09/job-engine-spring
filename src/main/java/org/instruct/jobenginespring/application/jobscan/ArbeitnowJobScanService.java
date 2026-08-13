@@ -179,7 +179,7 @@ public class ArbeitnowJobScanService {
         List<String> tags = boundList(job.tags());
         List<String> jobTypes = boundList(job.jobTypes());
         String description = bound(plain(job.htmlDescription()), MAX_EXCERPT);
-        if (description.isBlank()) {
+        if (title.isBlank() || description.isBlank()) {
             throw invalidUpstreamData();
         }
         Instant issuedAt = candidateTokens.now();
