@@ -1,5 +1,7 @@
 package org.instruct.jobenginespring.adapter.out.postgres.profile;
 
+import org.instruct.jobenginespring.testsupport.PostgresTestContainers;
+
 import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.application.profile.ProfileIdentityCandidate;
@@ -23,7 +25,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -54,7 +56,7 @@ class PostgresProfileRepositoryIntegrationTests {
     private static final UUID TECHNOLOGY_ID = UUID.fromString("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");
 
     @Container
-    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine")
+    private static final PostgreSQLContainer POSTGRES = PostgresTestContainers.postgres("postgres:18-alpine")
             .withDatabaseName("job_engine")
             .withUsername("test")
             .withPassword("test");

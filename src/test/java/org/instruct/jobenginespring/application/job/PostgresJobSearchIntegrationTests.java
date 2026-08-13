@@ -1,5 +1,7 @@
 package org.instruct.jobenginespring.application.job;
 
+import org.instruct.jobenginespring.testsupport.PostgresTestContainers;
+
 import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.adapter.out.postgres.job.PostgresJobRepository;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
@@ -20,7 +22,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -46,7 +48,7 @@ class PostgresJobSearchIntegrationTests {
     private static final Instant NOW = Instant.parse("2026-07-09T14:00:00Z");
 
     @Container
-    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine")
+    private static final PostgreSQLContainer POSTGRES = PostgresTestContainers.postgres("postgres:18-alpine")
             .withDatabaseName("job_engine")
             .withUsername("test")
             .withPassword("test");

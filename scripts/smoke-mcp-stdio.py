@@ -19,33 +19,47 @@ import time
 from typing import Any
 
 EXPECTED_TOOLS = {
-    "health",
-    "list_profiles",
-    "search_profiles",
-    "get_profile",
+    "acknowledge_match_disagreement",
+    "add_job_from_analysis",
+    "add_job_from_link",
+    "add_job_from_text",
+    "analyze_all_job_matches",
+    "analyze_job_link",
+    "analyze_job_match",
     "create_profile",
-    "update_profile",
+    "delete_job",
     "delete_profile",
     "extract_pdf_text",
-    "store_document_file",
-    "get_document_metadata",
     "extract_stored_pdf_text",
+    "generate_canadian_french_pdf_resume",
+    "generate_canadian_pdf_resume",
+    "generate_german_cover_letter",
+    "generate_german_tailored_resume",
     "generate_pdf_file",
     "generate_pdf_resume",
-    "generate_canadian_pdf_resume",
-    "generate_canadian_french_pdf_resume",
-    "ingest_profile_from_stored_pdf",
-    "get_profile_pdf_source",
-    "list_jobs",
-    "search_jobs",
+    "get_document_metadata",
     "get_job",
+    "get_match_report",
+    "get_match_review",
+    "get_profile",
+    "get_profile_pdf_source",
+    "health",
+    "import_arbeitnow_job",
+    "ingest_profile_from_stored_pdf",
+    "link_match_disagreement",
+    "list_jobs",
+    "list_match_disagreements",
+    "list_match_reports",
+    "list_match_reviews",
+    "list_profiles",
+    "scan_arbeitnow_jobs",
+    "search_jobs",
+    "search_profiles",
+    "store_document_file",
+    "submit_match_review",
     "update_job",
-    "delete_job",
-    "add_job_from_text",
-    "add_job_from_link",
-    "analyze_job_link",
-    "add_job_from_analysis",
-    "generate_german_cover_letter",
+    "update_profile",
+    "update_profile_project",
 }
 
 
@@ -81,6 +95,13 @@ def read_until_id(proc: subprocess.Popen[str], selector: selectors.BaseSelector,
         if response.get("id") == message_id:
             return response
     raise TimeoutError(f"Timed out waiting for MCP response id={message_id}")
+
+
+def format_tool_names(names: list[str], limit: int = 20) -> str:
+    displayed = [name[:120] for name in names[:limit]]
+    if len(names) > limit:
+        displayed.append(f"... (+{len(names) - limit} more)")
+    return ", ".join(displayed) if displayed else "none"
 
 
 def main() -> int:
@@ -142,10 +163,19 @@ def main() -> int:
             raise RuntimeError(f"tools/list failed: {tools_response['error']}")
 
         tools = tools_response.get("result", {}).get("tools", [])
-        names = {tool.get("name") for tool in tools if isinstance(tool, dict)}
+        names = {
+            tool["name"]
+            for tool in tools
+            if isinstance(tool, dict) and isinstance(tool.get("name"), str)
+        }
         missing = sorted(EXPECTED_TOOLS - names)
-        if missing:
-            raise RuntimeError(f"tools/list missing expected tools: {', '.join(missing)}")
+        unexpected = sorted(names - EXPECTED_TOOLS)
+        if names != EXPECTED_TOOLS:
+            raise RuntimeError(
+                "tools/list tool-set mismatch: "
+                f"missing expected tools: {format_tool_names(missing)}; "
+                f"unexpected tools: {format_tool_names(unexpected)}"
+            )
 
         print(f"MCP STDIO smoke passed with {len(names)} tools.")
         return 0
