@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-FROM eclipse-temurin:25-jdk@sha256:201fbb8886b2d273218aa3a192f0afbf7b5ff65ee8cc6ef47f5dce2171f013ea AS build
+FROM eclipse-temurin:25-jdk@sha256:c42fecf62f32725c65cfea284c012526d6fb31cc78123c740ebdc1cfd2dced12 AS build
 WORKDIR /workspace
 
 RUN apt-get update \
@@ -14,7 +14,7 @@ RUN ./mvnw --no-transfer-progress -DskipTests dependency:go-offline
 COPY src src
 RUN ./mvnw --no-transfer-progress -DskipTests package
 
-FROM eclipse-temurin:25-jre@sha256:681c543d6f36c50f45e9b5226930a46203dcfa351d3670e9d0bdf0dabae53539
+FROM eclipse-temurin:25-jre@sha256:a214efa3200af4b657e41935799aa12d7aee3336fdb42eb505a0948f6ecdd983
 
 ENV SPRING_DOCKER_COMPOSE_ENABLED=false \
     JOB_ENGINE_DOCUMENT_IMPORT_ROOT=/app/tmp/imports
