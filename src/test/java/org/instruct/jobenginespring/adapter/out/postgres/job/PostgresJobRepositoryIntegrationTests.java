@@ -5,7 +5,6 @@ import org.instruct.jobenginespring.testsupport.PostgresTestContainers;
 import org.flywaydb.core.Flyway;
 import org.instruct.jobenginespring.application.pagination.PageRequest;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
-import org.instruct.jobenginespring.domain.job.JobAnalysisRun;
 import org.instruct.jobenginespring.domain.job.JobLinkIngestion;
 import org.instruct.jobenginespring.domain.job.JobPosting;
 import org.instruct.jobenginespring.domain.job.JobSkill;
@@ -15,7 +14,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -27,7 +25,6 @@ import java.time.Instant;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -58,7 +55,6 @@ class PostgresJobRepositoryIntegrationTests {
     private static DriverManagerDataSource dataSource;
 
     private PostgresJobRepository repository;
-    private PostgresJobAnalysisRunRepository analysisRunRepository;
 
     @BeforeAll
     static void migrateSchema() {
@@ -83,7 +79,6 @@ class PostgresJobRepositoryIntegrationTests {
         jdbc.update("TRUNCATE TABLE job_schema.jobs CASCADE");
         NamedParameterJdbcTemplate namedJdbc = new NamedParameterJdbcTemplate(jdbc);
         repository = new PostgresJobRepository(namedJdbc);
-        analysisRunRepository = new PostgresJobAnalysisRunRepository(JdbcClient.create(namedJdbc));
     }
 
     @Test
@@ -97,7 +92,6 @@ class PostgresJobRepositoryIntegrationTests {
                 """, String.class);
 
         assertEquals(List.of(
-                "job_analysis_runs",
                 "job_link_ingestions",
                 "job_skills",
                 "job_text_ingestions",
@@ -158,75 +152,6 @@ class PostgresJobRepositoryIntegrationTests {
         assertTrue(found.isPresent());
         assertEquals(saved.job().id(), found.orElseThrow().job().id());
         assertEquals("https://example.test/jobs/1?jk=job-1", saved.linkIngestion().normalizedUrl());
-    }
-
-    @Test
-    void savesFindsAndUpdatesJobAnalysisRunJson() {
-        UUID analysisRunId = UUID.fromString("22222222-2222-3333-4444-555555555555");
-        JobAnalysisRun saved = analysisRunRepository.save(new JobAnalysisRun(
-                analysisRunId,
-                "link",
-                "https://example.test/jobs/1",
-                "https://example.test/jobs/1?jk=job-1",
-                "FETCHED",
-                200,
-                "Platform Engineer",
-                "input-hash",
-                Map.of("sourceMethod", "link", "boundedVisibleText", "Fetched job text"),
-                "SUCCEEDED",
-                Map.of("title", "Platform Engineer", "description", "Build internal developer platforms for product teams."),
-                "response-hash",
-                "VALID",
-                List.of(),
-                null,
-                NOW,
-                NOW
-        ));
-
-        Optional<JobAnalysisRun> found = analysisRunRepository.findById(analysisRunId);
-
-        assertTrue(found.isPresent());
-        assertEquals(saved.id(), found.orElseThrow().id());
-        assertEquals("Fetched job text", saved.inputJson().get("boundedVisibleText"));
-        assertEquals("Platform Engineer", saved.hermesResponseJson().get("title"));
-
-        repository.saveJobAggregate(new JobAggregate(
-                posting(JOB_ID, "link", "fingerprint-for-analysis"),
-                List.of(),
-                new JobLinkIngestion(
-                        UUID.fromString("23232323-2323-2323-2323-232323232323"),
-                        JOB_ID,
-                        "https://example.test/jobs/1",
-                        "https://example.test/jobs/1?jk=job-1",
-                        NOW,
-                        200,
-                        "Platform Engineer",
-                        NOW
-                ),
-                null
-        ));
-        JobAnalysisRun updated = analysisRunRepository.update(new JobAnalysisRun(
-                saved.id(),
-                saved.sourceType(),
-                saved.originalUrl(),
-                saved.normalizedUrl(),
-                saved.fetchStatus(),
-                saved.httpStatus(),
-                saved.fetchedTitle(),
-                saved.inputSha256(),
-                saved.inputJson(),
-                saved.hermesStatus(),
-                saved.hermesResponseJson(),
-                saved.hermesResponseSha256(),
-                "VALID",
-                List.of(),
-                JOB_ID,
-                saved.createdAt(),
-                NOW.plusSeconds(60)
-        ));
-
-        assertEquals(JOB_ID, updated.createdJobId());
-        assertEquals(NOW.plusSeconds(60), updated.updatedAt());
     }
 
     @Test

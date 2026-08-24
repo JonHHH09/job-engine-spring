@@ -1,8 +1,6 @@
 package org.instruct.jobenginespring.application.job;
 
-import org.instruct.jobenginespring.application.job.port.JobAnalysisRunRepository;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
-import org.instruct.jobenginespring.application.job.port.JobPostingAnalysisPort;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.document.GermanCoverLetterPersistenceService;
 import org.instruct.jobenginespring.domain.job.JobAggregate;
@@ -40,28 +38,6 @@ class JobExternalWorkTransactionBoundaryTests {
         service.addJobFromLink(new JobService.AddJobFromLinkRequest(
                 "https://example.test/jobs/1", null, null, null, null, null, null, null, null, null, null
         ));
-    }
-
-    @Test
-    void fetchAndProviderAnalysisRunWithoutAnActiveTransaction() {
-        JobAnalysisRunRepository repository = mock(JobAnalysisRunRepository.class);
-        when(repository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        JobLinkContentFetcher fetcher = url -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            return new JobLinkContentFetcher.JobLinkFetchResult(url, "Developer", "Build secure Java services for customers", 200);
-        };
-        JobPostingAnalysisPort provider = request -> {
-            assertFalse(TransactionSynchronizationManager.isActualTransactionActive());
-            return new JobPostingAnalysisPort.JobPostingAnalysisResponse(
-                    "Developer", null, null, "Build secure Java services for customers", java.util.List.of(),
-                    null, null, null, null, null, java.util.List.of()
-            );
-        };
-        JobAnalysisService service = transactionalProxy(new JobAnalysisService(
-                repository, fetcher, provider, mock(JobService.class)
-        ), JobAnalysisService.class);
-
-        service.analyzeJobLink(new JobAnalysisService.AnalyzeJobLinkRequest("https://example.test/jobs/1"));
     }
 
     private static <T> T transactionalProxy(T target, Class<T> type) {
