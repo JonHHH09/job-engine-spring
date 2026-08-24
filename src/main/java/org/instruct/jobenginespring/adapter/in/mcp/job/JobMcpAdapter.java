@@ -2,7 +2,6 @@ package org.instruct.jobenginespring.adapter.in.mcp.job;
 
 import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import org.instruct.jobenginespring.application.error.ApplicationExceptionMapper;
-import org.instruct.jobenginespring.application.job.JobAnalysisService;
 import org.instruct.jobenginespring.application.job.JobService;
 import org.instruct.jobenginespring.domain.job.JobPosting;
 import org.springframework.ai.mcp.annotation.McpTool;
@@ -20,13 +19,11 @@ import java.util.function.Supplier;
 public class JobMcpAdapter {
 
     private final JobService jobService;
-    private final JobAnalysisService jobAnalysisService;
     private final ApplicationExceptionMapper exceptionMapper = new ApplicationExceptionMapper();
 
     @Autowired
-    public JobMcpAdapter(JobService jobService, JobAnalysisService jobAnalysisService) {
+    public JobMcpAdapter(JobService jobService) {
         this.jobService = Objects.requireNonNull(jobService, "jobService must not be null");
-        this.jobAnalysisService = Objects.requireNonNull(jobAnalysisService, "jobAnalysisService must not be null");
     }
 
     @McpTool(
@@ -106,28 +103,6 @@ public class JobMcpAdapter {
             AddJobFromLinkRequest request
     ) {
         return call(() -> jobService.addJobFromLink(request == null ? null : request.toServiceRequest()));
-    }
-
-    @McpTool(
-            name = "analyze_job_link",
-            description = "Fetch a job URL, run configured Hermes analysis, persist only redacted provenance plus the structured Hermes response, and return an analysis-run report without creating a job."
-    )
-    public CallToolResult analyzeJobLink(
-            @McpToolParam(required = true, description = "Job URL analysis request")
-            AnalyzeJobLinkRequest request
-    ) {
-        return call(() -> jobAnalysisService.analyzeJobLink(request == null ? null : request.toServiceRequest()));
-    }
-
-    @McpTool(
-            name = "add_job_from_analysis",
-            description = "Create or reuse a normalized job by reading a previously stored Hermes analysis run."
-    )
-    public CallToolResult addJobFromAnalysis(
-            @McpToolParam(required = true, description = "Stored job analysis run identifier")
-            AddJobFromAnalysisRequest request
-    ) {
-        return call(() -> jobAnalysisService.addJobFromAnalysis(request == null ? null : request.toServiceRequest()));
     }
 
     private CallToolResult call(Supplier<Object> operation) {
@@ -223,19 +198,4 @@ public class JobMcpAdapter {
         }
     }
 
-    public record AnalyzeJobLinkRequest(
-            @McpToolParam(required = true, description = "Job URL to fetch and analyze") String url
-    ) {
-        JobAnalysisService.AnalyzeJobLinkRequest toServiceRequest() {
-            return new JobAnalysisService.AnalyzeJobLinkRequest(url);
-        }
-    }
-
-    public record AddJobFromAnalysisRequest(
-            @McpToolParam(required = true, description = "Stored job analysis run UUID") UUID analysisRunId
-    ) {
-        JobAnalysisService.AddJobFromAnalysisRequest toServiceRequest() {
-            return new JobAnalysisService.AddJobFromAnalysisRequest(analysisRunId);
-        }
-    }
 }

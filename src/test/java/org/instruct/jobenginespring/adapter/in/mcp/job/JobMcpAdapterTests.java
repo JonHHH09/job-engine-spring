@@ -4,9 +4,6 @@ import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
 import org.instruct.jobenginespring.application.error.ApplicationErrorCode;
 import org.instruct.jobenginespring.application.error.ApplicationErrorResponse;
 import org.instruct.jobenginespring.application.error.ApplicationException;
-import org.instruct.jobenginespring.application.job.JobAnalysisService;
-import org.instruct.jobenginespring.application.job.JobAnalysisService.AddJobFromAnalysisResult;
-import org.instruct.jobenginespring.application.job.JobAnalysisService.AnalyzeJobLinkResult;
 import org.instruct.jobenginespring.application.job.JobService;
 import org.instruct.jobenginespring.application.pagination.Page;
 import org.instruct.jobenginespring.application.job.JobService.AddJobResult;
@@ -42,8 +39,7 @@ class JobMcpAdapterTests {
     private static final UUID JOB_ID = UUID.fromString("aaaaaaaa-1111-1111-1111-aaaaaaaaaaaa");
     private static final Instant NOW = Instant.parse("2026-07-06T20:45:00Z");
     private final JobService jobService = mock(JobService.class);
-    private final JobAnalysisService jobAnalysisService = mock(JobAnalysisService.class);
-    private final JobMcpAdapter adapter = new JobMcpAdapter(jobService, jobAnalysisService);
+    private final JobMcpAdapter adapter = new JobMcpAdapter(jobService);
 
     @Test
     void exposesStableJobToolNames() {
@@ -60,9 +56,7 @@ class JobMcpAdapterTests {
                 "update_job",
                 "delete_job",
                 "add_job_from_text",
-                "add_job_from_link",
-                "analyze_job_link",
-                "add_job_from_analysis"
+                "add_job_from_link"
         ), toolNames);
     }
 
@@ -198,37 +192,6 @@ class JobMcpAdapterTests {
     }
 
     @Test
-    void analysisToolsDelegateToAnalysisService() {
-        JobMcpAdapter.AnalyzeJobLinkRequest analyzeRequest = new JobMcpAdapter.AnalyzeJobLinkRequest("https://example.test/jobs/1");
-        JobAnalysisService.AnalyzeJobLinkRequest serviceAnalyzeRequest = analyzeRequest.toServiceRequest();
-        AnalyzeJobLinkResult analyzeResult = new AnalyzeJobLinkResult(
-                UUID.fromString("cccccccc-1111-1111-1111-cccccccccccc"),
-                "analysis_ready",
-                "https://example.test/jobs/1",
-                "FETCHED",
-                "SUCCEEDED",
-                "VALID",
-                List.of(),
-                Map.of("title", "Java Developer")
-        );
-        JobMcpAdapter.AddJobFromAnalysisRequest addRequest = new JobMcpAdapter.AddJobFromAnalysisRequest(analyzeResult.analysisRunId());
-        JobAnalysisService.AddJobFromAnalysisRequest serviceAddRequest = addRequest.toServiceRequest();
-        AddJobFromAnalysisResult addResult = new AddJobFromAnalysisResult(
-                analyzeResult.analysisRunId(),
-                "created_job",
-                new AddJobResult("created_job", sampleAggregate()),
-                List.of()
-        );
-        when(jobAnalysisService.analyzeJobLink(serviceAnalyzeRequest)).thenReturn(analyzeResult);
-        when(jobAnalysisService.addJobFromAnalysis(serviceAddRequest)).thenReturn(addResult);
-
-        assertEquals(analyzeResult, adapter.analyzeJobLink(analyzeRequest).structuredContent());
-        assertEquals(addResult, adapter.addJobFromAnalysis(addRequest).structuredContent());
-        verify(jobAnalysisService).analyzeJobLink(serviceAnalyzeRequest);
-        verify(jobAnalysisService).addJobFromAnalysis(serviceAddRequest);
-    }
-
-    @Test
     void writeToolsReturnSanitizedValidationErrors() {
         JobMcpAdapter.AddJobFromTextRequest request = new JobMcpAdapter.AddJobFromTextRequest(" ", null, null, null, null, null, null, null, null, null, null);
         when(jobService.addJobFromText(request.toServiceRequest())).thenThrow(new ApplicationException(
@@ -258,8 +221,6 @@ class JobMcpAdapterTests {
         assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "expectedRevision", true);
         assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "title", false);
         assertFieldRequired(JobMcpAdapter.UpdateJobRequest.class, "skills", false);
-        assertFieldRequired(JobMcpAdapter.AnalyzeJobLinkRequest.class, "url", true);
-        assertFieldRequired(JobMcpAdapter.AddJobFromAnalysisRequest.class, "analysisRunId", true);
     }
 
     @Test
@@ -279,8 +240,6 @@ class JobMcpAdapterTests {
         assertSafeError(adapter.addJobFromText(null));
         assertSafeError(adapter.addJobFromLink(null));
         assertSafeError(adapter.updateJob(null));
-        assertSafeError(adapter.analyzeJobLink(null));
-        assertSafeError(adapter.addJobFromAnalysis(null));
     }
 
     private static void assertSafeError(CallToolResult result) {
