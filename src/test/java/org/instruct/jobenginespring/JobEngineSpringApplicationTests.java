@@ -4,7 +4,6 @@ import org.instruct.jobenginespring.application.coverletter.port.CoverLetterRepo
 import org.instruct.jobenginespring.application.document.DocumentStorageService;
 import org.instruct.jobenginespring.application.document.port.DocumentRepository;
 import org.instruct.jobenginespring.application.document.port.GeneratedResumeCleanupRepository;
-import org.instruct.jobenginespring.application.job.port.JobAnalysisRunRepository;
 import org.instruct.jobenginespring.application.job.port.JobLinkContentFetcher;
 import org.instruct.jobenginespring.application.job.port.JobRepository;
 import org.instruct.jobenginespring.application.profile.port.ProfilePdfSourceRepository;
@@ -47,7 +46,6 @@ import java.util.UUID;
         "job-engine.document.postgres.enabled=false",
         "job-engine.cover-letter.postgres.enabled=false",
         "job-engine.job.postgres.enabled=false",
-        "job-engine.job-analysis.postgres.enabled=false",
         "job-engine.job.link-fetcher.enabled=false"
 })
 class JobEngineSpringApplicationTests {
@@ -77,11 +75,6 @@ class JobEngineSpringApplicationTests {
         @Bean
         JobRepository jobRepository() {
             return org.mockito.Mockito.mock(JobRepository.class);
-        }
-
-        @Bean
-        JobAnalysisRunRepository jobAnalysisRunRepository() {
-            return org.mockito.Mockito.mock(JobAnalysisRunRepository.class);
         }
 
         @Bean

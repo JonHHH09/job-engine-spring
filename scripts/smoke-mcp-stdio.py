@@ -20,11 +20,9 @@ from typing import Any
 
 EXPECTED_TOOLS = {
     "acknowledge_match_disagreement",
-    "add_job_from_analysis",
     "add_job_from_link",
     "add_job_from_text",
     "analyze_all_job_matches",
-    "analyze_job_link",
     "analyze_job_match",
     "create_profile",
     "delete_job",

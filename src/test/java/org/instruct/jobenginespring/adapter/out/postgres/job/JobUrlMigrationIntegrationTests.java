@@ -34,22 +34,6 @@ class JobUrlMigrationIntegrationTests {
                     "https://user:password@www.indeed.com/viewjob?token=secret&jk=abc123def4567890&utm_source=email#details",
                     "fingerprint-one"
             );
-            UUID analysisId = UUID.randomUUID();
-            jdbc.update("""
-                    INSERT INTO job_schema.job_analysis_runs (
-                        id, source_type, original_url, normalized_url, fetch_status,
-                        input_sha256, input_json, hermes_status, validation_status,
-                        validation_errors, created_at, updated_at
-                    ) VALUES (?, 'link', ?, ?, 'FETCHED', 'input-hash', ?::jsonb,
-                              'SUCCEEDED', 'VALID', '[]'::jsonb, ?, ?)
-                    """,
-                    analysisId,
-                    "https://boards.greenhouse.io/example/jobs/123?gh_jid=456789&gh_src=tracking-source&token=secret#details",
-                    "https://boards.greenhouse.io/example/jobs/123?token=secret&gh_src=tracking-source&gh_jid=456789#details",
-                    "{\"originalUrl\":\"https://boards.greenhouse.io/example/jobs/123?token=secret\",\"normalizedUrl\":\"https://boards.greenhouse.io/example/jobs/123?gh_src=tracking-source&gh_jid=456789\"}",
-                    Timestamp.from(NOW),
-                    Timestamp.from(NOW)
-            );
 
             migrate(postgres, null);
 
@@ -60,19 +44,6 @@ class JobUrlMigrationIntegrationTests {
                     """, jobId);
             assertEquals("https://www.indeed.com/viewjob", link.get("url"));
             assertEquals("https://www.indeed.com/viewjob?jk=abc123def4567890", link.get("normalized_url"));
-
-            Map<String, Object> analysis = jdbc.queryForMap("""
-                    SELECT original_url, normalized_url,
-                           input_json ->> 'originalUrl' AS input_original_url,
-                           input_json ->> 'normalizedUrl' AS input_normalized_url
-                    FROM job_schema.job_analysis_runs
-                    WHERE id = ?
-                    """, analysisId);
-            assertEquals("https://boards.greenhouse.io/example/jobs/123", analysis.get("original_url"));
-            assertEquals("https://boards.greenhouse.io/example/jobs/123?gh_jid=456789", analysis.get("normalized_url"));
-            assertEquals(analysis.get("original_url"), analysis.get("input_original_url"));
-            assertEquals(analysis.get("normalized_url"), analysis.get("input_normalized_url"));
-            assertTrue(analysis.values().stream().noneMatch(value -> String.valueOf(value).contains("secret")));
         }
     }
 

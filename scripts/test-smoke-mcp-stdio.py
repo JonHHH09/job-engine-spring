@@ -16,11 +16,9 @@ SMOKE = ROOT / "scripts" / "smoke-mcp-stdio.py"
 
 EXPECTED_TOOLS = [
     "acknowledge_match_disagreement",
-    "add_job_from_analysis",
     "add_job_from_link",
     "add_job_from_text",
     "analyze_all_job_matches",
-    "analyze_job_link",
     "analyze_job_match",
     "create_profile",
     "delete_job",
@@ -104,7 +102,7 @@ sys.stderr.flush()
         completed = self.run_fake_server(EXPECTED_TOOLS, large_stderr=True)
 
         self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertIn("MCP STDIO smoke passed with 41 tools.", completed.stdout)
+        self.assertIn("MCP STDIO smoke passed with 39 tools.", completed.stdout)
 
     def test_missing_expected_tool_fails_with_bounded_missing_message(self) -> None:
         completed = self.run_fake_server([name for name in EXPECTED_TOOLS if name != "health"])

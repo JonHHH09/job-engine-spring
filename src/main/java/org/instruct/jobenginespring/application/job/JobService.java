@@ -237,35 +237,6 @@ public class JobService {
         ));
     }
 
-    @Transactional
-    public AddJobResult addJobFromAnalyzedLink(AddJobFromAnalyzedLinkRequest request) {
-        AddJobFromAnalyzedLinkRequest safeRequest = validateAnalyzedLinkRequest(request);
-        String persistedUrl = safeDisplayUrl(safeRequest.url());
-        String normalizedUrl = normalizeUrl(safeRequest.normalizedUrl());
-        Optional<JobAggregate> existingByUrl = jobRepository.findByNormalizedSourceUrl(normalizedUrl);
-        if (existingByUrl.isPresent()) {
-            return new AddJobResult("reused_existing_job", existingByUrl.orElseThrow());
-        }
-        String description = clean(safeRequest.description());
-        List<String> skills = mergeSkills(safeRequest.skills(), extractSkills(description));
-        String experience = firstPresent(cleanToNull(safeRequest.experienceRequirement()), extractExperience(description));
-        return saveIfNew(new DraftJob(
-                SOURCE_METHOD_LINK,
-                cleanToNull(safeRequest.sourceLabel()),
-                clean(safeRequest.title()),
-                cleanToNull(safeRequest.company()),
-                cleanToNull(safeRequest.location()),
-                description,
-                experience,
-                cleanToNull(safeRequest.employmentType()),
-                cleanToNull(safeRequest.seniority()),
-                safeRequest.postedAt(),
-                skills,
-                new LinkSource(persistedUrl, normalizedUrl, safeRequest.httpStatus(), cleanToNull(safeRequest.sourceTitle())),
-                null
-        ));
-    }
-
     /** Persists an already-authenticated Arbeitnow scan candidate without fetching its URL. */
     @Transactional
     public AddJobResult importTrustedArbeitnowJob(TrustedArbeitnowImportRequest request) {
@@ -368,27 +339,6 @@ public class JobService {
             throw validation("url", "must not be blank");
         }
         normalizeUrl(request.url());
-        return request;
-    }
-
-    private static AddJobFromAnalyzedLinkRequest validateAnalyzedLinkRequest(AddJobFromAnalyzedLinkRequest request) {
-        if (request == null) {
-            throw validation("request", "must not be null");
-        }
-        if (request.url() == null || request.url().isBlank()) {
-            throw validation("url", "must not be blank");
-        }
-        if (request.normalizedUrl() == null || request.normalizedUrl().isBlank()) {
-            throw validation("normalizedUrl", "must not be blank");
-        }
-        if (request.title() == null || request.title().isBlank()) {
-            throw validation("title", "must not be blank");
-        }
-        if (request.description() == null || request.description().isBlank()) {
-            throw validation("description", "must not be blank");
-        }
-        normalizeUrl(request.url());
-        normalizeUrl(request.normalizedUrl());
         return request;
     }
 
@@ -689,24 +639,6 @@ public class JobService {
             String employmentType,
             String seniority,
             Instant postedAt
-    ) {
-    }
-
-    public record AddJobFromAnalyzedLinkRequest(
-            String url,
-            String normalizedUrl,
-            String sourceLabel,
-            String title,
-            String company,
-            String location,
-            String description,
-            List<String> skills,
-            String experienceRequirement,
-            String employmentType,
-            String seniority,
-            Instant postedAt,
-            Integer httpStatus,
-            String sourceTitle
     ) {
     }
 

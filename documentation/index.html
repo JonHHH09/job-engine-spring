@@ -242,7 +242,7 @@ PostgreSQL / files / HTTP ← adapter/out/* ← <span class="accent">domain deci
       <section id="tools">
         <span class="section-number">04 / INTERFACE</span>
         <h2>The MCP tool surface</h2>
-        <p class="lead">The server exposes 41 tools grouped around domain workflows. Expand each area for the supported operations.</p>
+        <p class="lead">The server exposes 39 tools grouped around domain workflows. Expand each area for the supported operations.</p>
         <div class="tools">
           <details open><summary>Profiles and profile search</summary><div><ul class="tool-list">
             <li><code>list_profiles</code>Cursor-page profile identities.</li><li><code>search_profiles</code>Weighted normalized profile search.</li>
@@ -255,8 +255,7 @@ PostgreSQL / files / HTTP ← adapter/out/* ← <span class="accent">domain deci
             <li><code>list_jobs</code>Cursor-page stored postings.</li><li><code>search_jobs</code>Search eight weighted field groups.</li>
             <li><code>get_job</code>Load job, skills, and provenance.</li><li><code>update_job</code>Partial update with expected revision.</li>
             <li><code>delete_job</code>Hard-delete a job.</li><li><code>add_job_from_text</code>Idempotent pasted-text insertion.</li>
-            <li><code>add_job_from_link</code>Restricted URL fetch and insertion.</li><li><code>analyze_job_link</code>Store an optional structured analysis run.</li>
-            <li><code>add_job_from_analysis</code>Create or reuse from an analysis run.</li>
+            <li><code>add_job_from_link</code>Restricted URL fetch and insertion.</li>
           </ul></div></details>
           <details><summary>Arbeitnow job discovery and import</summary><div><ul class="tool-list">
             <li><code>scan_arbeitnow_jobs</code>Bounded, sanitized, read-only discovery from the fixed Arbeitnow source; it never writes to the database.</li>
