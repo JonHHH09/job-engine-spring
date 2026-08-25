@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-`job-engine-spring` is a local-only MCP (Model Context Protocol) server, not a hosted service, REST API, web UI, or job-board scraper. It stores normalized candidate profiles and jobs, produces explainable profile-to-job match reports, and generates resume/cover-letter PDFs. Normal runtime is a persistent Streamable HTTP MCP endpoint published only on host loopback (`http://127.0.0.1:8080/mcp`); STDIO exists only for CI/package verification and isolated diagnostics. The application is MCP-first: do not add REST controllers unless REST compatibility is explicitly required.
+`job-engine-spring` is a local-only MCP (Model Context Protocol) server, not a hosted service, REST API, web UI, or job-board scraper. It stores normalized candidate profiles and jobs, produces explainable profile-to-job match reports, and generates resume/cover-letter PDFs. Normal runtime is a persistent Streamable HTTP MCP endpoint published only on host loopback (`http://127.0.0.1:8080/mcp`); STDIO exists only for CI/package verification and isolated diagnostics. The application is MCP-first: do not add REST controllers unless REST compatibility is explicitly required — the privileged, disabled-by-default `adapter/in/http/operator` boundary (see below) is the one approved exception.
 
 ## Project Structure & Module Organization
 
@@ -12,7 +12,8 @@ This is a Maven Java 25 Spring Boot 4.1.0 project. The main build descriptor is
 The package layout follows application boundaries: `domain` contains core
 business concepts, `application` holds use cases and orchestration, and
 `adapter` packages contain integrations. Current adapters include
-`adapter/in/mcp`, `adapter/out/postgres`, and `adapter/out/http`.
+`adapter/in/mcp`, `adapter/in/http/operator` (privileged, disabled by
+default), `adapter/out/postgres`, and `adapter/out/http`.
 
 ## Build, Test, and Development Commands
 
