@@ -25,13 +25,21 @@ cp .env.example .env
 
 ### Run a published release (recommended for users)
 
-Deploy a chosen published image with the guarded helper. For the current verified public release, use [`v0.1.22`](https://github.com/JonHHH09/job-engine-spring/releases/tag/v0.1.22):
+Deploy a chosen published image with the guarded helper. Always resolve the current latest tag from GitHub Releases first — do not hardcode or assume a version number, since it changes with every release:
 
 ```bash
-./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v0.1.22
+gh release list --limit 1
+# or, without gh:
+curl -fsSL https://api.github.com/repos/JonHHH09/job-engine-spring/releases/latest | grep '"tag_name"'
 ```
 
-For an immutable deployment, pass the full published image digest instead of a tag. The helper accepts only `ghcr.io/jonhhh09/job-engine-spring:v<semver>` tags or a full digest, pulls the image, and recreates the persistent service without building.
+Then deploy that tag:
+
+```bash
+./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v<semver>   # e.g. v0.1.25
+```
+
+For an immutable deployment, pass the full published image digest instead of a tag. The helper accepts only `ghcr.io/jonhhh09/job-engine-spring:v<semver>` tags or a full digest, pulls the image, and recreates the persistent service without building. The helper deliberately rejects the mutable `:latest` tag even though stable releases publish it — always pass the explicit resolved version tag.
 
 ### Build from source (for development)
 
@@ -110,11 +118,11 @@ Before a significant source or release upgrade, create a transaction-consistent 
 ./scripts/postgres-backup.sh
 ```
 
-To upgrade a published release safely, choose a tag or immutable digest, then deploy, smoke-test, and reload the MCP client:
+To upgrade a published release safely, resolve the current latest tag (`gh release list --limit 1`, or immutable digest), then deploy, smoke-test, and reload the MCP client:
 
 ```bash
 ./scripts/postgres-backup.sh
-./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v0.1.22
+./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v<semver>   # e.g. v0.1.25
 python3 scripts/smoke-mcp-http.py
 # Reload your MCP client connections (for Hermes Agent: /reload-mcp).
 ```
