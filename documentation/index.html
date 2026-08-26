@@ -229,7 +229,7 @@
         <h2>Hexagonal architecture</h2>
         <p class="lead">Dependencies point inward. The domain does not know how data arrived or where it will be stored.</p>
         <div class="architecture" role="img" aria-label="Architecture layers from MCP client through adapters and application domain to infrastructure">
-          <div class="layer"><strong>Inbound edge</strong><p>Spring AI MCP tool adapters expose the supported operations and safe error shape.</p></div>
+          <div class="layer"><strong>Inbound edge</strong><p>Spring AI MCP tool adapters expose supported operations; a separately secured local-only operator MVC boundary is reserved for browser/API clients.</p></div>
           <div class="layer"><strong>Application</strong><p>Use-case services, ports, transactions, pagination, search normalization, validation, and orchestration.</p></div>
           <div class="layer"><strong>Domain core</strong><p>Framework-free records and rules for profiles, jobs, matching, resumes, documents, and cover letters.</p></div>
           <div class="layer"><strong>Outbound edge</strong><p>PostgreSQL/JDBC, filesystem, PDF extraction, restricted HTTP fetching, transaction lifecycle, and optional Hermes analysis.</p></div>
@@ -340,6 +340,7 @@ PostgreSQL / files / HTTP ← adapter/out/* ← <span class="accent">domain deci
           <li>Document metadata endpoints do not return stored binary content.</li>
           <li>URL fetching rejects redirects, userinfo, local/private/metadata targets, and hostnames.</li>
           <li>Structured errors avoid leaking credentials, paths, or provider internals.</li>
+          <li>The disabled-by-default operator boundary requires a high-entropy bearer token, exact loopback/same-origin checks, no CORS, and no-store responses.</li>
           <li>Pagination cursors are integrity-protected and opaque to callers.</li>
           <li>Flyway owns ordered, versioned schema changes.</li>
         </ul>

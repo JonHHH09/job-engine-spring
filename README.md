@@ -190,6 +190,7 @@ The project follows a Spring Boot-first hexagonal layout:
 - `domain` — pure Java records/value objects with no Spring, MCP, JDBC, or persistence annotations.
 - `application` — use cases, ports, transactions, and safe application errors.
 - `adapter/in/mcp` — thin Spring AI MCP tool adapters.
+- `adapter/in/http/operator` — a separately secured, local-only MVC operator boundary; it calls application use cases and never MCP adapters.
 - `adapter/out/postgres` — PostgreSQL/JDBC adapters behind application ports.
 
 Flyway owns schema creation and evolution under `src/main/resources/db/migration`. Treat applied `V*__*.sql` migrations as immutable; add a new versioned migration for schema changes.
@@ -218,6 +219,10 @@ Never commit real credentials, private resume data, API keys, production connect
 MCP is local-only. Normal operation uses a persistent Streamable HTTP MCP container published only on the host loopback interface. `McpLocalOnlyStartupGuard` accepts loopback HTTP and the explicitly marked container runtime while rejecting unsafe transport/bind combinations. Tool schemas do not carry per-call access tokens; the security boundary is the loopback-only Docker publication plus the local OS boundary. STDIO remains available only through the `stdio` Spring profile for CI, release verification, and isolated engineering diagnosis. Local file imports for PDF extraction/storage are restricted to `job-engine.document.import-root` by default; generated resume PDFs bypass that import-root check because they are produced internally under `tmp/generated-pdfs/`. Job URL fetching is SSRF-hardened: redirects are not followed, local/private/metadata/userinfo targets are rejected before send, and only public IP-literal hosts are accepted so the validated address is the address used by the connection. Hostname allow-list configuration was intentionally removed because resolving a hostname before `HttpClient` connects does not prevent DNS-rebinding/TOCTOU attacks.
 
 For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not polluted.
+
+### Privileged operator HTTP boundary
+
+`/api/operator/v1/**` and `/operator/**` are reserved for a future local operator UI/API and are disabled by default. Set `JOB_ENGINE_OPERATOR_ENABLED=true` only on the trusted local machine and set `JOB_ENGINE_OPERATOR_BEARER_TOKEN` to a private, randomly generated token of at least 32 characters (for example, `openssl rand -base64 48`). Requests to the API require that bearer token, an exact loopback `Host`, and, when supplied, an exact same-origin loopback `Origin`; the API sends `Cache-Control: no-store` and never enables CORS. Browser-facing `/operator/**` responses receive restrictive CSP and browser security headers. Do not expose this boundary through a proxy or non-loopback address.
 
 ## Local persistent MCP deployment
 
