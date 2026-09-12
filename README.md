@@ -25,10 +25,10 @@ cp .env.example .env
 
 ### Run a published release (recommended for users)
 
-Deploy a chosen published image with the guarded helper. For the current verified public release, use [`v0.1.22`](https://github.com/JonHHH09/job-engine-spring/releases/tag/v0.1.22):
+Deploy a chosen published image with the guarded helper. For the current verified public release, use [`v0.1.25`](https://github.com/JonHHH09/job-engine-spring/releases/tag/v0.1.25):
 
 ```bash
-./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v0.1.22
+./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v0.1.25
 ```
 
 For an immutable deployment, pass the full published image digest instead of a tag. The helper accepts only `ghcr.io/jonhhh09/job-engine-spring:v<semver>` tags or a full digest, pulls the image, and recreates the persistent service without building.
@@ -114,7 +114,7 @@ To upgrade a published release safely, choose a tag or immutable digest, then de
 
 ```bash
 ./scripts/postgres-backup.sh
-./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v0.1.22
+./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v0.1.25
 python3 scripts/smoke-mcp-http.py
 # Reload your MCP client connections (for Hermes Agent: /reload-mcp).
 ```
@@ -134,10 +134,10 @@ That final command permanently deletes local application data. See [PostgreSQL b
 - The server is under active development; MCP schemas and persisted data contracts may evolve between pre-1.0 releases.
 - Only the latest published release receives security fixes.
 - The supported network model is local-only. Exposing MCP or PostgreSQL to another machine is unsupported.
-- Provider-backed enrichment is optional. Deterministic storage, search, and matching remain independently usable.
+- The Arbeitnow job-board client is the only outbound provider integration, and it is optional and read-only. Deterministic storage, search, matching, and generation remain independently usable without it.
 - Direct hostname URL ingestion is deliberately unavailable; use `add_job_from_text` for normal job-board content.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull-request requirements, [SUPPORT.md](SUPPORT.md) for issue routing, [SECURITY.md](SECURITY.md) for private vulnerability reports, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
+See [documentation/index.html](documentation/index.html) for a narrative walkthrough of the subsystems and request flow, [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull-request requirements, [SUPPORT.md](SUPPORT.md) for issue routing, [SECURITY.md](SECURITY.md) for private vulnerability reports, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
 
 ## Persistent match analysis
 
@@ -181,7 +181,7 @@ The current verified MCP surface is intentionally small:
 - `scan_arbeitnow_jobs` — read-only, bounded discovery over the public Arbeitnow job-board API. It never writes a job.
 - `import_arbeitnow_job` — verifies and imports one short-lived signed candidate returned by `scan_arbeitnow_jobs`, without refetching the provider.
 
-The application is MCP-first. Do not add REST controllers unless REST compatibility is explicitly required.
+The application is MCP-first. Do not add REST controllers unless REST compatibility is explicitly required; the privileged, disabled-by-default [operator HTTP boundary](#privileged-operator-http-boundary) is the one approved exception, and it exposes a deliberately narrower profile/health surface than the MCP tools above.
 
 ## Architecture
 
@@ -190,8 +190,12 @@ The project follows a Spring Boot-first hexagonal layout:
 - `domain` — pure Java records/value objects with no Spring, MCP, JDBC, or persistence annotations.
 - `application` — use cases, ports, transactions, and safe application errors.
 - `adapter/in/mcp` — thin Spring AI MCP tool adapters.
-- `adapter/in/http/operator` — a separately secured, local-only MVC operator boundary; it calls application use cases and never MCP adapters.
+- `adapter/in/http/operator` — a separately secured, local-only MVC operator boundary; it calls application use cases and never MCP adapters. See [Privileged operator HTTP boundary](#privileged-operator-http-boundary).
 - `adapter/out/postgres` — PostgreSQL/JDBC adapters behind application ports.
+- `adapter/out/http` — SSRF-hardened outbound job-URL fetching and the Arbeitnow job-board client.
+- `adapter/out/extraction` — deterministic extraction of normalized profile fields from extracted PDF text.
+- `adapter/out/filesystem` — generated resume and cover-letter file storage under `tmp/generated-pdfs/`.
+- `adapter/out/transaction` — Spring transaction lifecycle plus the scheduled generated-resume cleanup worker.
 
 Flyway owns schema creation and evolution under `src/main/resources/db/migration`. Treat applied `V*__*.sql` migrations as immutable; add a new versioned migration for schema changes.
 
@@ -222,7 +226,39 @@ For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not po
 
 ### Privileged operator HTTP boundary
 
-`/api/operator/v1/**` and `/operator/**` are reserved for a future local operator UI/API and are disabled by default. Set `JOB_ENGINE_OPERATOR_ENABLED=true` only on the trusted local machine and set `JOB_ENGINE_OPERATOR_BEARER_TOKEN` to a private, randomly generated token of at least 32 characters (for example, `openssl rand -base64 48`). Requests to the API require that bearer token, an exact loopback `Host`, and, when supplied, an exact same-origin loopback `Origin`; the API sends `Cache-Control: no-store` and never enables CORS. Browser-facing `/operator/**` responses receive restrictive CSP and browser security headers. Do not expose this boundary through a proxy or non-loopback address.
+`/api/operator/v1/**` and `/operator/**` are a privileged local operator API and are **disabled by default**. They are the one approved exception to the MCP-first rule; the boundary calls application use cases directly and never goes through MCP adapters.
+
+Enable it only on the trusted local machine:
+
+```bash
+JOB_ENGINE_OPERATOR_ENABLED=true
+JOB_ENGINE_OPERATOR_BEARER_TOKEN=<private random token, at least 32 characters>
+```
+
+Generate the token with `openssl rand -base64 48` and keep it in the ignored `.env` file. Both variables are forwarded to the `mcp` Compose service and are listed in `.env.example`. Enabling the boundary with a token shorter than 32 characters fails startup rather than serving a weakly protected API.
+
+While `JOB_ENGINE_OPERATOR_ENABLED` is unset or `false`, every route below answers `404 Not Found`, so a disabled boundary is indistinguishable from an absent one. When enabled, requests must present an exact loopback `Host`, originate from a loopback peer, and carry an exact same-origin loopback `Origin` when one is supplied; otherwise the request is rejected with `403 Forbidden`. API routes additionally require the bearer token and answer `401 Unauthorized` with `WWW-Authenticate: Bearer` without it. Ambiguous or repeatedly encoded operator paths are rejected with `400 Bad Request` before routing. All operator responses send `Cache-Control: no-store`, CORS is never enabled, and browser-facing `/operator/**` responses receive restrictive CSP and browser security headers. Do not expose this boundary through a proxy or non-loopback address.
+
+The currently exposed routes are:
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| `GET` | `/api/operator/v1/ping` | Liveness probe; returns `{"status":"ok"}`. |
+| `GET` | `/api/operator/v1/health` | Same sanitized readiness and cleanup-queue report as the `health` MCP tool. |
+| `GET` | `/api/operator/v1/profiles` | Lists profile identities with the shared bounded cursor; accepts `limit` and `cursor`, returns `{ "profiles": [...], "nextCursor": ... }`. |
+| `GET` | `/api/operator/v1/profiles/search` | Deterministic profile search; requires `query`, accepts `limit`. |
+| `GET` | `/api/operator/v1/profiles/{profileId}` | Returns one normalized profile aggregate. |
+| `POST` | `/api/operator/v1/profiles` | Creates a profile aggregate; responds `201 Created`. |
+| `PUT` | `/api/operator/v1/profiles/{profileId}` | Replaces a profile aggregate; requires the `expectedRevision` query parameter from the latest read. |
+| `PATCH` | `/api/operator/v1/profiles/{profileId}/projects/{projectId}` | Partially updates one project; the body carries `expectedRevision` and the fields to change. |
+| `DELETE` | `/api/operator/v1/profiles/{profileId}` | Deletes a profile aggregate and cascades owned child rows. |
+| `POST` | `/api/operator/v1/profiles/pdf-ingestions` | Populates a profile from a stored PDF extraction. |
+| `GET` | `/api/operator/v1/profiles/{profileId}/pdf-source` | Returns the one-to-one PDF extraction source link. |
+| `GET` | `/operator/` | Browser shell placeholder; responds `204 No Content`. |
+
+Every route goes through `ProfileService`, `ProfileSearchService`, `ProfilePdfIngestionService`, and `ApplicationHealthService`, so the same validation, canonicalization, and optimistic-concurrency rules apply as over MCP. Failures return RFC 9457 `application/problem+json` bodies carrying a `urn:job-engine:problem:<code>` type and the sanitized application error message — never stack traces or raw provenance detail. Stale writes surface as `409 Conflict`.
+
+Jobs, matches, documents, and resume/cover-letter generation are not exposed here; use the MCP tool surface for those.
 
 ## Local persistent MCP deployment
 
