@@ -11,13 +11,14 @@ class OperatorSecurityConfiguration {
     @Bean
     FilterRegistrationBean<OperatorSecurityFilter> operatorSecurityFilter(
             @Value("${job-engine.operator.enabled:false}") boolean enabled,
-            @Value("${job-engine.operator.bearer-token:}") String bearerToken
+            @Value("${job-engine.operator.bearer-token:}") String bearerToken,
+            @Value("${job-engine.mcp.containerized:false}") boolean containerized
     ) {
         if (enabled && bearerToken.length() < 32) {
             throw new IllegalStateException("job-engine operator bearer token must be at least 32 characters when enabled");
         }
         FilterRegistrationBean<OperatorSecurityFilter> registration = new FilterRegistrationBean<>(
-                new OperatorSecurityFilter(enabled, bearerToken)
+                new OperatorSecurityFilter(enabled, bearerToken, new OperatorPeerPolicy(containerized))
         );
         registration.addUrlPatterns("/*");
         registration.setOrder(Integer.MIN_VALUE);

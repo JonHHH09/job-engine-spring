@@ -13,7 +13,15 @@ if [[ ! "$MCP_IMAGE" =~ ^ghcr\.io/jonhhh09/job-engine-spring:(v[0-9]+\.[0-9]+\.[
 fi
 
 export MCP_IMAGE
+# Ensure the ignored local .env exists with the operator MVC boundary enabled and a
+# private token, so a freshly pulled release starts with both MCP and the operator UI on.
+JOB_ENGINE_SKIP_ENV_BOOTSTRAP="${JOB_ENGINE_SKIP_ENV_BOOTSTRAP:-false}"
+if [[ "$JOB_ENGINE_SKIP_ENV_BOOTSTRAP" != "true" ]]; then
+  ./scripts/bootstrap-local-env.sh
+fi
 docker pull "$MCP_IMAGE"
 docker compose up -d --no-build --force-recreate --wait postgres mcp
 printf 'Persistent job-engine-spring MCP is ready at http://127.0.0.1:%s/mcp\n' \
+  "${JOB_ENGINE_MCP_PORT:-8080}"
+printf 'Local operator boundary is ready at http://127.0.0.1:%s/operator/ (API token in .env)\n' \
   "${JOB_ENGINE_MCP_PORT:-8080}"

@@ -22,7 +22,7 @@ Java 25 is also required to run Maven directly on the host.
 
 Follow the [README quickstart](README.md#quickstart-choose-a-path) and choose **Build from source (for development)**. It is the canonical startup procedure; do not duplicate it here.
 
-The supported network boundary is `http://127.0.0.1:8080/mcp`, plus the privileged operator routes on that same loopback port when they are explicitly enabled. PostgreSQL must remain unpublished. Do not change the host bind to a non-loopback address without an explicit authenticated-network design.
+The supported network boundary is `http://127.0.0.1:8080/mcp`, plus the privileged operator routes on that same loopback port. The local deployment scripts enable those operator routes by default through the git-ignored `.env` (`scripts/bootstrap-local-env.sh`); the application default remains off, and the routes stay loopback-only and bearer-token protected either way. PostgreSQL must remain unpublished. Do not change the host bind to a non-loopback address without an explicit authenticated-network design.
 
 ## Architecture and design constraints
 
@@ -31,12 +31,12 @@ The project uses a Spring Boot-first hexagonal architecture:
 - `domain` contains framework-free records and value objects.
 - `application` contains use cases, ports, validation, transactions, and safe application errors.
 - `adapter/in/mcp` contains thin MCP adapters.
-- `adapter/in/http/operator` contains the privileged, disabled-by-default local operator HTTP boundary.
+- `adapter/in/http/operator` contains the privileged local operator HTTP boundary (application default off; enabled for local deployments by `scripts/bootstrap-local-env.sh`).
 - `adapter/out` contains PostgreSQL, HTTP, extraction, filesystem, and transaction integrations.
 
 Additional constraints:
 
-- Keep the application MCP-first; do not add REST controllers without an approved compatibility requirement. The `adapter/in/http/operator` boundary is the one approved exception and must stay disabled by default, loopback-only, and bearer-token protected.
+- Keep the application MCP-first; do not add REST controllers without an approved compatibility requirement. The `adapter/in/http/operator` boundary is the one approved exception: its application-level default must stay `false`, and it must stay loopback-only and bearer-token protected. Only the local deployment scripts may turn it on, and only through the git-ignored `.env`.
 - Treat PDFs, resumes, job pages, provider output, and MCP arguments as untrusted data.
 - Keep errors and logs free of secrets, private document text, connection details, and stack traces returned to clients.
 - Add a new Flyway migration for schema changes. Applied `V*__*.sql` migrations are immutable.
