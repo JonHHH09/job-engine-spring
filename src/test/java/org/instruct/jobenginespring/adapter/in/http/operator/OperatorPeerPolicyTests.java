@@ -92,6 +92,35 @@ class OperatorPeerPolicyTests {
         assertTrue(OperatorPeerPolicy.readDefaultGateway(shortHex).isEmpty());
     }
 
+    @Test
+    void unreadableTruncatedAndNonHexRouteTableRowsYieldNoGateway(@TempDir Path tempDir) throws IOException {
+        // A directory is "readable" but reading it as a file fails, exercising the I/O guard.
+        Path directory = tempDir.resolve("route-dir");
+        Files.createDirectory(directory);
+        assertTrue(OperatorPeerPolicy.readDefaultGateway(directory).isEmpty());
+
+        Path truncatedRow = tempDir.resolve("truncated");
+        Files.writeString(truncatedRow, "eth0\t00000000\n", StandardCharsets.UTF_8);
+        assertTrue(OperatorPeerPolicy.readDefaultGateway(truncatedRow).isEmpty());
+
+        Path nonHex = tempDir.resolve("non-hex");
+        Files.writeString(nonHex, "eth0\t00000000\tZZZZZZZZ\t0003\t0\t0\t0\t00000000\t0\t0\t0\n",
+                StandardCharsets.UTF_8);
+        assertTrue(OperatorPeerPolicy.readDefaultGateway(nonHex).isEmpty());
+    }
+
+    @Test
+    void continuesPastNonDefaultRoutesToTheRealDefaultGateway(@TempDir Path tempDir) throws IOException {
+        Path routeTable = tempDir.resolve("multi");
+        Files.writeString(routeTable, """
+                eth0\t000013AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0
+                eth0\t00000000\t00000100\t0003\t0\t0\t0\t00000000\t0\t0\t0
+                """, StandardCharsets.UTF_8);
+        Optional<InetAddress> gateway = OperatorPeerPolicy.readDefaultGateway(routeTable);
+        assertTrue(gateway.isPresent());
+        assertEquals("0.1.0.0", gateway.get().getHostAddress());
+    }
+
     private static InetAddress loopbackGateway() {
         return InetAddress.getLoopbackAddress();
     }
