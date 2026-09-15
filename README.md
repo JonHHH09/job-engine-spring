@@ -20,8 +20,13 @@ Both paths require this checkout for Compose, deployment scripts, the environmen
 ```bash
 git clone https://github.com/JonHHH09/job-engine-spring.git
 cd job-engine-spring
-cp .env.example .env
 ```
+
+The deployment scripts below create the git-ignored `.env` for you on first run
+(`./scripts/bootstrap-local-env.sh`), with the local operator boundary enabled and a
+freshly generated private bearer token. Run that script directly if you want the
+environment file prepared before deploying, or copy `.env.example` to `.env` yourself
+when you would rather keep the operator boundary off.
 
 ### Run a published release (recommended for users)
 
@@ -39,15 +44,19 @@ Then deploy that tag:
 ./scripts/run-release-mcp-http.sh ghcr.io/jonhhh09/job-engine-spring:v<semver>   # e.g. v0.1.25
 ```
 
-For an immutable deployment, pass the full published image digest instead of a tag. The helper accepts only `ghcr.io/jonhhh09/job-engine-spring:v<semver>` tags or a full digest, pulls the image, and recreates the persistent service without building. The helper deliberately rejects the mutable `:latest` tag even though stable releases publish it — always pass the explicit resolved version tag.
+For an immutable deployment, pass the full published image digest instead of a tag. The helper accepts only `ghcr.io/jonhhh09/job-engine-spring:v<semver>` tags or a full digest, prepares `.env`, pulls the image, and recreates the persistent service without building. The helper deliberately rejects the mutable `:latest` tag even though stable releases publish it — always pass the explicit resolved version tag.
+
+The deployment brings up **both local surfaces**: the MCP endpoint on `/mcp` and the privileged operator MVC boundary on `/operator/` and `/api/operator/v1/**`. Both stay published on host loopback only, and the operator API still requires the bearer token from `.env`. Set `JOB_ENGINE_SKIP_ENV_BOOTSTRAP=true` to deploy without touching `.env`, or set `JOB_ENGINE_OPERATOR_ENABLED` in `.env` to any value other than `false` (for example `disabled`) to keep your own choice — the bootstrap never overwrites a value you set deliberately.
 
 ### Build from source (for development)
 
 Use this path when changing application code or testing local source changes:
 
 ```bash
-docker compose up -d --build --wait postgres mcp
+./scripts/run-local-mcp-http.sh
 ```
+
+That helper bootstraps `.env` the same way and then runs `docker compose up -d --build --force-recreate --wait postgres mcp`. Use the raw Compose command instead when you want full manual control of the environment file.
 
 ### Verify and connect
 
@@ -61,6 +70,13 @@ The smoke command initializes an MCP session, discovers the tool surface, calls 
 
 ```text
 http://127.0.0.1:8080/mcp
+```
+
+The operator boundary is reachable in a browser at `http://127.0.0.1:8080/operator/`. Its JSON API requires the token stored in `.env`:
+
+```bash
+TOKEN="$(grep '^JOB_ENGINE_OPERATOR_BEARER_TOKEN=' .env | cut -d= -f2-)"
+curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/operator/v1/health
 ```
 
 Do not publish the MCP port on a non-loopback host address, and do not publish PostgreSQL. The values in `.env.example` are synthetic local-development defaults; keep the copied `.env` file private and replace its password before using the environment for anything beyond isolated local development.
@@ -108,7 +124,7 @@ Update a source-built checkout without deleting the database volume:
 
 ```bash
 git pull --ff-only
-docker compose up -d --build --force-recreate --wait postgres mcp
+./scripts/run-local-mcp-http.sh
 python3 scripts/smoke-mcp-http.py
 ```
 
@@ -230,7 +246,13 @@ For STDIO MCP, keep banner/log output off stdout so JSON-RPC messages are not po
 
 ### Privileged operator HTTP boundary
 
-`/api/operator/v1/**` and `/operator/**` are reserved for a future local operator UI/API and are disabled by default. Set `JOB_ENGINE_OPERATOR_ENABLED=true` only on the trusted local machine and set `JOB_ENGINE_OPERATOR_BEARER_TOKEN` to a private, randomly generated token of at least 32 characters (for example, `openssl rand -base64 48`). Requests to the API require that bearer token, an exact loopback `Host`, and, when supplied, an exact same-origin loopback `Origin`; the API sends `Cache-Control: no-store` and never enables CORS. Browser-facing `/operator/**` responses receive restrictive CSP and browser security headers. Do not expose this boundary through a proxy or non-loopback address.
+`/api/operator/v1/**` and `/operator/**` serve the local operator UI/API. The application default is still **off** (`job-engine.operator.enabled` falls back to `false`, and every operator route answers 404 while it is false), so any deployment that does not supply the environment variables keeps the boundary closed. The supported **local** deployment turns it on: `scripts/bootstrap-local-env.sh` — invoked automatically by `scripts/run-release-mcp-http.sh` and `scripts/run-local-mcp-http.sh` — writes `JOB_ENGINE_OPERATOR_ENABLED=true` plus a freshly generated 64-character `JOB_ENGINE_OPERATOR_BEARER_TOKEN` into the git-ignored `.env`. The token is generated locally, never printed, and never committed.
+
+Enabling changes only who may reach the routes, not where they are published. Requests to the API require that bearer token, an exact loopback `Host`, and, when supplied, an exact same-origin loopback `Origin`; the API sends `Cache-Control: no-store` and never enables CORS. Browser-facing `/operator/**` responses receive restrictive CSP and browser security headers. Startup still fails when the boundary is enabled with a token shorter than 32 characters. Do not expose this boundary through a proxy or non-loopback address.
+
+The peer check is runtime-aware. On a host runtime only loopback peers are accepted. In the guarded container runtime (`JOB_ENGINE_MCP_CONTAINERIZED=true`) the port is still published on host loopback only, but Docker rewrites the source address of that published traffic to the container's default gateway, so that one gateway address is accepted as well. Sibling containers on the same bridge network keep their own addresses and are rejected, and the bearer token plus loopback `Host`/`Origin` checks apply on top. `X-Forwarded-*` headers are never trusted.
+
+To opt out, either set `JOB_ENGINE_SKIP_ENV_BOOTSTRAP=true` before running a deployment script, or set `JOB_ENGINE_OPERATOR_ENABLED` in `.env` to an explicit non-default value such as `disabled`; the bootstrap rewrites the flag only when it is missing or literally `false`.
 
 ## Local persistent MCP deployment
 

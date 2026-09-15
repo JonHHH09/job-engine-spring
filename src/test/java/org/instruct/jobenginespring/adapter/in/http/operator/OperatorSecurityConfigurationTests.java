@@ -11,10 +11,18 @@ class OperatorSecurityConfigurationTests {
 
     @Test
     void defaultsToDisabledAndRejectsShortTokenWhenEnabled() {
-        assertDoesNotThrow(() -> configuration.operatorSecurityFilter(false, ""));
+        assertDoesNotThrow(() -> configuration.operatorSecurityFilter(false, "", false));
         assertThrows(IllegalStateException.class,
-                () -> configuration.operatorSecurityFilter(true, "too-short"));
+                () -> configuration.operatorSecurityFilter(true, "too-short", false));
         assertDoesNotThrow(() -> configuration.operatorSecurityFilter(true,
-                "4rrxE1dNw81pp4YVwKcJ8Jf3xXR_0sTrhHXzToFwdYQ"));
+                "4rrxE1dNw81pp4YVwKcJ8Jf3xXR_0sTrhHXzToFwdYQ", false));
+    }
+
+    @Test
+    void tokenLengthGateAppliesInTheContainerRuntimeToo() {
+        assertThrows(IllegalStateException.class,
+                () -> configuration.operatorSecurityFilter(true, "too-short", true));
+        assertDoesNotThrow(() -> configuration.operatorSecurityFilter(true,
+                "4rrxE1dNw81pp4YVwKcJ8Jf3xXR_0sTrhHXzToFwdYQ", true));
     }
 }
