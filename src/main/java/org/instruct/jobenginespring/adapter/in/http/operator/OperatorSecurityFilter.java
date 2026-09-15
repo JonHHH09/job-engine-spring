@@ -9,7 +9,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -24,10 +23,16 @@ final class OperatorSecurityFilter extends OncePerRequestFilter {
 
     private final boolean enabled;
     private final byte[] expectedToken;
+    private final OperatorPeerPolicy peerPolicy;
 
     OperatorSecurityFilter(boolean enabled, String bearerToken) {
+        this(enabled, bearerToken, new OperatorPeerPolicy(false));
+    }
+
+    OperatorSecurityFilter(boolean enabled, String bearerToken, OperatorPeerPolicy peerPolicy) {
         this.enabled = enabled;
         this.expectedToken = bearerToken.getBytes(StandardCharsets.UTF_8);
+        this.peerPolicy = peerPolicy;
     }
 
     @Override
@@ -182,11 +187,7 @@ final class OperatorSecurityFilter extends OncePerRequestFilter {
     }
 
     private boolean isLoopbackPeer(HttpServletRequest request) {
-        try {
-            return InetAddress.getByName(request.getRemoteAddr()).isLoopbackAddress();
-        } catch (Exception exception) {
-            return false;
-        }
+        return peerPolicy.isTrustedPeer(request.getRemoteAddr());
     }
 
     private boolean isExactLoopbackHost(String value) {

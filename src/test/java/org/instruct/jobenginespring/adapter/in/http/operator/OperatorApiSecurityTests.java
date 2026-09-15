@@ -311,6 +311,31 @@ class OperatorApiSecurityTests {
     }
 
     @Test
+    void acceptsPublishedContainerTrafficFromTheDockerGatewayButNotFromSiblingContainers() throws Exception {
+        MockMvc containerMvc = MockMvcBuilders
+                .standaloneSetup(new OperatorFoundationController(), new TestOperatorController())
+                .setControllerAdvice(new OperatorProblemHandler())
+                .addFilters(new OperatorSecurityFilter(true, TOKEN,
+                        new OperatorPeerPolicy(true, java.net.InetAddress.getByName("172.19.0.1"))))
+                .build();
+
+        containerMvc.perform(get("/api/operator/v1/ping")
+                        .header(HttpHeaders.HOST, "127.0.0.1")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken())
+                        .with(request -> { request.setRemoteAddr("172.19.0.1"); return request; }))
+                .andExpect(status().isOk());
+        containerMvc.perform(get("/api/operator/v1/ping")
+                        .header(HttpHeaders.HOST, "127.0.0.1")
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken())
+                        .with(request -> { request.setRemoteAddr("172.19.0.7"); return request; }))
+                .andExpect(status().isForbidden());
+        containerMvc.perform(get("/api/operator/v1/ping")
+                        .header(HttpHeaders.HOST, "127.0.0.1")
+                        .with(request -> { request.setRemoteAddr("172.19.0.1"); return request; }))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void rejectsInvalidHostPortsAndOriginSchemeThatDoesNotMatchActualRequestOrigin() throws Exception {
         MockMvc mvc = operatorMvc(true);
         mvc.perform(get("/api/operator/v1/ping")

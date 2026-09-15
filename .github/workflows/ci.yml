@@ -46,6 +46,12 @@ jobs:
       - name: Test PostgreSQL operational scripts
         run: bash scripts/tests/run-postgres-ops-tests.sh
 
+      - name: Test local environment bootstrap
+        run: bash scripts/tests/test-bootstrap-local-env.sh
+
+      - name: Test MCP STDIO container cleanup ownership
+        run: bash scripts/tests/test-mcp-container-cleanup.sh
+
       - name: Validate Docker Compose configuration
         run: docker compose config >/tmp/job-engine-compose-config.yaml
 
