@@ -87,20 +87,20 @@ final class OperatorPeerPolicy {
         if (hexAddress.length() != 8) {
             return Optional.empty();
         }
+        long value;
         try {
-            long value = Long.parseLong(hexAddress, 16);
-            byte[] octets = new byte[]{
-                    (byte) (value & 0xFF),
-                    (byte) ((value >> 8) & 0xFF),
-                    (byte) ((value >> 16) & 0xFF),
-                    (byte) ((value >> 24) & 0xFF)
-            };
-            if (octets[0] == 0 && octets[1] == 0 && octets[2] == 0 && octets[3] == 0) {
-                return Optional.empty();
-            }
-            return Optional.of(InetAddress.getByAddress(octets));
-        } catch (NumberFormatException | java.net.UnknownHostException exception) {
+            value = Long.parseLong(hexAddress, 16);
+        } catch (NumberFormatException exception) {
             return Optional.empty();
         }
+        if (value == 0) {
+            return Optional.empty();
+        }
+        String dottedQuad = (value & 0xFF)
+                + "." + ((value >> 8) & 0xFF)
+                + "." + ((value >> 16) & 0xFF)
+                + "." + ((value >> 24) & 0xFF);
+        // Built from four masked bytes, so this is always a valid IPv4 literal.
+        return Optional.of(InetAddress.ofLiteral(dottedQuad));
     }
 }
