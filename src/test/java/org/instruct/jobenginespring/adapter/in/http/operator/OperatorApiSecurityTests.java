@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -200,7 +201,7 @@ class OperatorApiSecurityTests {
                         .header(HttpHeaders.HOST, "[::1]:8080")
                         .header(HttpHeaders.ORIGIN, "http://[::1]:8080")
                         .with(request -> { request.setRemoteAddr("::1"); return request; }))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -230,9 +231,10 @@ class OperatorApiSecurityTests {
     @Test
     void providesBrowserHeadersForOperatorPagesWithoutCors() throws Exception {
         operatorMvc(true).perform(get("/operator/").header(HttpHeaders.HOST, "127.0.0.1"))
-                .andExpect(status().isNoContent())
+                .andExpect(status().isOk())
                 .andExpect(header().string("Content-Security-Policy",
-                        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"))
+                        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+                                + "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"))
                 .andExpect(header().string("X-Content-Type-Options", "nosniff"))
                 .andExpect(header().string("X-Frame-Options", "DENY"))
                 .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
@@ -287,7 +289,7 @@ class OperatorApiSecurityTests {
     void permitsLoopbackSameOriginBrowserPageWithoutBearerButRejectsCrossOrigin() throws Exception {
         MockMvc mvc = operatorMvc(true);
         mvc.perform(get("/operator/").header(HttpHeaders.HOST, "127.0.0.1"))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk());
         mvc.perform(get("/operator/")
                         .header(HttpHeaders.HOST, "127.0.0.1")
                         .header(HttpHeaders.ORIGIN, "https://evil.example"))
@@ -333,6 +335,48 @@ class OperatorApiSecurityTests {
                         .header(HttpHeaders.HOST, "127.0.0.1")
                         .with(request -> { request.setRemoteAddr("172.19.0.1"); return request; }))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void servesTheOperatorConsoleShellAndItsAllowListedAssets() throws Exception {
+        MockMvc mvc = operatorMvc(true);
+
+        mvc.perform(get("/operator/").header(HttpHeaders.HOST, "127.0.0.1"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_HTML))
+                .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("job-engine")));
+
+        mvc.perform(get("/operator/app.css").header(HttpHeaders.HOST, "127.0.0.1"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(new MediaType("text", "css")));
+
+        mvc.perform(get("/operator/app.js").header(HttpHeaders.HOST, "127.0.0.1"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(new MediaType("text", "javascript")));
+    }
+
+    @Test
+    void refusesOperatorAssetsOutsideTheAllowList() throws Exception {
+        MockMvc mvc = operatorMvc(true);
+        for (String asset : new String[]{"secrets.txt", "index.html", "application.yaml", "app.map"}) {
+            mvc.perform(get("/operator/" + asset).header(HttpHeaders.HOST, "127.0.0.1"))
+                    .andExpect(status().isNotFound());
+        }
+    }
+
+    @Test
+    void servesTheConsoleShellOnlyOverTheGuardedBoundary() throws Exception {
+        // Disabled: the shell must stay invisible rather than leak the console markup.
+        operatorMvc(false).perform(get("/operator/").header(HttpHeaders.HOST, "127.0.0.1"))
+                .andExpect(status().isNotFound());
+        operatorMvc(false).perform(get("/operator/app.js").header(HttpHeaders.HOST, "127.0.0.1"))
+                .andExpect(status().isNotFound());
+        // Enabled but cross-origin: still refused.
+        operatorMvc(true).perform(get("/operator/app.js")
+                        .header(HttpHeaders.HOST, "127.0.0.1")
+                        .header(HttpHeaders.ORIGIN, "https://evil.example"))
+                .andExpect(status().isForbidden());
     }
 
     @Test
