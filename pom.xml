@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>4.1.0</version>
+        <version>4.1.1</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
     <groupId>org.instruct</groupId>
@@ -36,6 +36,8 @@
     <properties>
         <revision>0.0.1-SNAPSHOT</revision>
         <java.version>25</java.version>
+        <!-- Boot 4.1.1 manages Tomcat 11.0.24, before the security fixes. -->
+        <tomcat.version>11.0.25</tomcat.version>
         <jacoco.version>0.8.13</jacoco.version>
         <spring-ai.version>2.0.0</spring-ai.version>
         <testcontainers.version>2.0.5</testcontainers.version>
