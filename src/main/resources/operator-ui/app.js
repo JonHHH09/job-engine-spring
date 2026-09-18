@@ -328,7 +328,7 @@
             appendChips(grid, 'Links', aggregate.links, (l) => l.url);
             appendChips(grid, 'Projects', aggregate.projects, (p) => p.name || p.title);
             appendChips(grid, 'Experience', aggregate.experiences,
-                (e) => [e.role, e.company].filter(Boolean).join(' @ '));
+                (e) => [e.title, e.company].filter(Boolean).join(' @ '));
             appendChips(grid, 'Education', aggregate.education,
                 (e) => [e.degree, e.institution].filter(Boolean).join(' — '));
 
