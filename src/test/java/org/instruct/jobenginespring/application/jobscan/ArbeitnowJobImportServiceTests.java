@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -58,6 +59,22 @@ class ArbeitnowJobImportServiceTests {
         verify(jobs).importTrustedArbeitnowJob(new JobService.TrustedArbeitnowImportRequest(
                 "https://arbeitnow.com/view/remote-engineer", "Acme", "Remote Engineer", "Remote",
                 "Build resilient systems", List.of(), null, false, null));
+    }
+
+    @Test
+    void propagatesPersistenceFailureAfterVerifyingValidToken() {
+        Clock clock = Clock.fixed(Instant.parse("2026-07-27T10:00:00Z"), ZoneOffset.UTC);
+        ArbeitnowCandidateTokenCodec codec = new ArbeitnowCandidateTokenCodec(clock, new byte[32]);
+        JobService jobs = mock(JobService.class);
+        ArbeitnowJobImportService service = new ArbeitnowJobImportService(codec, jobs);
+        IllegalStateException persistenceFailure = new IllegalStateException("persistence unavailable");
+        when(jobs.importTrustedArbeitnowJob(any())).thenThrow(persistenceFailure);
+
+        IllegalStateException propagated = assertThrows(IllegalStateException.class,
+                () -> service.importCandidate(codec.issue(candidate())));
+
+        assertSame(persistenceFailure, propagated);
+        verify(jobs).importTrustedArbeitnowJob(any());
     }
 
     @Test
