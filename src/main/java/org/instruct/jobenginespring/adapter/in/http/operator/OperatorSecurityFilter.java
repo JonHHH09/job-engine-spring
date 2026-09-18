@@ -241,8 +241,11 @@ final class OperatorSecurityFilter extends OncePerRequestFilter {
     }
 
     private void applyBrowserHeaders(HttpServletResponse response) {
+        // The console loads only its own script/style/fetch origin. No inline script or
+        // style is used, so 'unsafe-inline' stays out and injected markup cannot execute.
         response.setHeader("Content-Security-Policy",
-                "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+                "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+                        + "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
         response.setHeader("X-Content-Type-Options", "nosniff");
         response.setHeader("X-Frame-Options", "DENY");
         response.setHeader("Referrer-Policy", "no-referrer");

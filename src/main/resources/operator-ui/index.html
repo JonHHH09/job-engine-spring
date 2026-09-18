@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>job-engine-spring operator</title>
+<link rel="stylesheet" href="/operator/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="dot" id="conn-dot" aria-hidden="true"></span>
+    <h1>job-engine <span>operator</span></h1>
+  </div>
+  <div class="topbar-actions">
+    <span class="endpoint">127.0.0.1:8080</span>
+    <button type="button" id="lock-btn" class="btn btn-quiet" hidden>Forget token</button>
+  </div>
+</header>
+
+<main id="app">
+  <!-- Token gate -->
+  <section id="auth-panel" class="panel auth" hidden>
+    <h2>Operator token required</h2>
+    <p class="muted">
+      This console talks to the privileged local API, which requires the bearer token
+      generated into your <code>.env</code> file. Read it with:
+    </p>
+    <pre class="snippet">grep JOB_ENGINE_OPERATOR_BEARER_TOKEN .env</pre>
+    <form id="auth-form" autocomplete="off">
+      <input type="password" id="token-input" placeholder="Paste operator token" spellcheck="false" autocomplete="off">
+      <button type="submit" class="btn btn-primary">Unlock</button>
+    </form>
+    <p class="muted small">
+      Kept in this tab's session storage only — never written to disk, never put in a URL,
+      and cleared when the tab closes.
+    </p>
+    <p class="error" id="auth-error" hidden></p>
+  </section>
+
+  <!-- Console -->
+  <div id="console-panel" hidden>
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Health</h2>
+        <button type="button" id="refresh-health" class="btn btn-quiet">Refresh</button>
+      </div>
+      <div id="health-body" class="health-grid">
+        <p class="muted">Loading…</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Profiles</h2>
+        <form id="search-form" autocomplete="off">
+          <input type="search" id="search-input" placeholder="Search profiles…" spellcheck="false">
+          <button type="submit" class="btn btn-quiet">Search</button>
+          <button type="button" id="clear-search" class="btn btn-quiet" hidden>Clear</button>
+        </form>
+      </div>
+      <div id="profiles-body">
+        <p class="muted">Loading…</p>
+      </div>
+      <div class="panel-foot">
+        <button type="button" id="load-more" class="btn btn-quiet" hidden>Load more</button>
+      </div>
+    </section>
+
+    <section class="panel" id="detail-panel" hidden>
+      <div class="panel-head">
+        <h2>Profile detail</h2>
+        <button type="button" id="close-detail" class="btn btn-quiet">Close</button>
+      </div>
+      <div id="detail-body"></div>
+    </section>
+  </div>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/operator/app.js"></script>
+</body>
+</html>
